@@ -49,7 +49,7 @@ token-scrooge start
 ```
 
 This will:
-1. Start the mitmproxy HTTPS proxy on port **8080**
+1. Start the mitmproxy HTTPS proxy on port **8888**
 2. Start the FastAPI web server on port **5173**
 3. Open the dashboard at http://127.0.0.1:5173 in your browser
 
@@ -70,14 +70,14 @@ Or from the dashboard → Settings → Proxy tab.
 Add to VS Code `settings.json`:
 ```json
 {
-  "http.proxy": "http://127.0.0.1:8080"
+  "http.proxy": "http://127.0.0.1:8888"
 }
 ```
 
 **Environment variable** (works for Claude CLI, curl, httpx, etc.):
 ```bash
-export HTTPS_PROXY=http://127.0.0.1:8080
-export HTTP_PROXY=http://127.0.0.1:8080
+export HTTPS_PROXY=http://127.0.0.1:8888
+export HTTP_PROXY=http://127.0.0.1:8888
 ```
 
 ## CLI reference
@@ -98,7 +98,7 @@ token-scrooge session list    # list all sessions
 ┌──────────────────────────────────────────┐
 │  coding agent (Copilot, Claude CLI, …)   │
 └───────────────┬──────────────────────────┘
-                │ HTTPS via proxy (port 8080)
+                │ HTTPS via proxy (port 8888)
 ┌───────────────▼──────────────────────────┐
 │  mitmproxy (DumpMaster, daemon thread)   │
 │  TokenScroogeAddon                       │

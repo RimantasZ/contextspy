@@ -11,7 +11,7 @@ _DEFAULT_DIR = Path.home() / ".token-scrooge"
 
 @dataclass
 class ProxySettings:
-    port: int = 8080
+    port: int = 8888
     bind_addr: str = "127.0.0.1"
 
 
@@ -65,6 +65,7 @@ class Settings:
         self.ensure_dirs()
         config_path = self.config_dir / "config.toml"
         if not config_path.exists():
+            db_path_toml = str(self.storage.db_path).replace("\\", "/")
             config_path.write_text(
                 f"""[proxy]
 port = {self.proxy.port}
@@ -75,7 +76,7 @@ port = {self.web.port}
 bind_addr = "{self.web.bind_addr}"
 
 [storage]
-db_path = "{self.storage.db_path}"
+db_path = "{db_path_toml}"
 
 [intercepted_hosts]
 # Add extra hosts if needed (besides the built-in list)

@@ -27,7 +27,7 @@ def _web_port() -> int:
 
 @app.command()
 def start(
-    proxy_port: int = typer.Option(8080, "--proxy-port", help="Proxy listen port"),
+    proxy_port: int = typer.Option(8888, "--proxy-port", help="Proxy listen port"),
     web_port: int = typer.Option(5173, "--web-port", help="Web server listen port"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
 ) -> None:

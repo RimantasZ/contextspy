@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
+from mitmproxy.addons import errorcheck as _errorcheck
 
 from token_scrooge.proxy.addon import TokenScroogeAddon
 
@@ -35,18 +36,26 @@ def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = N
         ssl_insecure=False,
     )
 
-    _master = DumpMaster(options, with_termlog=False, with_dumper=False)
-    _master.addons.add(_addon)
-
     def _run() -> None:
+        global _master
         import asyncio
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        master = DumpMaster(options, loop=loop, with_termlog=False, with_dumper=False)
+        # Remove ErrorCheck — it calls sys.exit(1) on any startup error which
+        # would kill the entire uvicorn process.
+        for addon in list(master.addons.chain):
+            if isinstance(addon, _errorcheck.ErrorCheck):
+                master.addons.remove(addon)
+                break
+        master.addons.add(_addon)
+        _master = master
         try:
-            loop.run_until_complete(_master.run())
+            loop.run_until_complete(master.run())
         except Exception as exc:
             logger.info("mitmproxy stopped: %s", exc)
         finally:
+            _master = None
             loop.close()
 
     _thread = threading.Thread(target=_run, name="mitmproxy", daemon=True)
