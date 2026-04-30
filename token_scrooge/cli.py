@@ -308,6 +308,22 @@ def report() -> None:
     row = cur.fetchone()
     (total_in, total_out, prov_in, prov_out,
      sys_p, tool_def, tool_res, file_c, conv_hist, cur_msg, prefill, uncat) = row
+
+    # Per-tool breakdown (only if tool_stats table exists)
+    tool_rows: list[tuple] = []
+    try:
+        cur.execute("""
+            SELECT tool_name,
+                   SUM(definition_tokens) AS def_tok,
+                   SUM(result_tokens)     AS res_tok
+            FROM tool_stats
+            GROUP BY tool_name
+            ORDER BY def_tok DESC
+        """)
+        tool_rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        pass  # table not yet created (old DB)
+
     con.close()
 
     console.print(f"\n[bold cyan]Token-Scrooge Report[/bold cyan]\n")
@@ -334,7 +350,7 @@ def report() -> None:
         ("Assistant prefill",       prefill),
         ("Uncategorized",           uncat),
     ]
-    total_cat = sum(v for _, v in categories) or 1  # avoid div/0
+    total_cat = sum(v for _, v in categories) or 1
 
     breakdown = Table(title="Input token category breakdown", header_style="bold")
     breakdown.add_column("Category", style="bold")
@@ -345,6 +361,29 @@ def report() -> None:
         bar = "█" * int(pct / 5)
         breakdown.add_row(name, f"{val:,}", f"{pct:5.1f}%  {bar}")
     console.print(breakdown)
+
+    # Per-tool breakdown
+    if tool_rows:
+        total_def = sum(r[1] for r in tool_rows) or 1
+        total_res = sum(r[2] for r in tool_rows) or 1
+        has_results = any(r[2] > 0 for r in tool_rows)
+
+        tools_table = Table(title="Tool definition tokens (top 30)", header_style="bold")
+        tools_table.add_column("Tool name", style="bold")
+        tools_table.add_column("Def tokens", justify="right")
+        tools_table.add_column("Def %", justify="right")
+        if has_results:
+            tools_table.add_column("Result tokens", justify="right")
+            tools_table.add_column("Result %", justify="right")
+        for name, def_tok, res_tok in tool_rows[:30]:
+            def_pct = def_tok / total_def * 100
+            row_vals = [name, f"{def_tok:,}", f"{def_pct:5.1f}%"]
+            if has_results:
+                res_pct = res_tok / total_res * 100
+                row_vals += [f"{res_tok:,}", f"{res_pct:5.1f}%"]
+            tools_table.add_row(*row_vals)
+        console.print(tools_table)
+
     console.print()
 
 

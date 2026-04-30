@@ -70,6 +70,12 @@ export interface TimelineBucket {
   tokens_total_input: number
 }
 
+export interface ToolStat {
+  tool_name: string
+  definition_tokens: number
+  result_tokens: number
+}
+
 export interface ProxyStatus {
   running: boolean
   port: number
@@ -117,6 +123,11 @@ export const statsApi = {
     if (params.session_id) q.set('session_id', params.session_id)
     if (params.bucket) q.set('bucket', params.bucket)
     return apiFetch<{ timeline: TimelineBucket[] }>(`/stats/timeline?${q}`)
+  },
+  tools: (sessionId?: string) => {
+    const q = new URLSearchParams()
+    if (sessionId) q.set('session_id', sessionId)
+    return apiFetch<{ tools: ToolStat[] }>(`/stats/tools?${q}`)
   },
 }
 

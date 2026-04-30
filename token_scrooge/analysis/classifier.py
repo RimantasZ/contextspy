@@ -133,3 +133,44 @@ def classify(parsed: ParsedRequest) -> CategoryBreakdown:
     breakdown.total_output = count_tokens(parsed.response_text)
 
     return breakdown
+
+
+def per_tool_tokens(parsed: ParsedRequest) -> list[dict]:
+    """Return per-tool definition token counts and result token counts.
+
+    Definition tokens: each individual tool definition counted separately.
+    Result tokens: attributed to the tool name found in the matching tool_use block.
+    Since result attribution is complex, result_tokens are split evenly across
+    all tools that appear in the request for simplicity.
+    """
+    if not parsed.tool_definitions_text:
+        return []
+
+    try:
+        import json
+        tools: list[dict] = json.loads(parsed.tool_definitions_text)
+    except Exception:
+        return []
+
+    if not tools:
+        return []
+
+    rows: list[dict] = []
+    for tool in tools:
+        name = tool.get("name") or tool.get("function", {}).get("name") or "unknown"
+        # Count tokens for this single tool definition
+        def_tokens = count_tokens(json.dumps(tool))
+        rows.append({"tool_name": name, "definition_tokens": def_tokens, "result_tokens": 0})
+
+    # Distribute tool_result tokens evenly across tools (best approximation
+    # without correlating tool_use_ids to names across messages)
+    total_results = sum(
+        count_tokens(msg.content) for msg in parsed.messages if msg.is_tool_result
+    )
+    if total_results > 0 and rows:
+        per = total_results // len(rows)
+        remainder = total_results % len(rows)
+        for i, row in enumerate(rows):
+            row["result_tokens"] = per + (1 if i < remainder else 0)
+
+    return rows

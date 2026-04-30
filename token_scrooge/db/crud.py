@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session as OrmSession
 
-from token_scrooge.db.models import Request, Session
+from token_scrooge.db.models import Request, Session, ToolStat
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +181,52 @@ def _empty_stats() -> dict:
         "by_provider": {},
         "by_agent": {},
     }
+
+
+# ---------------------------------------------------------------------------
+# Tool stats
+# ---------------------------------------------------------------------------
+
+def upsert_tool_stats(db: OrmSession, request_id: str, tool_rows: list[dict]) -> None:
+    """Insert per-tool token counts for a request."""
+    for row in tool_rows:
+        stat = ToolStat(
+            request_id=request_id,
+            tool_name=row["tool_name"],
+            definition_tokens=row.get("definition_tokens", 0),
+            result_tokens=row.get("result_tokens", 0),
+        )
+        db.add(stat)
+    db.flush()
+
+
+def get_tool_stats(
+    db: OrmSession,
+    session_id: str | None = None,
+) -> list[dict]:
+    """Aggregate definition_tokens and result_tokens per tool_name."""
+    q = select(
+        ToolStat.tool_name,
+        func.sum(ToolStat.definition_tokens).label("definition_tokens"),
+        func.sum(ToolStat.result_tokens).label("result_tokens"),
+    )
+    if session_id is not None:
+        # Join through requests to filter by session
+        q = q.join(Request, ToolStat.request_id == Request.id).where(
+            Request.session_id == session_id
+        )
+    q = q.group_by(ToolStat.tool_name).order_by(
+        func.sum(ToolStat.definition_tokens).desc()
+    )
+    rows = db.execute(q).all()
+    return [
+        {
+            "tool_name": r.tool_name,
+            "definition_tokens": r.definition_tokens or 0,
+            "result_tokens": r.result_tokens or 0,
+        }
+        for r in rows
+    ]
 
 
 def get_timeline(

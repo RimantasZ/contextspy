@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStatsOverview, useTimeline, useRequests } from '../api/hooks';
+import { useStatsOverview, useTimeline, useRequests, useToolStats } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
 import { SessionControls } from '../components/SessionControls';
+import { ToolBreakdown } from '../components/ToolBreakdown';
 
 type Bucket = 'minute' | 'hour' | 'day';
 
@@ -26,6 +27,7 @@ export default function Dashboard() {
   const stats = useStatsOverview();
   const timeline = useTimeline(undefined, bucket);
   const requests = useRequests({ limit: 20 });
+  const toolStats = useToolStats();
 
   const s = stats.data;
 
@@ -65,6 +67,9 @@ export default function Dashboard() {
           />
         </div>
       </div>
+
+      {/* Tool breakdown */}
+      <ToolBreakdown tools={toolStats.data?.tools ?? []} />
 
       {/* Recent requests */}
       <div className="bg-gray-800 rounded-lg p-4">

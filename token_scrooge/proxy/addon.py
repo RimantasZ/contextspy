@@ -10,7 +10,7 @@ import uuid
 
 from mitmproxy import http
 
-from token_scrooge.analysis.classifier import classify
+from token_scrooge.analysis.classifier import classify, per_tool_tokens
 from token_scrooge.analysis.providers import ParsedRequest, parse_request, parse_sse_request
 from token_scrooge.db import crud
 from token_scrooge.db.database import get_db
@@ -228,6 +228,12 @@ class TokenScroogeAddon:
             }
             data.update(breakdown.to_db_fields())
             req_record = crud.create_request(db, data)
+
+            # Per-tool breakdown
+            if parsed is not None:
+                tool_rows = per_tool_tokens(parsed)
+                if tool_rows:
+                    crud.upsert_tool_stats(db, req_record.id, tool_rows)
 
         ts_str = data["timestamp"].strftime("%H:%M:%S")
         logger.info(

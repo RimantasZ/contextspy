@@ -27,3 +27,9 @@ def stats_timeline(
 ):
     with get_db() as db:
         return {"timeline": crud.get_timeline(db, session_id=session_id, bucket=bucket)}
+
+
+@router.get("/stats/tools")
+def stats_tools(session_id: str | None = Query(default=None)):
+    with get_db() as db:
+        return {"tools": crud.get_tool_stats(db, session_id=session_id)}

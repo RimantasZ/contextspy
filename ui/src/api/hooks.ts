@@ -91,6 +91,14 @@ export function useTimeline(sessionId: string | undefined, bucket: string) {
   })
 }
 
+export function useToolStats(sessionId?: string) {
+  return useQuery({
+    queryKey: ['stats', 'tools', sessionId],
+    queryFn: () => statsApi.tools(sessionId),
+    refetchInterval: 10_000,
+  })
+}
+
 // ---- Proxy ----------------------------------------------------------------
 
 export function useProxyStatus() {

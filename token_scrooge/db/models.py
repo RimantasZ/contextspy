@@ -118,3 +118,28 @@ class Request(Base):
 Index("idx_requests_session", Request.session_id)
 Index("idx_requests_timestamp", Request.timestamp)
 Index("idx_requests_provider", Request.provider)
+
+
+class ToolStat(Base):
+    """Per-tool token breakdown — one row per tool name per request."""
+
+    __tablename__ = "tool_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(
+        String, ForeignKey("requests.id", ondelete="CASCADE"), nullable=False
+    )
+    tool_name: Mapped[str] = mapped_column(String, nullable=False)
+    definition_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    result_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    def to_dict(self) -> dict:
+        return {
+            "tool_name": self.tool_name,
+            "definition_tokens": self.definition_tokens,
+            "result_tokens": self.result_tokens,
+        }
+
+
+Index("idx_tool_stats_request", ToolStat.request_id)
+Index("idx_tool_stats_name", ToolStat.tool_name)
