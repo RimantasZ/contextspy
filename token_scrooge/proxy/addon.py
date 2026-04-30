@@ -75,6 +75,10 @@ class TokenScroogeAddon:
         flow.metadata["ts_start"] = time.monotonic()
 
     def response(self, flow: http.HTTPFlow) -> None:
+        host = flow.request.pretty_host
+        port = flow.request.pretty_port
+        status = flow.response.status_code if flow.response else "?"
+        logger.debug("PROXY %s:%s %s %s", host, port, flow.request.path[:80], status)
         try:
             self._handle_response(flow)
         except Exception as exc:
@@ -140,6 +144,18 @@ class TokenScroogeAddon:
             }
             data.update(breakdown.to_db_fields())
             req_record = crud.create_request(db, data)
+
+        ts_str = data["timestamp"].strftime("%H:%M:%S")
+        logger.info(
+            "[%s] %s › %s | model=%s | in=%d out=%d tokens | %s",
+            ts_str,
+            provider,
+            agent,
+            model or "?",
+            data.get("tokens_total_input", 0),
+            data.get("tokens_total_output", 0),
+            f"{duration_ms}ms" if duration_ms is not None else "?ms",
+        )
 
         if self.ws_manager is not None:
             try:

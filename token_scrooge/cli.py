@@ -71,7 +71,23 @@ def start(
         application,
         host=settings.web.bind_addr,
         port=settings.web.port,
-        log_level="warning",
+        log_level="info",
+        log_config={
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {"format": "%(asctime)s %(levelname)-8s %(name)s: %(message)s", "datefmt": "%H:%M:%S"},
+            },
+            "handlers": {
+                "default": {"class": "logging.StreamHandler", "formatter": "default"},
+            },
+            "loggers": {
+                "token_scrooge": {"handlers": ["default"], "level": "DEBUG", "propagate": False},
+                "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+                "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
+                "uvicorn.access": {"handlers": ["default"], "level": "WARNING", "propagate": False},
+            },
+        },
     )
 
 

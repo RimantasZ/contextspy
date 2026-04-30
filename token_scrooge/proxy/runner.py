@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 _master: DumpMaster | None = None
 _thread: threading.Thread | None = None
 _addon: TokenScroogeAddon | None = None
+_bound: bool = False  # True only after mitmproxy successfully binds the port
 
 
 def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = None) -> None:
@@ -37,7 +38,7 @@ def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = N
     )
 
     def _run() -> None:
-        global _master
+        global _master, _bound
         import asyncio
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -48,6 +49,23 @@ def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = N
             if isinstance(addon, _errorcheck.ErrorCheck):
                 master.addons.remove(addon)
                 break
+        # Intercept proxyserver log to detect successful bind
+        import logging as _logging
+        class _BindWatcher(_logging.Handler):
+            def emit(self, record):
+                global _bound
+                msg = record.getMessage()
+                if "listening at" in msg:
+                    _bound = True
+                    logger.info("Proxy bound: %s", msg)
+                elif "failed to listen" in msg or "error while attempting to bind" in msg:
+                    logger.error(
+                        "Proxy FAILED to bind on port %d — is another process using it? "
+                        "Set a different port with --proxy-port or edit ~/.token-scrooge/config.toml",
+                        settings.proxy.port,
+                    )
+        watcher = _BindWatcher()
+        _logging.getLogger("mitmproxy").addHandler(watcher)
         master.addons.add(_addon)
         _master = master
         try:
@@ -56,6 +74,8 @@ def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = N
             logger.info("mitmproxy stopped: %s", exc)
         finally:
             _master = None
+            _bound = False
+            _logging.getLogger("mitmproxy").removeHandler(watcher)
             loop.close()
 
     _thread = threading.Thread(target=_run, name="mitmproxy", daemon=True)
@@ -81,4 +101,4 @@ def stop_proxy() -> None:
 
 
 def is_running() -> bool:
-    return _thread is not None and _thread.is_alive()
+    return _bound and _thread is not None and _thread.is_alive()
