@@ -5,7 +5,7 @@ import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
 import { SessionControls } from '../components/SessionControls';
-import { ToolBreakdown } from '../components/ToolBreakdown';
+import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
 
 type Bucket = 'minute' | 'hour' | 'day';
 
@@ -69,7 +69,10 @@ export default function Dashboard() {
       </div>
 
       {/* Tool breakdown */}
-      <ToolBreakdown tools={toolStats.data?.tools ?? []} totalInputTokens={s?.tokens_total_input} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} />
+        <ToolBreakdownTable tools={toolStats.data?.tools ?? []} totalInputTokens={s?.tokens_total_input} />
+      </div>
 
       {/* Recent requests */}
       <div className="bg-gray-800 rounded-lg p-4">
