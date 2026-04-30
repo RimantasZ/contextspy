@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Generator
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session as OrmSession, sessionmaker
+
+from token_scrooge.db.models import Base
+
+_engine = None
+_SessionLocal = None
+
+
+def init_db(db_path: Path) -> None:
+    global _engine, _SessionLocal
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    _engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+        echo=False,
+    )
+    _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(_engine)
+
+
+def get_engine():
+    return _engine
+
+
+def dispose_engine() -> None:
+    if _engine:
+        _engine.dispose()
+
+
+@contextmanager
+def get_db() -> Generator[OrmSession, None, None]:
+    if _SessionLocal is None:
+        raise RuntimeError("Database not initialised. Call init_db() first.")
+    db = _SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def startup_vacuum() -> None:
+    """NULL out raw bodies for session-less requests older than 24 hours."""
+    if _engine is None:
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    with _engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE requests
+                SET raw_request_body = NULL, raw_response_body = NULL
+                WHERE session_id IS NULL
+                  AND timestamp < :cutoff
+                  AND (raw_request_body IS NOT NULL OR raw_response_body IS NOT NULL)
+                """
+            ),
+            {"cutoff": cutoff.isoformat()},
+        )
