@@ -1,0 +1,83 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+*.egg-link
+.installed.cfg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.uv/
+uv.lock
+
+# Distribution / packaging
+.Python
+pip-wheel-metadata/
+share/python-wheels/
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+pyrightconfig.json
+
+# Environments
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node / Frontend
+ui/node_modules/
+ui/dist/
+ui/.vite/
+ui/coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local runtime data
+*.db
+*.db-shm
+*.db-wal
+*.log
