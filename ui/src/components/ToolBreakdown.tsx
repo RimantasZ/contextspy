@@ -8,7 +8,7 @@ const PALETTE = [
 export const toolColor = (i: number) => PALETTE[i % PALETTE.length]
 
 function ToolLegend({ tools }: { tools: ToolStat[] }) {
-  const cols = tools.length > 40 ? 3 : tools.length > 20 ? 2 : 1
+  const cols = tools.length > 20 ? 3 : tools.length > 10 ? 2 : 1
   const perCol = Math.ceil(tools.length / cols)
   const columns: { tool: ToolStat; idx: number }[][] = Array.from({ length: cols }, (_, c) =>
     tools.slice(c * perCol, (c + 1) * perCol).map((tool, r) => ({ tool, idx: c * perCol + r }))

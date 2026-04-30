@@ -99,6 +99,14 @@ export function useToolStats(sessionId?: string) {
   })
 }
 
+export function useRequestToolStats(requestId: string) {
+  return useQuery({
+    queryKey: ['stats', 'tools', 'request', requestId],
+    queryFn: () => statsApi.tools(undefined, requestId),
+    enabled: !!requestId,
+  })
+}
+
 // ---- Proxy ----------------------------------------------------------------
 
 export function useProxyStatus() {

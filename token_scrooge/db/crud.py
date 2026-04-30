@@ -203,6 +203,7 @@ def upsert_tool_stats(db: OrmSession, request_id: str, tool_rows: list[dict]) ->
 def get_tool_stats(
     db: OrmSession,
     session_id: str | None = None,
+    request_id: str | None = None,
 ) -> list[dict]:
     """Aggregate definition_tokens and result_tokens per tool_name."""
     q = select(
@@ -210,8 +211,9 @@ def get_tool_stats(
         func.sum(ToolStat.definition_tokens).label("definition_tokens"),
         func.sum(ToolStat.result_tokens).label("result_tokens"),
     )
-    if session_id is not None:
-        # Join through requests to filter by session
+    if request_id is not None:
+        q = q.where(ToolStat.request_id == request_id)
+    elif session_id is not None:
         q = q.join(Request, ToolStat.request_id == Request.id).where(
             Request.session_id == session_id
         )

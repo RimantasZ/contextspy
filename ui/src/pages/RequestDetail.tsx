@@ -1,7 +1,8 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useRequest } from '../api/hooks';
+import { useRequest, useRequestToolStats } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { RawViewer } from '../components/RawViewer';
+import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
 
 const CATEGORY_LABELS: Record<string, string> = {
   system_prompt: 'System Prompt',
@@ -40,6 +41,7 @@ export default function RequestDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data, isLoading, error } = useRequest(id ?? '');
+  const toolStats = useRequestToolStats(id ?? '');
 
   if (isLoading) {
     return <div className="p-6 text-gray-400">Loading\u2026</div>;
@@ -134,6 +136,14 @@ export default function RequestDetail() {
           )}
         </div>
       </div>
+
+      {/* Tool breakdown */}
+      {(toolStats.data?.tools ?? []).length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ToolBreakdownCharts tools={toolStats.data!.tools} />
+          <ToolBreakdownTable tools={toolStats.data!.tools} totalInputTokens={req.tokens_total_input} />
+        </div>
+      )}
 
       {/* Raw bodies */}
       <div className="space-y-3">

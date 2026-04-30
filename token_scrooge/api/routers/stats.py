@@ -30,6 +30,9 @@ def stats_timeline(
 
 
 @router.get("/stats/tools")
-def stats_tools(session_id: str | None = Query(default=None)):
+def stats_tools(
+    session_id: str | None = Query(default=None),
+    request_id: str | None = Query(default=None),
+):
     with get_db() as db:
-        return {"tools": crud.get_tool_stats(db, session_id=session_id)}
+        return {"tools": crud.get_tool_stats(db, session_id=session_id, request_id=request_id)}

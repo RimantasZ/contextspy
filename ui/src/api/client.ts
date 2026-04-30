@@ -124,9 +124,10 @@ export const statsApi = {
     if (params.bucket) q.set('bucket', params.bucket)
     return apiFetch<{ timeline: TimelineBucket[] }>(`/stats/timeline?${q}`)
   },
-  tools: (sessionId?: string) => {
+  tools: (sessionId?: string, requestId?: string) => {
     const q = new URLSearchParams()
     if (sessionId) q.set('session_id', sessionId)
+    if (requestId) q.set('request_id', requestId)
     return apiFetch<{ tools: ToolStat[] }>(`/stats/tools?${q}`)
   },
 }
