@@ -202,6 +202,95 @@ def parse_ollama(req_body: dict, resp_body: dict) -> ParsedRequest:
 # Dispatch
 # ---------------------------------------------------------------------------
 
+def _sse_to_anthropic_resp(raw: bytes) -> dict:
+    """Convert Anthropic SSE stream bytes into a resp_body dict for parse_anthropic."""
+    text = raw.decode("utf-8", errors="replace")
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model: str | None = None
+    text_parts: list[str] = []
+
+    for line in text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        event_type = event.get("type", "")
+        if event_type == "message_start":
+            msg = event.get("message", {})
+            model = model or msg.get("model")
+            usage = msg.get("usage", {})
+            input_tokens = usage.get("input_tokens", input_tokens)
+        elif event_type == "content_block_delta":
+            delta = event.get("delta", {})
+            if delta.get("type") == "text_delta":
+                text_parts.append(delta.get("text", ""))
+        elif event_type == "message_delta":
+            usage = event.get("usage", {})
+            output_tokens = usage.get("output_tokens", output_tokens)
+
+    return {
+        "model": model,
+        "content": [{"type": "text", "text": "".join(text_parts)}],
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+    }
+
+
+def _sse_to_openai_resp(raw: bytes) -> dict:
+    """Convert OpenAI SSE stream bytes into a resp_body dict for parse_openai."""
+    text = raw.decode("utf-8", errors="replace")
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    text_parts: list[str] = []
+
+    for line in text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        for choice in event.get("choices", []):
+            delta = choice.get("delta", {})
+            text_parts.append(delta.get("content") or "")
+        usage = event.get("usage") or {}
+        if usage.get("prompt_tokens"):
+            prompt_tokens = usage["prompt_tokens"]
+        if usage.get("completion_tokens"):
+            completion_tokens = usage["completion_tokens"]
+
+    return {
+        "choices": [{"message": {"role": "assistant", "content": "".join(text_parts)}}],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+    }
+
+
+def parse_sse_request(
+    provider: str, endpoint: str, req_body: dict, raw_sse: bytes
+) -> ParsedRequest | None:
+    """Parse an SSE streaming response into a ParsedRequest."""
+    try:
+        if provider in ("openai", "openai_azure", "copilot"):
+            if "/chat/completions" in endpoint:
+                resp_body = _sse_to_openai_resp(raw_sse)
+                return parse_openai(req_body, resp_body)
+        elif provider == "anthropic":
+            if "/messages" in endpoint:
+                resp_body = _sse_to_anthropic_resp(raw_sse)
+                return parse_anthropic(req_body, resp_body)
+        return None
+    except Exception:
+        return None
+
+
 def parse_request(
     provider: str, endpoint: str, req_body: dict, resp_body: dict
 ) -> ParsedRequest | None:

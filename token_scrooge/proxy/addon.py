@@ -10,7 +10,7 @@ import uuid
 from mitmproxy import http
 
 from token_scrooge.analysis.classifier import classify
-from token_scrooge.analysis.providers import parse_request
+from token_scrooge.analysis.providers import ParsedRequest, parse_request, parse_sse_request
 from token_scrooge.db import crud
 from token_scrooge.db.database import get_db
 
@@ -73,29 +73,83 @@ class TokenScroogeAddon:
 
     def request(self, flow: http.HTTPFlow) -> None:
         flow.metadata["ts_start"] = time.monotonic()
+        logger.debug("HOOK request: %s %s", flow.request.pretty_host, flow.request.path[:60])
+
+    def responseheaders(self, flow: http.HTTPFlow) -> None:
+        if flow.response is None:
+            return
+        ct = flow.response.headers.get("content-type", "")
+        if "text/event-stream" not in ct:
+            return
+        # SSE streaming response — buffer all chunks, process when stream ends
+        host = flow.request.pretty_host
+        port = flow.request.port
+        if _detect_provider(host, port) is None:
+            return  # not an LLM host — skip overhead
+
+        sse_chunks: list[bytes] = []
+        addon = self
+
+        def _collect(data: bytes) -> bytes:
+            if data:
+                sse_chunks.append(data)
+            else:
+                # Empty bytes signals end of stream
+                raw = b"".join(sse_chunks)
+                try:
+                    addon._handle_sse_response(flow, raw)
+                except Exception as exc:
+                    logger.warning("SSE handler error: %s", exc, exc_info=True)
+            return data
+
+        flow.metadata["is_sse"] = True
+        flow.response.stream = _collect
 
     def response(self, flow: http.HTTPFlow) -> None:
-        host = flow.request.pretty_host
-        port = flow.request.pretty_port
-        status = flow.response.status_code if flow.response else "?"
-        logger.debug("PROXY %s:%s %s %s", host, port, flow.request.path[:80], status)
+        if flow.metadata.get("is_sse"):
+            return  # handled by the SSE stream callback
         try:
             self._handle_response(flow)
         except Exception as exc:
             logger.warning("TokenScroogeAddon error: %s", exc, exc_info=True)
 
-    def _handle_response(self, flow: http.HTTPFlow) -> None:
+    def _handle_sse_response(self, flow: http.HTTPFlow, raw_sse: bytes) -> None:
         host = flow.request.pretty_host
-        port = flow.request.pretty_port
+        port = flow.request.port
         provider = _detect_provider(host, port)
         if provider is None:
-            return  # not an LLM host
+            return
 
         endpoint = flow.request.path
         user_agent = flow.request.headers.get("user-agent", "")
         agent = _detect_agent(user_agent)
 
-        # Parse bodies
+        try:
+            req_body = json.loads(flow.request.get_text() or "{}")
+        except json.JSONDecodeError:
+            req_body = {}
+
+        duration_ms: int | None = None
+        if "ts_start" in flow.metadata:
+            duration_ms = int((time.monotonic() - flow.metadata["ts_start"]) * 1000)
+
+        parsed = parse_sse_request(provider, endpoint, req_body, raw_sse)
+        self._save_request(flow, provider, agent, endpoint, req_body, parsed,
+                           duration_ms, raw_sse.decode("utf-8", errors="replace"))
+
+    def _handle_response(self, flow: http.HTTPFlow) -> None:
+        if flow.response is None:
+            return
+        host = flow.request.pretty_host
+        port = flow.request.port
+        provider = _detect_provider(host, port)
+        if provider is None:
+            return
+
+        endpoint = flow.request.path
+        user_agent = flow.request.headers.get("user-agent", "")
+        agent = _detect_agent(user_agent)
+
         try:
             req_body = json.loads(flow.request.get_text() or "{}")
         except json.JSONDecodeError:
@@ -105,12 +159,17 @@ class TokenScroogeAddon:
         except json.JSONDecodeError:
             resp_body = {}
 
-        # Duration
         duration_ms: int | None = None
         if "ts_start" in flow.metadata:
             duration_ms = int((time.monotonic() - flow.metadata["ts_start"]) * 1000)
 
         parsed = parse_request(provider, endpoint, req_body, resp_body)
+        self._save_request(flow, provider, agent, endpoint, req_body, parsed,
+                           duration_ms, flow.response.get_text() if flow.response else None)
+
+    def _save_request(self, flow: http.HTTPFlow, provider: str, agent: str,
+                      endpoint: str, req_body: dict, parsed: ParsedRequest | None,
+                      duration_ms: int | None, raw_resp_text: str | None) -> None:
         if parsed is not None:
             breakdown = classify(parsed)
             model = parsed.model
@@ -136,11 +195,11 @@ class TokenScroogeAddon:
                 "agent": agent,
                 "endpoint": endpoint,
                 "duration_ms": duration_ms,
-                "status_code": flow.response.status_code,
+                "status_code": flow.response.status_code if flow.response else None,
                 "provider_input_tokens": provider_input,
                 "provider_output_tokens": provider_output,
                 "raw_request_body": flow.request.get_text(),
-                "raw_response_body": flow.response.get_text(),
+                "raw_response_body": raw_resp_text,
             }
             data.update(breakdown.to_db_fields())
             req_record = crud.create_request(db, data)
@@ -157,7 +216,7 @@ class TokenScroogeAddon:
             f"{duration_ms}ms" if duration_ms is not None else "?ms",
         )
 
-        if self.ws_manager is not None:
+        if self.ws_manager is not None and self.ws_manager.loop is not None:
             try:
                 import asyncio
                 asyncio.run_coroutine_threadsafe(

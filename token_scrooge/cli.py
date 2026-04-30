@@ -195,5 +195,218 @@ def session_list() -> None:
     console.print(table)
 
 
+# ---------------------------------------------------------------------------
+# help
+# ---------------------------------------------------------------------------
+
+@app.command("help")
+def help_cmd() -> None:
+    """List all available commands."""
+    console.print("\n[bold cyan]token-scrooge[/bold cyan] — LLM context window analyser and proxy\n")
+    rows = [
+        ("start",           "Start the proxy + web dashboard (Ctrl+C to stop)"),
+        ("status",          "Show proxy status and active session"),
+        ("install-cert",    "Install the mitmproxy CA cert into the system trust store"),
+        ("reset-db",        "Delete all requests and sessions from the local database"),
+        ("db-stats",        "Print row counts for each database table"),
+        ("report",          "Print aggregate stats: requests, tokens, category breakdown"),
+        ("setup-claude",    "Print env-var commands to route Claude Code through the proxy"),
+        ("setup-copilot",   "Print env-var commands to route GitHub Copilot through the proxy"),
+        ("session start",   "Start a named session"),
+        ("session end",     "End the current active session"),
+        ("session list",    "List all sessions"),
+    ]
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Command", style="bold green", min_width=18)
+    table.add_column("Description")
+    for cmd, desc in rows:
+        table.add_row(cmd, desc)
+    console.print(table)
+    console.print("\nRun [bold]token-scrooge <command> --help[/bold] for details on any command.\n")
+
+
+# ---------------------------------------------------------------------------
+# reset-db
+# ---------------------------------------------------------------------------
+
+@app.command("reset-db")
+def reset_db(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Delete all requests and sessions from the local database."""
+    if not yes:
+        typer.confirm("This will permanently delete ALL requests and sessions. Continue?", abort=True)
+    import sqlite3
+    from token_scrooge.config import Settings
+    db_path = Settings.load().storage.db_path
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    cur.execute("DELETE FROM requests")
+    cur.execute("DELETE FROM sessions")
+    con.commit()
+    con.close()
+    console.print("[green]Database cleared.[/green]")
+
+
+# ---------------------------------------------------------------------------
+# db-stats
+# ---------------------------------------------------------------------------
+
+@app.command("db-stats")
+def db_stats() -> None:
+    """Print row counts for each database table."""
+    import sqlite3
+    from token_scrooge.config import Settings
+    db_path = Settings.load().storage.db_path
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    tables = [row[0] for row in cur.fetchall()]
+    table = Table(title=f"DB: {db_path}", show_header=True, header_style="bold")
+    table.add_column("Table", style="bold")
+    table.add_column("Rows", justify="right")
+    for t in tables:
+        cur.execute(f'SELECT COUNT(*) FROM "{t}"')
+        count = cur.fetchone()[0]
+        table.add_row(t, str(count))
+    con.close()
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# report
+# ---------------------------------------------------------------------------
+
+@app.command("report")
+def report() -> None:
+    """Print aggregate stats: requests, tokens in/out, context category breakdown."""
+    import sqlite3
+    from token_scrooge.config import Settings
+    db_path = Settings.load().storage.db_path
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM requests")
+    total_requests = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT
+            COALESCE(SUM(tokens_total_input), 0),
+            COALESCE(SUM(tokens_total_output), 0),
+            COALESCE(SUM(provider_input_tokens), 0),
+            COALESCE(SUM(provider_output_tokens), 0),
+            COALESCE(SUM(tokens_system_prompt), 0),
+            COALESCE(SUM(tokens_tool_definitions), 0),
+            COALESCE(SUM(tokens_tool_results), 0),
+            COALESCE(SUM(tokens_file_contents), 0),
+            COALESCE(SUM(tokens_conversation_history), 0),
+            COALESCE(SUM(tokens_current_user_message), 0),
+            COALESCE(SUM(tokens_assistant_prefill), 0),
+            COALESCE(SUM(tokens_uncategorized), 0)
+        FROM requests
+    """)
+    row = cur.fetchone()
+    (total_in, total_out, prov_in, prov_out,
+     sys_p, tool_def, tool_res, file_c, conv_hist, cur_msg, prefill, uncat) = row
+    con.close()
+
+    console.print(f"\n[bold cyan]Token-Scrooge Report[/bold cyan]\n")
+
+    # Summary
+    summary = Table(show_header=False, box=None, padding=(0, 2))
+    summary.add_column("Key", style="bold")
+    summary.add_column("Value", justify="right")
+    summary.add_row("Total requests", str(total_requests))
+    summary.add_row("Total input tokens (estimated)", f"{total_in:,}")
+    summary.add_row("Total output tokens (estimated)", f"{total_out:,}")
+    summary.add_row("Total input tokens (provider)", f"{prov_in:,}")
+    summary.add_row("Total output tokens (provider)", f"{prov_out:,}")
+    console.print(summary)
+
+    # Category breakdown
+    categories = [
+        ("System prompt",           sys_p),
+        ("Tool definitions",        tool_def),
+        ("Tool results",            tool_res),
+        ("File contents",           file_c),
+        ("Conversation history",    conv_hist),
+        ("Current user message",    cur_msg),
+        ("Assistant prefill",       prefill),
+        ("Uncategorized",           uncat),
+    ]
+    total_cat = sum(v for _, v in categories) or 1  # avoid div/0
+
+    breakdown = Table(title="Input token category breakdown", header_style="bold")
+    breakdown.add_column("Category", style="bold")
+    breakdown.add_column("Tokens", justify="right")
+    breakdown.add_column("Share", justify="right")
+    for name, val in categories:
+        pct = val / total_cat * 100
+        bar = "█" * int(pct / 5)
+        breakdown.add_row(name, f"{val:,}", f"{pct:5.1f}%  {bar}")
+    console.print(breakdown)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# setup-claude
+# ---------------------------------------------------------------------------
+
+@app.command("setup-claude")
+def setup_claude() -> None:
+    """Print commands to route Claude Code through the token-scrooge proxy."""
+    from token_scrooge.config import Settings
+    settings = Settings.load()
+    port = settings.proxy.port
+    cert = str(settings.storage.db_path).replace("token-scrooge.db", "").rstrip("/\\")
+    # mitmproxy stores certs in ~/.mitmproxy
+    import pathlib
+    cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+
+    console.print("\n[bold cyan]Claude Code — proxy setup[/bold cyan]\n")
+    console.print("Run the following in the terminal where you launch [bold]claude[/bold]:\n")
+    console.print("[bold yellow]PowerShell:[/bold yellow]")
+    console.print(f'  $env:HTTPS_PROXY = "http://127.0.0.1:{port}"')
+    console.print(f'  $env:NODE_EXTRA_CA_CERTS = "{cert_path}"')
+    console.print()
+    console.print("[bold yellow]Bash / Zsh:[/bold yellow]")
+    console.print(f'  export HTTPS_PROXY=http://127.0.0.1:{port}')
+    console.print(f'  export NODE_EXTRA_CA_CERTS="{cert_path}"')
+    console.print()
+    console.print("[dim]Tip: add these to your shell profile to make them permanent.[/dim]")
+    console.print("[dim]Run [bold]token-scrooge install-cert[/bold] if SSL errors occur.[/dim]\n")
+
+
+# ---------------------------------------------------------------------------
+# setup-copilot
+# ---------------------------------------------------------------------------
+
+@app.command("setup-copilot")
+def setup_copilot() -> None:
+    """Print commands to route GitHub Copilot through the token-scrooge proxy."""
+    from token_scrooge.config import Settings
+    settings = Settings.load()
+    port = settings.proxy.port
+    import pathlib
+    cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+
+    console.print("\n[bold cyan]GitHub Copilot — proxy setup[/bold cyan]\n")
+    console.print("Run the following in the terminal where VS Code / the Copilot extension runs:\n")
+    console.print("[bold yellow]PowerShell:[/bold yellow]")
+    console.print(f'  $env:HTTPS_PROXY = "http://127.0.0.1:{port}"')
+    console.print(f'  $env:NODE_EXTRA_CA_CERTS = "{cert_path}"')
+    console.print()
+    console.print("[bold yellow]Bash / Zsh:[/bold yellow]")
+    console.print(f'  export HTTPS_PROXY=http://127.0.0.1:{port}')
+    console.print(f'  export NODE_EXTRA_CA_CERTS="{cert_path}"')
+    console.print()
+    console.print("[bold]VS Code settings.json[/bold] (alternative — applies to all extensions):")
+    console.print(f'  "http.proxy": "http://127.0.0.1:{port}",')
+    console.print( '  "http.proxyStrictSSL": false')
+    console.print()
+    console.print("[dim]Copilot uses copilot-proxy.githubusercontent.com — already in the provider list.[/dim]")
+    console.print("[dim]Run [bold]token-scrooge install-cert[/bold] if SSL errors occur.[/dim]\n")
+
+
 if __name__ == "__main__":
     app()
