@@ -69,7 +69,7 @@ export default function Dashboard() {
       </div>
 
       {/* Tool breakdown */}
-      <ToolBreakdown tools={toolStats.data?.tools ?? []} />
+      <ToolBreakdown tools={toolStats.data?.tools ?? []} totalInputTokens={s?.tokens_total_input} />
 
       {/* Recent requests */}
       <div className="bg-gray-800 rounded-lg p-4">
