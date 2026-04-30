@@ -1,7 +1,7 @@
-# Token-Scrooge — Technical Specification v0.1
+# Token-Scrooge — Technical Specification v0.2
 
-> **Status:** Draft — April 30, 2026  
-> **Purpose:** Feed to a coding agent to implement the full application.
+> **Status:** Implemented — April 30, 2026  
+> **Purpose:** Living specification — reflects the currently running codebase.
 
 ---
 
@@ -32,7 +32,6 @@ Token-Scrooge is a local HTTPS proxy that sits between LLM coding agents (GitHub
 - Supporting providers beyond OpenAI, Anthropic, Ollama, and GitHub Copilot.
 - Modifying or blocking intercepted traffic.
 - Authentication or authorisation on the web UI.
-- Streaming response (SSE / `text/event-stream`) deep analysis — capture totals only from the final `usage` field.
 
 ---
 
@@ -43,10 +42,10 @@ Token-Scrooge is a local HTTPS proxy that sits between LLM coding agents (GitHub
 │  Coding Agent (Copilot / Claude / opencode / openai SDK)     │
 └───────────────────────┬──────────────────────────────────────┘
                         │  HTTPS
-                        │  via HTTPS_PROXY=http://127.0.0.1:8080
+                        │  via HTTPS_PROXY=http://127.0.0.1:8888
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  Token-Scrooge Proxy  (mitmproxy, 127.0.0.1:8080)                 │
+│  Token-Scrooge Proxy  (mitmproxy, 127.0.0.1:8888)                 │
 │  • TLS termination via local CA cert                          │
 │  • Filters to known LLM hostnames only                        │
 │  • Calls analysis pipeline on each response                   │
@@ -81,7 +80,7 @@ The proxy addon and the FastAPI backend run **in the same Python process**: mitm
 ### 5.1 HTTPS Proxy
 
 **Technology:** `mitmproxy` Python library (inline addon API).  
-**Port:** `8080` (configurable).  
+**Port:** `8888` (configurable via `--proxy-port`; default changed from 8080 because port 8080 is commonly occupied by other local services).  
 **Bind address:** `127.0.0.1` only.
 
 #### TLS Interception
@@ -110,20 +109,38 @@ Only intercept flows to the following hosts (all other traffic is passed through
 
 #### Addon Class: `TokenScroogeAddon`
 
+The addon handles both regular JSON responses and SSE streaming responses:
+
 ```python
 class TokenScroogeAddon:
     def request(self, flow):
         flow.metadata["ts_start"] = time.monotonic()
 
+    def responseheaders(self, flow):
+        # For text/event-stream responses, attach a streaming callback
+        # that collects SSE chunks. When the stream ends (empty bytes
+        # sentinel), parse the accumulated SSE data and save the record.
+        # Sets flow.metadata["is_sse"] = True to suppress response().
+
     def response(self, flow):
+        # Skipped if is_sse is set (handled by stream callback).
+        # Otherwise:
         # 1. Check hostname filter — skip if not an LLM host
-        # 2. Extract request/response bodies
+        # 2. Extract request/response bodies (JSON)
         # 3. Detect provider from hostname
         # 4. Detect agent from User-Agent header
         # 5. Run analysis pipeline → get token breakdown
         # 6. Persist record to SQLite
         # 7. Emit WebSocket event for live UI update
 ```
+
+#### mitmproxy Runner (`proxy/runner.py`)
+
+- `DumpMaster` is constructed **inside** the proxy thread after `asyncio.new_event_loop()` is set, with `loop=loop` passed explicitly to avoid `RuntimeError: no running event loop`.
+- The `ErrorCheck` addon (which calls `sys.exit(1)` on port-bind failure) is removed from the addon chain after construction to prevent it from killing the uvicorn process.
+- A `_BindWatcher` logging handler watches the mitmproxy logger for `"listening at"` / `"failed to listen"` messages and sets a `_bound` flag accordingly.
+- `is_running()` returns `True` only when `_bound` is `True` **and** the proxy thread is alive.
+- `with_termlog=False, with_dumper=False` suppresses mitmproxy's own log/dump addons.
 
 ---
 
@@ -133,14 +150,25 @@ Runs synchronously after each captured response. Parses the JSON request body ac
 
 #### Supported Request Formats
 
-| Provider | Endpoint | Format |
-|---|---|---|
-| OpenAI | `POST /v1/chat/completions` | OpenAI Chat Completions |
-| Anthropic | `POST /v1/messages` | Anthropic Messages API |
-| Ollama | `POST /api/chat` | Ollama chat format |
-| Copilot | `POST /v1/chat/completions` | OpenAI-compatible |
+| Provider | Endpoint | Format | Streaming |
+|---|---|---|---|
+| OpenAI | `POST /v1/chat/completions` | OpenAI Chat Completions | ✅ SSE |
+| Anthropic | `POST /v1/messages` | Anthropic Messages API | ✅ SSE |
+| Ollama | `POST /api/chat` | Ollama chat format | — |
+| Copilot | `POST /v1/chat/completions` | OpenAI-compatible | ✅ SSE |
 
 Requests to unrecognised endpoints for a known host are recorded with `tokens_uncategorized = total_input_tokens` and all other category fields = 0.
+
+#### SSE Streaming Parsing (`providers.py`)
+
+Because Claude Code and most modern LLM clients use streaming responses (`Content-Type: text/event-stream`), the `response()` mitmproxy hook does not fire for these flows. Instead:
+
+- `responseheaders()` detects `text/event-stream` and attaches `flow.response.stream = _collect_callback`.
+- The callback accumulates raw SSE bytes in `sse_chunks`.
+- On stream end (empty-bytes sentinel), `parse_sse_request(provider, endpoint, req_body, raw_sse_bytes)` is called.
+- `_sse_to_anthropic_resp(raw)` parses Anthropic SSE events (`message_start`, `content_block_delta`, `message_delta`) into a `resp_body` dict compatible with `parse_anthropic()`.
+- `_sse_to_openai_resp(raw)` parses OpenAI SSE events (`choices[].delta.content`, `usage`) into a dict compatible with `parse_openai()`.
+- Token counts, category breakdown, and raw SSE text are then stored normally.
 
 #### Content Categories
 
@@ -397,7 +425,7 @@ The production build (`ui/dist/`) is served as static files by FastAPI. During d
 - **Proxy configuration**: port (editable, requires restart).
 - **CA Certificate**: installation status badge (installed / not installed), one-click install button (calls backend which runs OS command), manual instructions panel.
 - **Agent setup instructions**: tabbed panel per agent, showing exact env vars / VS Code settings to configure.
-  - *All agents (general):* `export HTTPS_PROXY=http://127.0.0.1:8080`
+  - *All agents (general):* `export HTTPS_PROXY=http://127.0.0.1:8888`
   - *GitHub Copilot:* VS Code `settings.json` snippet.
   - *Claude CLI / opencode:* env var instructions.
   - *OpenAI SDK scripts:* env var instructions.
@@ -410,10 +438,39 @@ The production build (`ui/dist/`) is served as static files by FastAPI. During d
 **CLI framework:** Typer.
 
 ```
-token-scrooge start [--proxy-port 8080] [--web-port 5173]
+token-scrooge start [--proxy-port 8888] [--web-port 5173] [--no-browser]
     Start both the proxy and web server in the same process.
     Opens browser to http://127.0.0.1:5173 on startup.
     Ctrl+C for clean shutdown.
+
+token-scrooge help
+    Print a table of all available commands with descriptions.
+
+token-scrooge status
+    Show whether the proxy is running, active session name, DB path.
+
+token-scrooge install-cert
+    Run OS-specific CA cert trust-store installation.
+
+token-scrooge reset-db [--yes]
+    Delete ALL requests and sessions from the local SQLite database.
+    Prompts for confirmation unless --yes is passed.
+
+token-scrooge db-stats
+    Print row counts for each table in the database (offline — no server needed).
+
+token-scrooge report
+    Print aggregate stats: total requests, input/output tokens (estimated and
+    provider-reported), and an input token category breakdown table with
+    percentages and a bar indicator.
+
+token-scrooge setup-claude
+    Print the exact PowerShell and Bash env-var commands needed to route
+    Claude Code traffic through the proxy (HTTPS_PROXY + NODE_EXTRA_CA_CERTS).
+
+token-scrooge setup-copilot
+    Print the exact PowerShell, Bash, and VS Code settings.json snippet
+    needed to route GitHub Copilot traffic through the proxy.
 
 token-scrooge session start <name>
     Start a named session (calls POST /api/sessions).
@@ -424,15 +481,9 @@ token-scrooge session end
 
 token-scrooge session list
     Print a table of sessions.
-
-token-scrooge status
-    Show whether the proxy is running, active session name, DB path.
-
-token-scrooge install-cert
-    Run OS-specific CA cert trust-store installation.
 ```
 
-`session start`, `session end`, `session list` require the web server to be running (they call the REST API on localhost).
+`session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-stats`, `report`, `setup-claude`, and `setup-copilot` work offline.
 
 ---
 
@@ -472,7 +523,7 @@ Copilot in VS Code may not honour the system `HTTPS_PROXY` environment variable 
 
 ```json
 {
-  "http.proxy": "http://127.0.0.1:8080",
+  "http.proxy": "http://127.0.0.1:8888",
   "http.proxyStrictSSL": false
 }
 ```
@@ -616,7 +667,7 @@ Config file: `~/.token-scrooge/config.toml` (created on first run with defaults)
 
 ```toml
 [proxy]
-port = 8080
+port = 8888
 bind_addr = "127.0.0.1"
 
 [web]
@@ -632,6 +683,8 @@ extra_hosts = []
 ```
 
 Config values can be overridden by CLI flags. The `config.py` module loads this file and exposes a `Settings` object.
+
+> **Windows note:** When writing the config file, `db_path` backslashes are converted to forward slashes before serialisation. Raw Windows paths (e.g. `C:\Users\...`) would cause `TOMLDecodeError` because TOML interprets `\U` and `\u` as Unicode escapes in double-quoted strings.
 
 ---
 
@@ -654,9 +707,18 @@ When `token-scrooge start` is called:
 
 - **Native tokenizer support:** Anthropic provides a token-counting API endpoint; Ollama has `/api/tokenize`. These could be used for exact counts per provider.
 - **Cost estimation:** Add a `models_pricing.json` lookup table (input/output price per 1K tokens per model) to compute estimated cost per request.
-- **Streaming responses (SSE):** Currently, only the final `usage` field is captured for streaming responses. Full streaming body reconstruction would allow per-chunk analysis.
 - **Export:** CSV / JSON export of session data from the UI.
 - **Prompt diffing:** Visual diff of the context window between consecutive requests in the same session.
 - **opencode User-Agent:** Confirm the User-Agent string once opencode is available for testing.
-- **Copilot proxy behaviour:** Re-examine whether `HTTPS_PROXY` works for Copilot in newer VS Code versions.
 - **Re-tokenisation:** Add an API endpoint to re-count tokens for historical requests using a different tokenizer, without re-capturing.
+- **Claude Code agent detection:** Claude Code does not set a distinctive `User-Agent`; requests currently show `agent = "unknown"`. A future heuristic (e.g. header fingerprinting or process-level detection) could improve this.
+
+## 13. Known Issues & Resolved Bugs
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| `TOMLDecodeError: Invalid hex value` on Windows | Windows path `C:\Users\...` written to TOML double-quoted string — `\U` is a TOML Unicode escape | Convert backslashes to forward slashes before writing |
+| `RuntimeError: no running event loop` on proxy start | `DumpMaster.__init__` calls `asyncio.get_running_loop()` before the thread's loop is set | Pass `loop=loop` explicitly; construct `DumpMaster` inside the thread after `asyncio.set_event_loop(loop)` |
+| `sys.exit(1)` killing uvicorn on port conflict | mitmproxy's built-in `ErrorCheck` addon calls `sys.exit` on any startup error | Remove `ErrorCheck` from `master.addons.chain` after construction |
+| `is_running()` returning `True` when proxy is not bound | Only checked thread liveness | Added `_bound` flag set via `_BindWatcher` log handler |
+| Hooks not firing for Claude Code requests | Claude Code uses SSE streaming; `response()` hook never fires for `text/event-stream` | Added `responseheaders()` hook + streaming callback that collects SSE chunks |
