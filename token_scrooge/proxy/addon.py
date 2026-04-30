@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 import logging
 import time
 from datetime import datetime, timezone
@@ -114,6 +115,30 @@ class TokenScroogeAddon:
             logger.warning("TokenScroogeAddon error: %s", exc, exc_info=True)
 
     def _handle_sse_response(self, flow: http.HTTPFlow, raw_sse: bytes) -> None:
+        # Decompress if the response was content-encoded
+        if flow.response:
+            encoding = flow.response.headers.get("content-encoding", "").lower()
+            if encoding == "gzip":
+                try:
+                    raw_sse = gzip.decompress(raw_sse)
+                except Exception:
+                    pass
+            elif encoding in ("deflate", "zlib"):
+                import zlib
+                try:
+                    raw_sse = zlib.decompress(raw_sse)
+                except Exception:
+                    try:
+                        raw_sse = zlib.decompress(raw_sse, -zlib.MAX_WBITS)
+                    except Exception:
+                        pass
+            elif encoding == "br":
+                try:
+                    import brotli  # type: ignore
+                    raw_sse = brotli.decompress(raw_sse)
+                except Exception:
+                    pass
+
         host = flow.request.pretty_host
         port = flow.request.port
         provider = _detect_provider(host, port)
