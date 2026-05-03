@@ -179,7 +179,7 @@ interface BlockProps {
 }
 
 function TokenBlock({ block, tokens }: BlockProps) {
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const tokenCount = tokens?.length ?? null
 
   return (
