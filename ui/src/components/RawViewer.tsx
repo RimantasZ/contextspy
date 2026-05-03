@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
+import { ParsedViewer } from './ParsedViewer';
 
 // ---------------------------------------------------------------------------
 // Syntax-highlighted, collapsible JSON tree
@@ -163,10 +164,12 @@ function SseViewer({ raw, searchLower }: { raw: string; searchLower: string }) {
 interface Props {
   title: string;
   content: string | null | undefined;
+  parsedBody?: string | null;
 }
 
-export function RawViewer({ title, content }: Props) {
+export function RawViewer({ title, content, parsedBody }: Props) {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'parsed' | 'raw'>('parsed');
   const [search, setSearch] = useState('');
   const searchLower = search.toLowerCase();
 
@@ -219,32 +222,59 @@ export function RawViewer({ title, content }: Props) {
         <div className="bg-gray-900">
           {purged ? (
             <p className="px-4 py-3 text-sm text-gray-500 italic">
-              Raw content has been purged — session ended.
+              Raw content has been purged.
             </p>
           ) : (
             <>
-              {/* Search bar */}
-              <div className="px-3 py-2 border-b border-gray-800">
-                <input
-                  type="text"
-                  placeholder="Search…"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-              {/* Content */}
-              <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
-                {isSse ? (
-                  <SseViewer raw={parsed as string} searchLower={searchLower} />
-                ) : isJson ? (
-                  <JsonNode value={parsed as JsonValue} depth={0} searchLower={searchLower} />
-                ) : (
-                  <pre className="text-gray-300 whitespace-pre-wrap break-all">
-                    {typeof parsed === 'string' ? parsed : String(parsed)}
-                  </pre>
-                )}
-              </div>
+              {/* Tab bar — only when parsedBody is provided */}
+              {parsedBody != null && (
+                <div className="flex border-b border-gray-800">
+                  {(['parsed', 'raw'] as const).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setTab(t)}
+                      className={`px-4 py-2 text-xs font-medium capitalize border-b-2 -mb-px transition-colors ${
+                        tab === t
+                          ? 'border-indigo-500 text-indigo-300'
+                          : 'border-transparent text-gray-500 hover:text-gray-300'
+                      }`}
+                    >
+                      {t === 'parsed' ? 'Parsed' : 'Raw'}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* Parsed tab */}
+              {parsedBody != null && tab === 'parsed' && (
+                <ParsedViewer rawBody={parsedBody} />
+              )}
+              {/* Raw tab (or sole content when no parsedBody) */}
+              {(parsedBody == null || tab === 'raw') && (
+                <>
+                  {/* Search bar */}
+                  <div className="px-3 py-2 border-b border-gray-800">
+                    <input
+                      type="text"
+                      placeholder="Search…"
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  {/* Content */}
+                  <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
+                    {isSse ? (
+                      <SseViewer raw={parsed as string} searchLower={searchLower} />
+                    ) : isJson ? (
+                      <JsonNode value={parsed as JsonValue} depth={0} searchLower={searchLower} />
+                    ) : (
+                      <pre className="text-gray-300 whitespace-pre-wrap break-all">
+                        {typeof parsed === 'string' ? parsed : String(parsed)}
+                      </pre>
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>

@@ -147,7 +147,7 @@ export default function RequestDetail() {
 
       {/* Raw bodies */}
       <div className="space-y-3">
-        <RawViewer title="Raw request body" content={req.raw_request_body} />
+        <RawViewer title="Raw request body" content={req.raw_request_body} parsedBody={req.raw_request_body} />
         <RawViewer title="Raw response body" content={req.raw_response_body} />
       </div>
     </div>

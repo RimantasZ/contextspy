@@ -141,3 +141,13 @@ export const proxyApi = {
   installCert: () =>
     apiFetch<{ success: boolean; message: string }>('/proxy/install-cert', { method: 'POST' }),
 }
+
+// ---- Tokenize API ---------------------------------------------------------
+
+export const tokenizeApi = {
+  tokenize: (texts: string[]) =>
+    apiFetch<{ results: string[][] }>('/tokenize', {
+      method: 'POST',
+      body: JSON.stringify({ texts }),
+    }),
+}

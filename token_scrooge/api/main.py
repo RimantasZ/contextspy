@@ -51,11 +51,13 @@ def create_app(settings=None) -> FastAPI:
     from token_scrooge.api.routers import requests as requests_router
     from token_scrooge.api.routers import sessions as sessions_router
     from token_scrooge.api.routers import stats as stats_router
+    from token_scrooge.api.routers import tokenize as tokenize_router
 
     app.include_router(sessions_router.router, prefix="/api")
     app.include_router(requests_router.router, prefix="/api")
     app.include_router(stats_router.router, prefix="/api")
     app.include_router(proxy_router.router, prefix="/api")
+    app.include_router(tokenize_router.router, prefix="/api")
 
     # WebSocket
     @app.websocket("/api/ws")

@@ -10,3 +10,13 @@ def count_tokens(text: str) -> int:
     if not text:
         return 0
     return len(_encoder.encode(text, disallowed_special=()))
+
+
+def get_token_strings(text: str, max_tokens: int = 8_000) -> list[str]:
+    """Return the string representation of each token (truncated to max_tokens)."""
+    if not text:
+        return []
+    ids = _encoder.encode(text[:200_000], disallowed_special=())
+    if len(ids) > max_tokens:
+        ids = ids[:max_tokens]
+    return [_encoder.decode([t]) for t in ids]

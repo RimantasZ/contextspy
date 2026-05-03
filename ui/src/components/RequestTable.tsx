@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Request, Session } from '../api/client';
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -35,7 +36,12 @@ interface Props {
 }
 
 export function RequestTable({ requests, sessions, onRowClick }: Props) {
+  const [hideEmpty, setHideEmpty] = useState(true);
   const sessionMap = new Map((sessions ?? []).map(s => [s.id, s.name]));
+
+  const visible = hideEmpty
+    ? requests.filter(r => r.tokens_total_input > 0 || r.tokens_total_output > 0)
+    : requests;
 
   if (requests.length === 0) {
     return (
@@ -47,6 +53,23 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
 
   return (
     <div className="overflow-x-auto">
+      {/* Filter row */}
+      <div className="flex items-center gap-2 mb-3">
+        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={hideEmpty}
+            onChange={e => setHideEmpty(e.target.checked)}
+            className="accent-indigo-500 w-3.5 h-3.5 cursor-pointer"
+          />
+          Hide empty requests
+        </label>
+        {hideEmpty && requests.length !== visible.length && (
+          <span className="text-xs text-gray-600">
+            ({requests.length - visible.length} hidden)
+          </span>
+        )}
+      </div>
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-gray-400 border-b border-gray-700">
@@ -61,7 +84,7 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
           </tr>
         </thead>
         <tbody>
-          {requests.map((req) => (
+          {visible.map((req) => (
             <tr
               key={req.id}
               onClick={() => onRowClick(req.id)}
