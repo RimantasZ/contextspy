@@ -138,10 +138,9 @@ def classify(parsed: ParsedRequest) -> CategoryBreakdown:
 def per_tool_tokens(parsed: ParsedRequest) -> list[dict]:
     """Return per-tool definition token counts and result token counts.
 
-    Definition tokens: each individual tool definition counted separately.
-    Result tokens: attributed to the tool name found in the matching tool_use block.
-    Since result attribution is complex, result_tokens are split evenly across
-    all tools that appear in the request for simplicity.
+    Definition tokens: each tool definition counted individually.
+    Result tokens: attributed to the specific tool via tool_call_id mapping;
+    falls back to even distribution only when the call_id cannot be resolved.
     """
     if not parsed.tool_definitions_text:
         return []
@@ -158,19 +157,30 @@ def per_tool_tokens(parsed: ParsedRequest) -> list[dict]:
     rows: list[dict] = []
     for tool in tools:
         name = tool.get("name") or tool.get("function", {}).get("name") or "unknown"
-        # Count tokens for this single tool definition
         def_tokens = count_tokens(json.dumps(tool))
         rows.append({"tool_name": name, "definition_tokens": def_tokens, "result_tokens": 0})
 
-    # Distribute tool_result tokens evenly across tools (best approximation
-    # without correlating tool_use_ids to names across messages)
-    total_results = sum(
-        count_tokens(msg.content) for msg in parsed.messages if msg.is_tool_result
-    )
-    if total_results > 0 and rows:
-        per = total_results // len(rows)
-        remainder = total_results % len(rows)
+    name_to_idx = {row["tool_name"]: i for i, row in enumerate(rows)}
+
+    unattributed_tokens = 0
+    for msg in parsed.messages:
+        if not msg.is_tool_result:
+            continue
+        tokens = count_tokens(msg.content)
+        if tokens == 0:
+            continue
+        # Resolve via tool_call_id → tool_name map
+        tool_name = parsed.tool_call_map.get(msg.tool_call_id or "") if msg.tool_call_id else None
+        if tool_name and tool_name in name_to_idx:
+            rows[name_to_idx[tool_name]]["result_tokens"] += tokens
+        else:
+            unattributed_tokens += tokens
+
+    # Distribute any unattributed tokens evenly
+    if unattributed_tokens > 0 and rows:
+        per = unattributed_tokens // len(rows)
+        remainder = unattributed_tokens % len(rows)
         for i, row in enumerate(rows):
-            row["result_tokens"] = per + (1 if i < remainder else 0)
+            row["result_tokens"] += per + (1 if i < remainder else 0)
 
     return rows

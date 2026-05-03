@@ -25,6 +25,8 @@ class ParsedRequest:
     provider_output_tokens: int | None
     response_text: str
     raw_endpoint: str = ""
+    # Maps tool_call_id → tool_name for accurate result attribution
+    tool_call_map: dict[str, str] = field(default_factory=dict)
 
 
 def _content_to_str(content: Any) -> str:
@@ -64,15 +66,26 @@ def parse_openai(req_body: dict, resp_body: dict) -> ParsedRequest:
     tool_defs_text = json.dumps(tools) if tools else ""
 
     messages: list[ParsedMessage] = []
+    tool_call_map: dict[str, str] = {}
+
     for msg in raw_messages:
         role = msg.get("role", "user")
         content = _content_to_str(msg.get("content", ""))
         is_tool_result = role == "tool" or bool(msg.get("tool_call_id"))
+        tool_call_id = msg.get("tool_call_id")
+
+        # Build call_id → tool_name map from assistant tool_calls
+        for tc in msg.get("tool_calls") or []:
+            call_id = tc.get("id")
+            name = (tc.get("function") or {}).get("name") or tc.get("name")
+            if call_id and name:
+                tool_call_map[call_id] = name
+
         messages.append(
             ParsedMessage(
                 role=role,
                 content=content,
-                tool_call_id=msg.get("tool_call_id"),
+                tool_call_id=tool_call_id,
                 is_tool_result=is_tool_result,
             )
         )
@@ -97,6 +110,7 @@ def parse_openai(req_body: dict, resp_body: dict) -> ParsedRequest:
         provider_input_tokens=provider_input,
         provider_output_tokens=provider_output,
         response_text=response_text,
+        tool_call_map=tool_call_map,
     )
 
 
@@ -112,6 +126,7 @@ def parse_anthropic(req_body: dict, resp_body: dict) -> ParsedRequest:
     tool_defs_text = json.dumps(tools) if tools else ""
 
     messages: list[ParsedMessage] = []
+    tool_call_map: dict[str, str] = {}
 
     # Inject system as a synthetic message
     if system_text:
@@ -123,19 +138,31 @@ def parse_anthropic(req_body: dict, resp_body: dict) -> ParsedRequest:
         role = msg.get("role", "user")
         content = msg.get("content", "")
 
-        # Detect tool_result blocks
+        # Build call_id → tool_name from assistant tool_use blocks
+        if role == "assistant" and isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    call_id = block.get("id")
+                    name = block.get("name")
+                    if call_id and name:
+                        tool_call_map[call_id] = name
+
+        # Detect tool_result blocks and extract tool_use_id
         is_tool_result = False
+        tool_call_id = None
         if isinstance(content, list):
-            if any(
-                isinstance(b, dict) and b.get("type") == "tool_result"
-                for b in content
-            ):
-                is_tool_result = True
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    is_tool_result = True
+                    # Take the first tool_use_id found
+                    if tool_call_id is None:
+                        tool_call_id = block.get("tool_use_id")
 
         messages.append(
             ParsedMessage(
                 role=role,
                 content=_content_to_str(content),
+                tool_call_id=tool_call_id,
                 is_tool_result=is_tool_result,
             )
         )
@@ -165,6 +192,7 @@ def parse_anthropic(req_body: dict, resp_body: dict) -> ParsedRequest:
         provider_input_tokens=provider_input,
         provider_output_tokens=provider_output,
         response_text=response_text,
+        tool_call_map=tool_call_map,
     )
 
 

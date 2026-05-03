@@ -51,18 +51,17 @@ def get_db() -> Generator[OrmSession, None, None]:
 
 
 def startup_vacuum() -> None:
-    """NULL out raw bodies for session-less requests older than 24 hours."""
+    """NULL out raw bodies for any request older than 7 days."""
     if _engine is None:
         return
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     with _engine.begin() as conn:
         conn.execute(
             text(
                 """
                 UPDATE requests
                 SET raw_request_body = NULL, raw_response_body = NULL
-                WHERE session_id IS NULL
-                  AND timestamp < :cutoff
+                WHERE timestamp < :cutoff
                   AND (raw_request_body IS NOT NULL OR raw_response_body IS NOT NULL)
                 """
             ),

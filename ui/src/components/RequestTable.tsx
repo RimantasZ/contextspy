@@ -1,4 +1,4 @@
-import type { Request } from '../api/client';
+import type { Request, Session } from '../api/client';
 
 const PROVIDER_COLORS: Record<string, string> = {
   openai: 'bg-green-900 text-green-300',
@@ -30,10 +30,13 @@ function formatTime(ts: string): string {
 
 interface Props {
   requests: Request[];
+  sessions?: Session[];
   onRowClick: (id: string) => void;
 }
 
-export function RequestTable({ requests, onRowClick }: Props) {
+export function RequestTable({ requests, sessions, onRowClick }: Props) {
+  const sessionMap = new Map((sessions ?? []).map(s => [s.id, s.name]));
+
   if (requests.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500 text-sm">
@@ -48,6 +51,7 @@ export function RequestTable({ requests, onRowClick }: Props) {
         <thead>
           <tr className="text-left text-gray-400 border-b border-gray-700">
             <th className="pb-2 pr-4 font-medium">Time</th>
+            <th className="pb-2 pr-4 font-medium">Session</th>
             <th className="pb-2 pr-4 font-medium">Provider</th>
             <th className="pb-2 pr-4 font-medium">Agent</th>
             <th className="pb-2 pr-4 font-medium">Model</th>
@@ -65,6 +69,15 @@ export function RequestTable({ requests, onRowClick }: Props) {
             >
               <td className="py-2 pr-4 text-gray-400 font-mono text-xs">
                 {formatTime(req.timestamp)}
+              </td>
+              <td className="py-2 pr-4">
+                {req.session_id && sessionMap.has(req.session_id) ? (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900 text-indigo-300 truncate max-w-[100px] inline-block" title={sessionMap.get(req.session_id)}>
+                    {sessionMap.get(req.session_id)}
+                  </span>
+                ) : (
+                  <span className="text-gray-600 text-xs">n/a</span>
+                )}
               </td>
               <td className="py-2 pr-4">
                 <span

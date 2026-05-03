@@ -241,6 +241,8 @@ def reset_db(
     db_path = Settings.load().storage.db_path
     con = sqlite3.connect(db_path)
     cur = con.cursor()
+    cur.execute("PRAGMA foreign_keys = ON")
+    cur.execute("DELETE FROM tool_stats")
     cur.execute("DELETE FROM requests")
     cur.execute("DELETE FROM sessions")
     con.commit()

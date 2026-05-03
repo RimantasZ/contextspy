@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStatsOverview, useTimeline, useRequests, useToolStats } from '../api/hooks';
+import { useStatsOverview, useTimeline, useRequests, useToolStats, useSessions } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
@@ -28,6 +28,7 @@ export default function Dashboard() {
   const timeline = useTimeline(undefined, bucket);
   const requests = useRequests({ limit: 20 });
   const toolStats = useToolStats();
+  const sessions = useSessions();
 
   const s = stats.data;
 
@@ -79,6 +80,7 @@ export default function Dashboard() {
         <p className="text-sm font-medium text-gray-300 mb-4">Recent requests</p>
         <RequestTable
           requests={requests.data?.requests ?? []}
+          sessions={sessions.data?.sessions}
           onRowClick={(id) => navigate(`/requests/${id}`)}
         />
       </div>
