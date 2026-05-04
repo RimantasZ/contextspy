@@ -54,7 +54,9 @@ function Donut({ title, data, total, placeholder }: DonutProps) {
               {data.map(entry => <Cell key={entry.name} fill={toolColor(entry.idx)} />)}
             </Pie>
             <Tooltip
-              contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: 6, fontSize: 11 }}
+              contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '6px' }}
+              labelStyle={{ color: '#f9fafb' }}
+              itemStyle={{ color: '#d1d5db' }}
               formatter={(val: number) => [
                 `${val.toLocaleString()} (${total > 0 ? ((val / total) * 100).toFixed(1) : 0}%)`,
               ]}

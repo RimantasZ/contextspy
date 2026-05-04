@@ -1,4 +1,4 @@
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
 const CATEGORY_COLORS: Record<string, string> = {
   system_prompt: '#6366f1',
@@ -29,6 +29,7 @@ interface Props {
 export function TokenDonut({ data }: Props) {
   const entries = Object.entries(data)
     .filter(([, v]) => v > 0)
+    .sort(([, a], [, b]) => b - a)
     .map(([key, value]) => ({
       name: CATEGORY_LABELS[key] ?? key,
       value,
@@ -46,33 +47,63 @@ export function TokenDonut({ data }: Props) {
   const total = entries.reduce((sum, e) => sum + e.value, 0);
 
   return (
-    <ResponsiveContainer width="100%" height={240}>
-      <PieChart>
-        <Pie
-          data={entries}
-          cx="50%"
-          cy="50%"
-          innerRadius={60}
-          outerRadius={90}
-          paddingAngle={2}
-          dataKey="value"
-        >
-          {entries.map((entry, i) => (
-            <Cell key={i} fill={entry.color} />
-          ))}
-        </Pie>
-        <Tooltip
-          formatter={(value: number) => [
-            `${value.toLocaleString()} tokens (${((value / total) * 100).toFixed(1)}%)`,
-          ]}
-          contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '6px' }}
-          labelStyle={{ color: '#f9fafb' }}
-          itemStyle={{ color: '#d1d5db' }}
-        />
-        <Legend
-          formatter={(value) => <span style={{ color: '#d1d5db', fontSize: '12px' }}>{value}</span>}
-        />
-      </PieChart>
-    </ResponsiveContainer>
+    <div className="flex items-center gap-4">
+      {/* Donut — left 50% */}
+      <div style={{ width: '50%', minWidth: 0 }}>
+        <ResponsiveContainer width="100%" height={220}>
+          <PieChart>
+            <Pie
+              data={entries}
+              cx="50%"
+              cy="50%"
+              innerRadius={60}
+              outerRadius={90}
+              paddingAngle={2}
+              dataKey="value"
+            >
+              {entries.map((entry, i) => (
+                <Cell key={i} fill={entry.color} />
+              ))}
+            </Pie>
+            <Tooltip
+              formatter={(value: number) => [
+                `${value.toLocaleString()} tokens (${((value / total) * 100).toFixed(1)}%)`,
+              ]}
+              contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '6px' }}
+              labelStyle={{ color: '#f9fafb' }}
+              itemStyle={{ color: '#d1d5db' }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Table — right 50% */}
+      <div style={{ width: '50%', minWidth: 0 }} className="overflow-auto max-h-[220px]">
+        <table className="w-full text-xs text-gray-300 border-separate border-spacing-0">
+          <thead className="sticky top-0 bg-gray-800 z-10">
+            <tr className="text-gray-500 uppercase tracking-wide">
+              <th className="text-left pb-2 pr-3 font-medium border-b border-gray-700">Category</th>
+              <th className="text-right pb-2 font-medium border-b border-gray-700 whitespace-nowrap">Tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr key={entry.name} className="hover:bg-gray-700/30">
+                <td className="py-1.5 pr-3 border-b border-gray-700/40">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: entry.color }} />
+                    <span className="truncate" title={entry.name}>{entry.name}</span>
+                  </div>
+                </td>
+                <td className="py-1.5 text-right tabular-nums border-b border-gray-700/40 whitespace-nowrap">
+                  {entry.value.toLocaleString()}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
+
