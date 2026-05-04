@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from token_scrooge.analysis.providers import ParsedMessage, ParsedRequest
-from token_scrooge.analysis.tokenizer import count_tokens
+from contextspy.analysis.providers import ParsedMessage, ParsedRequest
+from contextspy.analysis.tokenizer import count_tokens
 
 # ---------------------------------------------------------------------------
 # File content heuristics

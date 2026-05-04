@@ -15,7 +15,7 @@ export default function Layout() {
     <div className="flex h-screen bg-gray-950 text-gray-100">
       {/* Sidebar */}
       <nav className="w-48 flex-shrink-0 bg-gray-900 flex flex-col py-6 px-3 gap-1">
-        <div className="text-lg font-bold text-indigo-400 px-3 mb-4">Token-Scrooge</div>
+        <div className="text-lg font-bold text-indigo-400 px-3 mb-4">ContextSpy</div>
         {navItems.map(({ to, label, exact }) => (
           <NavLink
             key={to}

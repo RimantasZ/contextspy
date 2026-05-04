@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-_DEFAULT_DIR = Path.home() / ".token-scrooge"
+_DEFAULT_DIR = Path.home() / ".contextspy"
 
 
 @dataclass
@@ -23,7 +23,7 @@ class WebSettings:
 
 @dataclass
 class StorageSettings:
-    db_path: Path = field(default_factory=lambda: _DEFAULT_DIR / "token-scrooge.db")
+    db_path: Path = field(default_factory=lambda: _DEFAULT_DIR / "contextspy.db")
 
 
 @dataclass

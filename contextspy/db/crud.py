@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session as OrmSession
 
-from token_scrooge.db.models import Request, Session, ToolStat
+from contextspy.db.models import Request, Session, ToolStat
 
 
 # ---------------------------------------------------------------------------

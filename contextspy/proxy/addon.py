@@ -10,13 +10,13 @@ import uuid
 
 from mitmproxy import http
 
-from token_scrooge.analysis.classifier import classify, per_tool_tokens
-from token_scrooge.analysis.providers import ParsedRequest, parse_request, parse_sse_request
-from token_scrooge.db import crud
-from token_scrooge.db.database import get_db
+from contextspy.analysis.classifier import classify, per_tool_tokens
+from contextspy.analysis.providers import ParsedRequest, parse_request, parse_sse_request
+from contextspy.db import crud
+from contextspy.db.database import get_db
 
 if TYPE_CHECKING:
-    from token_scrooge.api.websocket import ConnectionManager
+    from contextspy.api.websocket import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def _detect_agent(user_agent: str) -> str:
 # Addon
 # ---------------------------------------------------------------------------
 
-class TokenScroogeAddon:
+class ContextSpyAddon:
     def __init__(self) -> None:
         self.ws_manager: ConnectionManager | None = None
 
@@ -112,7 +112,7 @@ class TokenScroogeAddon:
         try:
             self._handle_response(flow)
         except Exception as exc:
-            logger.warning("TokenScroogeAddon error: %s", exc, exc_info=True)
+            logger.warning("ContextSpyAddon error: %s", exc, exc_info=True)
 
     def _handle_sse_response(self, flow: http.HTTPFlow, raw_sse: bytes) -> None:
         # Decompress if the response was content-encoded
@@ -201,7 +201,7 @@ class TokenScroogeAddon:
             provider_input = parsed.provider_input_tokens
             provider_output = parsed.provider_output_tokens
         else:
-            from token_scrooge.analysis.classifier import CategoryBreakdown
+            from contextspy.analysis.classifier import CategoryBreakdown
             breakdown = CategoryBreakdown()
             model = req_body.get("model")
             provider_input = None

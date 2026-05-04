@@ -1,4 +1,4 @@
-"""Typer CLI entry point for Token-Scrooge."""
+"""Typer CLI entry point for ContextSpy."""
 from __future__ import annotations
 
 import webbrowser
@@ -9,7 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-app = typer.Typer(name="token-scrooge", help="LLM context window analyser and proxy.", no_args_is_help=True)
+app = typer.Typer(name="contextspy", help="LLM context window analyser and proxy.", no_args_is_help=True)
 session_app = typer.Typer(help="Manage named sessions.")
 app.add_typer(session_app, name="session")
 
@@ -21,7 +21,7 @@ def _api(port: int, path: str) -> str:
 
 
 def _web_port() -> int:
-    from token_scrooge.config import Settings
+    from contextspy.config import Settings
     return Settings.load().web.port
 
 
@@ -33,8 +33,8 @@ def start(
 ) -> None:
     """Start the proxy and web server (Ctrl+C to stop)."""
     import uvicorn
-    from token_scrooge.config import Settings
-    from token_scrooge.proxy.cert import cert_exists, install_cert
+    from contextspy.config import Settings
+    from contextspy.proxy.cert import cert_exists, install_cert
 
     settings = Settings.load()
     settings.proxy.port = proxy_port
@@ -52,7 +52,7 @@ def start(
             console.print(f"[yellow]CA cert install warning:[/yellow] {msg}")
 
     url = f"http://{settings.web.bind_addr}:{settings.web.port}"
-    console.print(f"[bold green]Token-Scrooge[/bold green] starting at {url}")
+    console.print(f"[bold green]ContextSpy[/bold green] starting at {url}")
     console.print(f"  Proxy:  {settings.proxy.bind_addr}:{settings.proxy.port}")
     console.print(f"  DB:     {settings.storage.db_path}")
     console.print("Press [bold]Ctrl+C[/bold] to stop.\n")
@@ -64,7 +64,7 @@ def start(
             webbrowser.open(url)
         threading.Thread(target=_open, daemon=True).start()
 
-    from token_scrooge.api.main import create_app
+    from contextspy.api.main import create_app
     application = create_app(settings)
 
     uvicorn.run(
@@ -82,7 +82,7 @@ def start(
                 "default": {"class": "logging.StreamHandler", "formatter": "default"},
             },
             "loggers": {
-                "token_scrooge": {"handlers": ["default"], "level": "DEBUG", "propagate": False},
+                "contextspy": {"handlers": ["default"], "level": "DEBUG", "propagate": False},
                 "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
                 "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
                 "uvicorn.access": {"handlers": ["default"], "level": "WARNING", "propagate": False},
@@ -102,7 +102,7 @@ def status() -> None:
         console.print(f"Proxy port:      {data['port']}")
         console.print(f"Cert installed:  {'yes' if data['cert_installed'] else 'no'}")
     except Exception:
-        console.print("[red]Web server not reachable. Is token-scrooge running?[/red]")
+        console.print("[red]Web server not reachable. Is contextspy running?[/red]")
         return
 
     try:
@@ -120,7 +120,7 @@ def status() -> None:
 @app.command("install-cert")
 def install_cert_cmd() -> None:
     """Install the mitmproxy CA certificate into the system trust store."""
-    from token_scrooge.proxy.cert import install_cert
+    from contextspy.proxy.cert import install_cert
     ok, msg = install_cert()
     if ok:
         console.print(f"[green]{msg}[/green]")
@@ -144,7 +144,7 @@ def session_start(name: str = typer.Argument(..., help="Session name")) -> None:
             console.print(f"[yellow]{data['warning']}[/yellow]")
         console.print(f"[green]Session started:[/green] {data['session']['name']} ({data['session']['id'][:8]}…)")
     except Exception as exc:
-        console.print(f"[red]Error: {exc}. Is token-scrooge running?[/red]")
+        console.print(f"[red]Error: {exc}. Is contextspy running?[/red]")
         raise typer.Exit(1)
 
 
@@ -163,7 +163,7 @@ def session_end() -> None:
         resp2.raise_for_status()
         console.print(f"[green]Session ended:[/green] {active['name']}")
     except Exception as exc:
-        console.print(f"[red]Error: {exc}. Is token-scrooge running?[/red]")
+        console.print(f"[red]Error: {exc}. Is contextspy running?[/red]")
         raise typer.Exit(1)
 
 
@@ -175,7 +175,7 @@ def session_list() -> None:
         resp = httpx.get(_api(port, "/sessions"), timeout=5)
         sessions = resp.json().get("sessions", [])
     except Exception as exc:
-        console.print(f"[red]Error: {exc}. Is token-scrooge running?[/red]")
+        console.print(f"[red]Error: {exc}. Is contextspy running?[/red]")
         raise typer.Exit(1)
 
     table = Table(title="Sessions")
@@ -202,7 +202,7 @@ def session_list() -> None:
 @app.command("help")
 def help_cmd() -> None:
     """List all available commands."""
-    console.print("\n[bold cyan]token-scrooge[/bold cyan] — LLM context window analyser and proxy\n")
+    console.print("\n[bold cyan]ContextSpy[/bold cyan] — LLM context window analyser and proxy\n")
     rows = [
         ("start",           "Start the proxy + web dashboard (Ctrl+C to stop)"),
         ("status",          "Show proxy status and active session"),
@@ -222,7 +222,7 @@ def help_cmd() -> None:
     for cmd, desc in rows:
         table.add_row(cmd, desc)
     console.print(table)
-    console.print("\nRun [bold]token-scrooge <command> --help[/bold] for details on any command.\n")
+    console.print("\nRun [bold]contextspy <command> --help[/bold] for details on any command.\n")
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ def reset_db(
     if not yes:
         typer.confirm("This will permanently delete ALL requests and sessions. Continue?", abort=True)
     import sqlite3
-    from token_scrooge.config import Settings
+    from contextspy.config import Settings
     db_path = Settings.load().storage.db_path
     con = sqlite3.connect(db_path)
     cur = con.cursor()
@@ -258,7 +258,7 @@ def reset_db(
 def db_stats() -> None:
     """Print row counts for each database table."""
     import sqlite3
-    from token_scrooge.config import Settings
+    from contextspy.config import Settings
     db_path = Settings.load().storage.db_path
     con = sqlite3.connect(db_path)
     cur = con.cursor()
@@ -283,7 +283,7 @@ def db_stats() -> None:
 def report() -> None:
     """Print aggregate stats: requests, tokens in/out, context category breakdown."""
     import sqlite3
-    from token_scrooge.config import Settings
+    from contextspy.config import Settings
     db_path = Settings.load().storage.db_path
     con = sqlite3.connect(db_path)
     cur = con.cursor()
@@ -328,7 +328,7 @@ def report() -> None:
 
     con.close()
 
-    console.print(f"\n[bold cyan]Token-Scrooge Report[/bold cyan]\n")
+    console.print(f"\n[bold cyan]ContextSpy Report[/bold cyan]\n")
 
     # Summary
     summary = Table(show_header=False, box=None, padding=(0, 2))
@@ -395,11 +395,11 @@ def report() -> None:
 
 @app.command("setup-claude")
 def setup_claude() -> None:
-    """Print commands to route Claude Code through the token-scrooge proxy."""
-    from token_scrooge.config import Settings
+    """Print commands to route Claude Code through the ContextSpy proxy."""
+    from contextspy.config import Settings
     settings = Settings.load()
     port = settings.proxy.port
-    cert = str(settings.storage.db_path).replace("token-scrooge.db", "").rstrip("/\\")
+    cert = str(settings.storage.db_path).replace("contextspy.db", "").rstrip("/\\")
     # mitmproxy stores certs in ~/.mitmproxy
     import pathlib
     cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
@@ -415,7 +415,7 @@ def setup_claude() -> None:
     console.print(f'  export NODE_EXTRA_CA_CERTS="{cert_path}"')
     console.print()
     console.print("[dim]Tip: add these to your shell profile to make them permanent.[/dim]")
-    console.print("[dim]Run [bold]token-scrooge install-cert[/bold] if SSL errors occur.[/dim]\n")
+    console.print("[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n")
 
 
 # ---------------------------------------------------------------------------
@@ -424,8 +424,8 @@ def setup_claude() -> None:
 
 @app.command("setup-copilot")
 def setup_copilot() -> None:
-    """Print commands to route GitHub Copilot through the token-scrooge proxy."""
-    from token_scrooge.config import Settings
+    """Print commands to route GitHub Copilot through the ContextSpy proxy."""
+    from contextspy.config import Settings
     settings = Settings.load()
     port = settings.proxy.port
     import pathlib
@@ -446,7 +446,7 @@ def setup_copilot() -> None:
     console.print( '  "http.proxyStrictSSL": false')
     console.print()
     console.print("[dim]Copilot uses copilot-proxy.githubusercontent.com — already in the provider list.[/dim]")
-    console.print("[dim]Run [bold]token-scrooge install-cert[/bold] if SSL errors occur.[/dim]\n")
+    console.print("[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n")
 
 
 if __name__ == "__main__":

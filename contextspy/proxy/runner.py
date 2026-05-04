@@ -8,17 +8,17 @@ from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
 from mitmproxy.addons import errorcheck as _errorcheck
 
-from token_scrooge.proxy.addon import TokenScroogeAddon
+from contextspy.proxy.addon import ContextSpyAddon
 
 if TYPE_CHECKING:
-    from token_scrooge.api.websocket import ConnectionManager
-    from token_scrooge.config import Settings
+    from contextspy.api.websocket import ConnectionManager
+    from contextspy.config import Settings
 
 logger = logging.getLogger(__name__)
 
 _master: DumpMaster | None = None
 _thread: threading.Thread | None = None
-_addon: TokenScroogeAddon | None = None
+_addon: ContextSpyAddon | None = None
 _bound: bool = False  # True only after mitmproxy successfully binds the port
 
 
@@ -28,7 +28,7 @@ def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = N
     if _master is not None:
         return  # already running
 
-    _addon = TokenScroogeAddon()
+    _addon = ContextSpyAddon()
     _addon.ws_manager = ws_manager
 
     options = Options(
@@ -61,7 +61,7 @@ def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = N
                 elif "failed to listen" in msg or "error while attempting to bind" in msg:
                     logger.error(
                         "Proxy FAILED to bind on port %d — is another process using it? "
-                        "Set a different port with --proxy-port or edit ~/.token-scrooge/config.toml",
+                        "Set a different port with --proxy-port or edit ~/.contextspy/config.toml",
                         settings.proxy.port,
                     )
         watcher = _BindWatcher()

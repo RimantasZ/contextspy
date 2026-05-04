@@ -8,7 +8,7 @@ from typing import Generator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
-from token_scrooge.db.models import Base
+from contextspy.db.models import Base
 
 _engine = None
 _SessionLocal = None

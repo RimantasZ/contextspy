@@ -5,9 +5,9 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from token_scrooge.api.websocket import ConnectionManager
-from token_scrooge.db import crud
-from token_scrooge.db.database import get_db
+from contextspy.api.websocket import ConnectionManager
+from contextspy.db import crud
+from contextspy.db.database import get_db
 
 router = APIRouter(tags=["sessions"])
 
@@ -17,7 +17,7 @@ class CreateSessionRequest(BaseModel):
 
 
 def _get_ws() -> ConnectionManager:
-    from token_scrooge.api.main import get_ws_manager
+    from contextspy.api.main import get_ws_manager
     return get_ws_manager()
 
 

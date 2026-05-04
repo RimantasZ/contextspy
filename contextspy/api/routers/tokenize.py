@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
 
-from token_scrooge.analysis.tokenizer import get_token_strings
+from contextspy.analysis.tokenizer import get_token_strings
 
 router = APIRouter(tags=["tokenize"])
 

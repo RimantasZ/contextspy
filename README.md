@@ -1,4 +1,4 @@
-# Token-Scrooge
+# ContextSpy
 
 A local HTTPS proxy that intercepts traffic between coding agents (GitHub Copilot, Claude,
 Cursor, etc.) and LLM provider APIs, then analyses context composition and token usage.
@@ -14,7 +14,7 @@ Cursor, etc.) and LLM provider APIs, then analyses context composition and token
 - **Token estimation** via tiktoken (`cl100k_base`)
 - **Live dashboard** — real-time WebSocket updates, charts, session grouping
 - **Session tracking** — manually start/end named sessions to group requests
-- **SQLite storage** — all data stored locally in `~/.token-scrooge/`
+- **SQLite storage** — all data stored locally in `~/.ContextSpy/`
 
 ## Quick start
 
@@ -27,8 +27,8 @@ Cursor, etc.) and LLM provider APIs, then analyses context composition and token
 ### Install
 
 ```bash
-git clone https://github.com/you/token-scrooge.git
-cd token-scrooge
+git clone https://github.com/you/ContextSpy.git
+cd ContextSpy
 uv venv
 uv pip install -e .
 ```
@@ -45,7 +45,7 @@ cd ..
 ### Run
 
 ```bash
-token-scrooge start
+ContextSpy start
 ```
 
 This will:
@@ -58,7 +58,7 @@ This will:
 On first run, configure your system/agent to trust the mitmproxy CA certificate:
 
 ```bash
-token-scrooge install-cert
+ContextSpy install-cert
 ```
 
 Or from the dashboard → Settings → Proxy tab.
@@ -83,13 +83,13 @@ export HTTP_PROXY=http://127.0.0.1:8888
 ## CLI reference
 
 ```
-token-scrooge start           # start server (opens browser)
-token-scrooge status          # show proxy / server status
-token-scrooge install-cert    # install mitmproxy CA cert into OS trust store
+ContextSpy start           # start server (opens browser)
+ContextSpy status          # show proxy / server status
+ContextSpy install-cert    # install mitmproxy CA cert into OS trust store
 
-token-scrooge session start   # start a named capture session
-token-scrooge session end     # end the active session
-token-scrooge session list    # list all sessions
+ContextSpy session start   # start a named capture session
+ContextSpy session end     # end the active session
+ContextSpy session list    # list all sessions
 ```
 
 ## Architecture
@@ -101,7 +101,7 @@ token-scrooge session list    # list all sessions
                 │ HTTPS via proxy (port 8888)
 ┌───────────────▼──────────────────────────┐
 │  mitmproxy (DumpMaster, daemon thread)   │
-│  TokenScroogeAddon                       │
+│  ContextSpyAddon                       │
 │    → parse provider/agent                │
 │    → classify context categories         │
 │    → count tokens (tiktoken)             │
@@ -125,12 +125,12 @@ token-scrooge session list    # list all sessions
 
 ## Data storage
 
-All data is stored in `~/.token-scrooge/`:
+All data is stored in `~/.ContextSpy/`:
 
 | Path | Description |
 |------|-------------|
-| `~/.token-scrooge/token-scrooge.db` | SQLite database |
-| `~/.token-scrooge/config.toml` | Configuration (auto-created) |
+| `~/.ContextSpy/ContextSpy.db` | SQLite database |
+| `~/.ContextSpy/config.toml` | Configuration (auto-created) |
 
 Raw request/response bodies are stored per-request and purged automatically
 24 hours after a session ends to save disk space.
@@ -156,7 +156,7 @@ stored alongside the estimate for comparison on the request detail page.
 ```bash
 uv venv
 uv pip install -e ".[dev]"   # add [dev] extras if defined
-uvicorn token_scrooge.api.main:create_app --factory --reload --port 5173
+uvicorn contextspy.api.main:create_app --factory --reload --port 5173
 ```
 
 ### Frontend

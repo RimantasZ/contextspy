@@ -9,10 +9,10 @@ ui:
 build: install ui
 
 dev-backend:
-	uvicorn token_scrooge.api.main:create_app --factory --reload --port 5173
+	uvicorn contextspy.api.main:create_app --factory --reload --port 5173
 
 dev-ui:
 	cd ui && npm run dev
 
 clean:
-	rm -rf ui/dist ui/node_modules __pycache__ token_scrooge/**/__pycache__
+	rm -rf ui/dist ui/node_modules __pycache__ contextspy/**/__pycache__

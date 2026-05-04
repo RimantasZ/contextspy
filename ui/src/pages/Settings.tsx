@@ -72,7 +72,7 @@ function ProxyTab() {
       <div className="bg-gray-800 rounded-lg p-5 space-y-3">
         <h2 className="text-white font-medium">CA certificate</h2>
         <p className="text-sm text-gray-400">
-          Token-Scrooge uses mitmproxy to intercept HTTPS traffic. Install the CA certificate
+          ContextSpy uses mitmproxy to intercept HTTPS traffic. Install the CA certificate
           to avoid SSL errors.
         </p>
         <button
@@ -101,7 +101,7 @@ function AgentSetupTab() {
       name: 'GitHub Copilot',
       instructions: [
         'Set system proxy to http://127.0.0.1:8080 in VS Code settings or your OS network settings.',
-        'Install the Token-Scrooge CA certificate (Proxy tab above).',
+        'Install the ContextSpy CA certificate (Proxy tab above).',
         'VS Code setting: "http.proxy": "http://127.0.0.1:8080"',
         '"http.proxyStrictSSL": false is NOT needed if cert is installed correctly.',
       ],

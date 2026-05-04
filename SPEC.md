@@ -1,4 +1,4 @@
-# Token-Scrooge — Technical Specification v0.2
+# ContextSpy — Technical Specification v0.2
 
 > **Status:** Implemented — April 30, 2026  
 > **Purpose:** Living specification — reflects the currently running codebase.
@@ -7,7 +7,7 @@
 
 ## 1. Overview
 
-Token-Scrooge is a local HTTPS proxy that sits between LLM coding agents (GitHub Copilot, Claude, opencode, OpenAI SDK clients) and their provider APIs. It captures every LLM request, analyses the composition of the context window, counts tokens per category, persists statistics in a local SQLite database, and serves a React web dashboard with charts and per-request drill-downs.
+ContextSpy is a local HTTPS proxy that sits between LLM coding agents (GitHub Copilot, Claude, opencode, OpenAI SDK clients) and their provider APIs. It captures every LLM request, analyses the composition of the context window, counts tokens per category, persists statistics in a local SQLite database, and serves a React web dashboard with charts and per-request drill-downs.
 
 **Core value:** answer the question *"where are my tokens actually going?"* — how much of each context window is system prompt, MCP tool definitions, tool call results, file contents, conversation history, etc.
 
@@ -45,7 +45,7 @@ Token-Scrooge is a local HTTPS proxy that sits between LLM coding agents (GitHub
                         │  via HTTPS_PROXY=http://127.0.0.1:8888
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  Token-Scrooge Proxy  (mitmproxy, 127.0.0.1:8888)                 │
+│  ContextSpy Proxy  (mitmproxy, 127.0.0.1:8888)                 │
 │  • TLS termination via local CA cert                          │
 │  • Filters to known LLM hostnames only                        │
 │  • Calls analysis pipeline on each response                   │
@@ -59,7 +59,7 @@ Token-Scrooge is a local HTTPS proxy that sits between LLM coding agents (GitHub
 └──────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────┐
-│  Token-Scrooge Web Server  (FastAPI + Uvicorn, 127.0.0.1:5173)    │
+│  ContextSpy Web Server  (FastAPI + Uvicorn, 127.0.0.1:5173)    │
 │  • REST API for sessions, requests, stats, proxy control      │
 │  • WebSocket endpoint for live updates                        │
 │  • Serves built React UI as static files                      │
@@ -67,7 +67,7 @@ Token-Scrooge is a local HTTPS proxy that sits between LLM coding agents (GitHub
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  SQLite Database  (~/.token-scrooge/token-scrooge.db)                   │
+│  SQLite Database  (~/.ContextSpy/ContextSpy.db)                   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -85,14 +85,14 @@ The proxy addon and the FastAPI backend run **in the same Python process**: mitm
 
 #### TLS Interception
 
-- On first `token-scrooge start`, check for `~/.mitmproxy/mitmproxy-ca.pem`; mitmproxy generates it automatically if absent.
+- On first `ContextSpy start`, check for `~/.mitmproxy/mitmproxy-ca.pem`; mitmproxy generates it automatically if absent.
 - Detect OS and attempt automatic CA trust-store installation:
   - **Windows:** `certutil -addstore Root ~/.mitmproxy/mitmproxy-ca.pem`
   - **macOS:** `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/.mitmproxy/mitmproxy-ca.pem`
   - **Linux:** copy to `/usr/local/share/ca-certificates/mitmproxy-ca.crt` + `sudo update-ca-certificates`
 - If automatic installation fails, print clear manual instructions and continue.
 - mitmproxy dynamically signs per-domain certificates using the local CA — no external CA needed.
-- The `token-scrooge install-cert` CLI command re-runs this step independently.
+- The `ContextSpy install-cert` CLI command re-runs this step independently.
 
 #### Hostname Filter
 
@@ -107,12 +107,12 @@ Only intercept flows to the following hosts (all other traffic is passed through
 | `localhost` port `11434` | `ollama` |
 | `127.0.0.1` port `11434` | `ollama` |
 
-#### Addon Class: `TokenScroogeAddon`
+#### Addon Class: `ContextSpyAddon`
 
 The addon handles both regular JSON responses and SSE streaming responses:
 
 ```python
-class TokenScroogeAddon:
+class ContextSpyAddon:
     def request(self, flow):
         flow.metadata["ts_start"] = time.monotonic()
 
@@ -227,7 +227,7 @@ Each category's text is concatenated (preserving JSON structure for tool definit
 
 ### 5.4 Storage Layer
 
-**Database:** SQLite at `~/.token-scrooge/token-scrooge.db`  
+**Database:** SQLite at `~/.ContextSpy/ContextSpy.db`  
 **ORM:** SQLAlchemy 2.0 (using `mapped_column` / `DeclarativeBase`)  
 **Schema initialisation:** SQLAlchemy `create_all()` on startup (no external migration tool in v1).
 
@@ -434,52 +434,52 @@ The production build (`ui/dist/`) is served as static files by FastAPI. During d
 
 ### 5.7 CLI
 
-**Entry point:** `token-scrooge` (installed by `pip install -e .` via `pyproject.toml` `[project.scripts]`).  
+**Entry point:** `ContextSpy` (installed by `pip install -e .` via `pyproject.toml` `[project.scripts]`).  
 **CLI framework:** Typer.
 
 ```
-token-scrooge start [--proxy-port 8888] [--web-port 5173] [--no-browser]
+ContextSpy start [--proxy-port 8888] [--web-port 5173] [--no-browser]
     Start both the proxy and web server in the same process.
     Opens browser to http://127.0.0.1:5173 on startup.
     Ctrl+C for clean shutdown.
 
-token-scrooge help
+ContextSpy help
     Print a table of all available commands with descriptions.
 
-token-scrooge status
+ContextSpy status
     Show whether the proxy is running, active session name, DB path.
 
-token-scrooge install-cert
+ContextSpy install-cert
     Run OS-specific CA cert trust-store installation.
 
-token-scrooge reset-db [--yes]
+ContextSpy reset-db [--yes]
     Delete ALL requests and sessions from the local SQLite database.
     Prompts for confirmation unless --yes is passed.
 
-token-scrooge db-stats
+ContextSpy db-stats
     Print row counts for each table in the database (offline — no server needed).
 
-token-scrooge report
+ContextSpy report
     Print aggregate stats: total requests, input/output tokens (estimated and
     provider-reported), and an input token category breakdown table with
     percentages and a bar indicator.
 
-token-scrooge setup-claude
+ContextSpy setup-claude
     Print the exact PowerShell and Bash env-var commands needed to route
     Claude Code traffic through the proxy (HTTPS_PROXY + NODE_EXTRA_CA_CERTS).
 
-token-scrooge setup-copilot
+ContextSpy setup-copilot
     Print the exact PowerShell, Bash, and VS Code settings.json snippet
     needed to route GitHub Copilot traffic through the proxy.
 
-token-scrooge session start <name>
+ContextSpy session start <name>
     Start a named session (calls POST /api/sessions).
     Ends any currently active session first.
 
-token-scrooge session end
+ContextSpy session end
     End the active session (calls POST /api/sessions/{active_id}/end).
 
-token-scrooge session list
+ContextSpy session list
     Print a table of sessions.
 ```
 
@@ -537,7 +537,7 @@ Copilot in VS Code may not honour the system `HTTPS_PROXY` environment variable 
 ### Lifecycle
 
 ```
-token-scrooge session start "feat/auth-refactor"
+ContextSpy session start "feat/auth-refactor"
         │
         ▼
   INSERT sessions row  (is_active=1)
@@ -547,7 +547,7 @@ token-scrooge session start "feat/auth-refactor"
   Raw request/response bodies stored in DB
         │
         ▼
-token-scrooge session end   (or UI button)
+ContextSpy session end   (or UI button)
         │
         ▼
   UPDATE sessions SET ended_at=now, is_active=0
@@ -569,14 +569,14 @@ token-scrooge session end   (or UI button)
 ## 8. Project Structure
 
 ```
-token-scrooge/
-├── token_scrooge/                       # Python package
+ContextSpy/
+├── contextspy/                       # Python package
 │   ├── __init__.py
 │   ├── cli.py                      # Typer CLI entry point
 │   ├── config.py                   # Settings (ports, paths, etc.)
 │   ├── proxy/
 │   │   ├── __init__.py
-│   │   ├── addon.py                # mitmproxy TokenScroogeAddon
+│   │   ├── addon.py                # mitmproxy ContextSpyAddon
 │   │   ├── cert.py                 # CA cert generation & OS trust-store install
 │   │   └── runner.py               # Starts mitmproxy in a background thread
 │   ├── analysis/
@@ -631,7 +631,7 @@ token-scrooge/
 
 ```toml
 [project]
-name = "token-scrooge"
+name = "ContextSpy"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -645,7 +645,7 @@ dependencies = [
 ]
 
 [project.scripts]
-token-scrooge = "token_scrooge.cli:app"
+ContextSpy = "contextspy.cli:app"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -663,7 +663,7 @@ Frontend dependencies (`ui/package.json`):
 
 ## 10. Configuration
 
-Config file: `~/.token-scrooge/config.toml` (created on first run with defaults).
+Config file: `~/.ContextSpy/config.toml` (created on first run with defaults).
 
 ```toml
 [proxy]
@@ -675,7 +675,7 @@ port = 5173
 bind_addr = "127.0.0.1"
 
 [storage]
-db_path = "~/.token-scrooge/token-scrooge.db"
+db_path = "~/.ContextSpy/ContextSpy.db"
 
 [intercepted_hosts]
 # Add extra hosts if needed (besides the built-in list)
@@ -690,13 +690,13 @@ Config values can be overridden by CLI flags. The `config.py` module loads this 
 
 ## 11. Startup Sequence
 
-When `token-scrooge start` is called:
+When `ContextSpy start` is called:
 
 1. Load and validate config.
-2. Ensure `~/.token-scrooge/` directory exists.
+2. Ensure `~/.ContextSpy/` directory exists.
 3. Initialise SQLite DB (create tables if not exists, run startup vacuum).
 4. Check CA cert; if absent, generate via mitmproxy and attempt trust-store installation. If install fails, print instructions.
-5. Start mitmproxy `DumpMaster` with `TokenScroogeAddon` in a daemon thread.
+5. Start mitmproxy `DumpMaster` with `ContextSpyAddon` in a daemon thread.
 6. Start FastAPI/Uvicorn in the main asyncio event loop on `127.0.0.1:5173`.
 7. Open `http://127.0.0.1:5173` in the default browser.
 8. On `Ctrl+C`: send shutdown signal to mitmproxy thread, wait for it to stop, close DB connections, exit.

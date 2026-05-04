@@ -1,4 +1,4 @@
-# Token-Scrooge — Implementation Plan
+# ContextSpy — Implementation Plan
 
 > Ordered phases. Each phase is independently testable before moving on.  
 > Reference: [SPEC.md](SPEC.md)
@@ -12,11 +12,11 @@
 ### Tasks
 
 - [ ] Create `pyproject.toml` with all Python dependencies and `[project.scripts]` entry point (SPEC §9).
-- [ ] Create `token_scrooge/` package with empty `__init__.py` files in every sub-package (`proxy/`, `analysis/`, `db/`, `api/`, `api/routers/`).
-- [ ] Create `token_scrooge/config.py` — `Settings` dataclass with all config fields and defaults; reads from `~/.token-scrooge/config.toml` if present, overridable by kwargs (SPEC §10).
+- [ ] Create `contextspy/` package with empty `__init__.py` files in every sub-package (`proxy/`, `analysis/`, `db/`, `api/`, `api/routers/`).
+- [ ] Create `contextspy/config.py` — `Settings` dataclass with all config fields and defaults; reads from `~/.ContextSpy/config.toml` if present, overridable by kwargs (SPEC §10).
 - [ ] Initialise frontend: `cd ui && npm create vite@latest . -- --template react-ts`, add Tailwind, React Router, TanStack Query, Recharts to `package.json`.
 - [ ] Add `vite.config.ts` with API proxy to `http://127.0.0.1:5173` for dev mode.
-- [ ] Verify: `uv pip install -e .` succeeds; `token-scrooge --help` prints help text; `cd ui && npm install` succeeds.
+- [ ] Verify: `uv pip install -e .` succeeds; `ContextSpy --help` prints help text; `cd ui && npm install` succeeds.
 
 ---
 
@@ -26,9 +26,9 @@
 
 ### Tasks
 
-- [ ] `token_scrooge/db/models.py` — SQLAlchemy 2.0 `DeclarativeBase` models for `Session` and `Request` tables with all columns from SPEC §5.4 schema.
-- [ ] `token_scrooge/db/database.py` — create engine (`~/.token-scrooge/token-scrooge.db`), `sessionmaker`, `get_db()` dependency, `init_db()` (calls `create_all`), `startup_vacuum()` (NULLs raw bodies for session-less requests older than 24 h).
-- [ ] `token_scrooge/db/crud.py` — implement all read/write helpers:
+- [ ] `contextspy/db/models.py` — SQLAlchemy 2.0 `DeclarativeBase` models for `Session` and `Request` tables with all columns from SPEC §5.4 schema.
+- [ ] `contextspy/db/database.py` — create engine (`~/.ContextSpy/ContextSpy.db`), `sessionmaker`, `get_db()` dependency, `init_db()` (calls `create_all`), `startup_vacuum()` (NULLs raw bodies for session-less requests older than 24 h).
+- [ ] `contextspy/db/crud.py` — implement all read/write helpers:
   - `create_session(name) → Session`
   - `get_active_session() → Session | None`
   - `end_session(id)` — sets `ended_at`, `is_active=0`
@@ -48,14 +48,14 @@
 
 ### Tasks
 
-- [ ] `token_scrooge/analysis/tokenizer.py` — wrap `tiktoken.get_encoding("cl100k_base")`; expose `count_tokens(text: str) → int`.
-- [ ] `token_scrooge/analysis/providers.py` — per-provider parsers returning a normalised `ParsedRequest` dataclass:
+- [ ] `contextspy/analysis/tokenizer.py` — wrap `tiktoken.get_encoding("cl100k_base")`; expose `count_tokens(text: str) → int`.
+- [ ] `contextspy/analysis/providers.py` — per-provider parsers returning a normalised `ParsedRequest` dataclass:
   - `parse_openai(req_body, resp_body) → ParsedRequest` (handles OpenAI + Copilot format)
   - `parse_anthropic(req_body, resp_body) → ParsedRequest`
   - `parse_ollama(req_body, resp_body) → ParsedRequest`
   - `ParsedRequest` fields: `model`, `messages`, `tools`, `provider_input_tokens`, `provider_output_tokens`, `response_text`
   - Handle streaming responses: if response body is SSE, extract `usage` from the final `data: [DONE]` chunk only.
-- [ ] `token_scrooge/analysis/classifier.py` — implement `classify(parsed: ParsedRequest) → CategoryBreakdown`:
+- [ ] `contextspy/analysis/classifier.py` — implement `classify(parsed: ParsedRequest) → CategoryBreakdown`:
   - Apply priority rules from SPEC §5.2 to assign each message/tool block to exactly one category.
   - Implement all 5 file-content heuristics.
   - Return `CategoryBreakdown` dataclass with one `int` field per category + `total_input` + `total_output`.
@@ -73,15 +73,15 @@
 
 ### Tasks
 
-- [ ] `token_scrooge/proxy/cert.py`:
+- [ ] `contextspy/proxy/cert.py`:
   - `cert_exists() → bool` — checks for `~/.mitmproxy/mitmproxy-ca.pem`.
   - `install_cert() → (success: bool, message: str)` — OS-detecting logic for Windows (`certutil`), macOS (`security`), Linux (`update-ca-certificates`); falls back to printing manual instructions.
-- [ ] `token_scrooge/proxy/addon.py` — `TokenScroogeAddon`:
+- [ ] `contextspy/proxy/addon.py` — `ContextSpyAddon`:
   - `request()` — timestamps the flow.
   - `response()` — hostname filter, provider/agent detection, call analysis pipeline, call `crud.create_request()`, emit WebSocket event (call into `api.websocket` manager via a shared reference set at startup).
   - Handle JSON decode errors and analysis exceptions silently (log, don't crash the proxy).
-- [ ] `token_scrooge/proxy/runner.py`:
-  - `start_proxy(settings, ws_manager, db_session_factory)` — builds `DumpMaster` with `TokenScroogeAddon`, runs in a `threading.Thread(daemon=True)`.
+- [ ] `contextspy/proxy/runner.py`:
+  - `start_proxy(settings, ws_manager, db_session_factory)` — builds `DumpMaster` with `ContextSpyAddon`, runs in a `threading.Thread(daemon=True)`.
   - `stop_proxy()` — calls `master.shutdown()`, joins thread with 3 s timeout.
   - Exposes `is_running() → bool`.
 - [ ] Verify: run the proxy standalone, set `HTTPS_PROXY=http://127.0.0.1:8080`, make a `curl` call to `https://api.openai.com` (will fail auth, that's fine), confirm the flow appears in the DB.
@@ -94,28 +94,28 @@
 
 ### Tasks
 
-- [ ] `token_scrooge/api/websocket.py` — `ConnectionManager`: `connect`, `disconnect`, `broadcast(message: dict)` methods; thread-safe (proxy writes from a thread, FastAPI reads from async context — use `asyncio.run_coroutine_threadsafe`).
-- [ ] `token_scrooge/api/main.py` — FastAPI app factory:
+- [ ] `contextspy/api/websocket.py` — `ConnectionManager`: `connect`, `disconnect`, `broadcast(message: dict)` methods; thread-safe (proxy writes from a thread, FastAPI reads from async context — use `asyncio.run_coroutine_threadsafe`).
+- [ ] `contextspy/api/main.py` — FastAPI app factory:
   - Lifespan: `startup` initialises DB, starts proxy; `shutdown` stops proxy, disposes engine.
   - Mount static files from `ui/dist/` at `/` (fallback to `index.html` for SPA routing).
   - Include all routers under `/api`.
   - Register `ConnectionManager` as app state.
-- [ ] `token_scrooge/api/routers/sessions.py` — all session endpoints (SPEC §5.5).
-- [ ] `token_scrooge/api/routers/requests.py` — list + detail endpoints.
-- [ ] `token_scrooge/api/routers/stats.py` — overview, per-session, timeline.
-- [ ] `token_scrooge/api/routers/proxy.py` — status, start, stop endpoints.
+- [ ] `contextspy/api/routers/sessions.py` — all session endpoints (SPEC §5.5).
+- [ ] `contextspy/api/routers/requests.py` — list + detail endpoints.
+- [ ] `contextspy/api/routers/stats.py` — overview, per-session, timeline.
+- [ ] `contextspy/api/routers/proxy.py` — status, start, stop endpoints.
 - [ ] WebSocket endpoint at `GET /api/ws`.
-- [ ] Verify: start FastAPI with `uvicorn token_scrooge.api.main:app --port 5173`, hit all endpoints with `curl`, confirm WebSocket broadcasts using `wscat` or a browser console.
+- [ ] Verify: start FastAPI with `uvicorn contextspy.api.main:app --port 5173`, hit all endpoints with `curl`, confirm WebSocket broadcasts using `wscat` or a browser console.
 
 ---
 
 ## Phase 5 — CLI
 
-**Goal:** `token-scrooge start` launches everything and the browser opens. All sub-commands work.
+**Goal:** `ContextSpy start` launches everything and the browser opens. All sub-commands work.
 
 ### Tasks
 
-- [ ] `token_scrooge/cli.py` — Typer app with commands:
+- [ ] `contextspy/cli.py` — Typer app with commands:
   - `start` — runs `init_db()` + `startup_vacuum()`, installs cert if missing (with prompt), starts Uvicorn programmatically in main thread (which triggers lifespan → proxy start), opens browser.
   - `session start <name>` — POST `/api/sessions`.
   - `session end` — POST `/api/sessions/{active_id}/end`.
@@ -123,7 +123,7 @@
   - `status` — GET `/api/proxy/status` + print active session info.
   - `install-cert` — standalone cert install, prints result.
 - [ ] Add `rich` to dependencies for table/status output.
-- [ ] Verify: full end-to-end — `token-scrooge start`, browser opens, `token-scrooge session start "test"` in a second terminal, proxy intercepts a real request, dashboard updates.
+- [ ] Verify: full end-to-end — `ContextSpy start`, browser opens, `ContextSpy session start "test"` in a second terminal, proxy intercepts a real request, dashboard updates.
 
 ---
 
@@ -228,6 +228,6 @@ Phase 8 (integration)                  ← needs all phases
 
 Feed phases one at a time. Suggested prompt prefix for each:
 
-> "Implement Phase N of the Token-Scrooge project as described in PLAN.md, following the detailed specifications in SPEC.md. Only implement what is listed in Phase N — do not add features from later phases."
+> "Implement Phase N of the ContextSpy project as described in PLAN.md, following the detailed specifications in SPEC.md. Only implement what is listed in Phase N — do not add features from later phases."
 
 Start with Phase 0 to get the skeleton right, then Phase 1 (storage) and Phase 2 (analysis) can be given together or separately. Phases 3–5 must be sequential. Phase 6 can run in parallel as a separate task.

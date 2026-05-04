@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from token_scrooge.db import crud
-from token_scrooge.db.database import get_db
+from contextspy.db import crud
+from contextspy.db.database import get_db
 
 router = APIRouter(tags=["requests"])
 

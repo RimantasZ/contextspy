@@ -1,5 +1,5 @@
 [project]
-name = "token-scrooge"
+name = "contextspy"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-token-scrooge = "token_scrooge.cli:app"
+contextspy = "contextspy.cli:app"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -24,4 +24,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["token_scrooge*"]
+include = ["contextspy*"]
