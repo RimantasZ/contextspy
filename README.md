@@ -61,6 +61,10 @@ On first run, configure your system/agent to trust the mitmproxy CA certificate:
 ContextSpy install-cert
 ```
 
+This works on macOS, Windows, and Linux. The command automatically extracts
+the certificate from the mitmproxy CA bundle (which also contains a private key)
+before installing it into the OS trust store, so no manual conversion is needed.
+
 Or from the dashboard → Settings → Proxy tab.
 
 ### Configure your agent to use the proxy
