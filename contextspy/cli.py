@@ -212,6 +212,7 @@ def help_cmd() -> None:
         ("report",          "Print aggregate stats: requests, tokens, category breakdown"),
         ("setup-claude",    "Print env-var commands to route Claude Code through the proxy"),
         ("setup-copilot",   "Print env-var commands to route GitHub Copilot through the proxy"),
+        ("setup-opencode",  "Print env-var commands to route opencode through the proxy"),
         ("session start",   "Start a named session"),
         ("session end",     "End the current active session"),
         ("session list",    "List all sessions"),
@@ -446,6 +447,40 @@ def setup_copilot() -> None:
     console.print( '  "http.proxyStrictSSL": false')
     console.print()
     console.print("[dim]Copilot uses copilot-proxy.githubusercontent.com — already in the provider list.[/dim]")
+    console.print("[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n")
+
+
+# ---------------------------------------------------------------------------
+# setup-opencode
+# ---------------------------------------------------------------------------
+
+@app.command("setup-opencode")
+def setup_opencode() -> None:
+    """Print commands to route opencode through the ContextSpy proxy."""
+    from contextspy.config import Settings
+    settings = Settings.load()
+    port = settings.proxy.port
+    import pathlib
+    cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+
+    console.print("\n[bold cyan]opencode — proxy setup[/bold cyan]\n")
+    console.print("Run the following in the terminal where you launch [bold]opencode[/bold]:\n")
+    console.print("[bold yellow]PowerShell:[/bold yellow]")
+    console.print(f'  $env:HTTPS_PROXY = "http://127.0.0.1:{port}"')
+    console.print(f'  $env:SSL_CERT_FILE = "{cert_path}"')
+    console.print(f'  $env:NODE_EXTRA_CA_CERTS = "{cert_path}"')
+    console.print()
+    console.print("[bold yellow]Bash / Zsh:[/bold yellow]")
+    console.print(f'  export HTTPS_PROXY=http://127.0.0.1:{port}')
+    console.print(f'  export SSL_CERT_FILE="{cert_path}"')
+    console.print(f'  export NODE_EXTRA_CA_CERTS="{cert_path}"')
+    console.print()
+    console.print("[bold]opencode config (~/.config/opencode/config.json):[/bold]")
+    console.print('  {')
+    console.print(f'    "proxy": "http://127.0.0.1:{port}"')
+    console.print('  }')
+    console.print()
+    console.print("[dim]Tip: add the env vars to your shell profile to make them permanent.[/dim]")
     console.print("[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n")
 
 
