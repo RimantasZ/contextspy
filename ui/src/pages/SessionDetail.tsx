@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, useDeleteSession } from '../api/hooks';
+import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, useDeleteSession, useToolStats } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
+import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 type Bucket = 'minute' | 'hour' | 'day';
 
@@ -15,7 +18,8 @@ export default function SessionDetail() {
   const session = useSession(id ?? '');
   const stats = useStatsSession(id ?? '');
   const timeline = useTimeline(id, bucket);
-  const requests = useRequests({ session_id: id, limit: 50 });
+  const requests = useRequests({ session_id: id, limit: 200 });
+  const toolStats = useToolStats(id);
   const endSession = useEndSession();
   const deleteSession = useDeleteSession();
 
@@ -24,6 +28,134 @@ export default function SessionDetail() {
 
   const s = session.data.session;
   const st = stats.data;
+
+  function exportPdf() {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    let y = 40;
+
+    // ── Title ──────────────────────────────────────────────────────────
+    doc.setFontSize(18);
+    doc.setTextColor(30, 30, 30);
+    doc.text(s.name, 40, y);
+    y += 22;
+
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    const startLabel = `Started: ${new Date(s.started_at).toLocaleString()}`;
+    const endLabel = s.ended_at ? `  Ended: ${new Date(s.ended_at).toLocaleString()}` : '  (active)';
+    doc.text(startLabel + endLabel, 40, y);
+    y += 20;
+
+    // ── Summary stats ──────────────────────────────────────────────────
+    doc.setFontSize(12);
+    doc.setTextColor(30, 30, 30);
+    doc.text('Summary', 40, y);
+    y += 6;
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Metric', 'Value']],
+      body: [
+        ['Requests', String(st?.request_count ?? 0)],
+        ['Tokens in', (st?.tokens_total_input ?? 0).toLocaleString()],
+        ['Tokens out', (st?.tokens_total_output ?? 0).toLocaleString()],
+      ],
+      theme: 'striped',
+      headStyles: { fillColor: [55, 65, 81] },
+      margin: { left: 40, right: 40 },
+      tableWidth: pageW - 80,
+    });
+    y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 18;
+
+    // ── Token breakdown by category ────────────────────────────────────
+    if (st && Object.keys(st.by_category).length > 0) {
+      doc.setFontSize(12);
+      doc.setTextColor(30, 30, 30);
+      doc.text('Token breakdown by category', 40, y);
+      y += 6;
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Category', 'Tokens', '%']],
+        body: Object.entries(st.by_category).map(([k, v]) => [
+          k.replace(/_/g, ' '),
+          v.tokens.toLocaleString(),
+          `${v.pct.toFixed(1)}%`,
+        ]),
+        theme: 'striped',
+        headStyles: { fillColor: [55, 65, 81] },
+        margin: { left: 40, right: 40 },
+        tableWidth: pageW - 80,
+      });
+      y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 18;
+    }
+
+    // ── Tool usage ─────────────────────────────────────────────────────
+    const tools = toolStats.data?.tools ?? [];
+    if (tools.length > 0) {
+      doc.setFontSize(12);
+      doc.setTextColor(30, 30, 30);
+      doc.text('Tool usage', 40, y);
+      y += 6;
+
+      const totalInput = st?.tokens_total_input ?? 0;
+      autoTable(doc, {
+        startY: y,
+        head: [['Tool', 'Def tokens', 'Result tokens', '% context']],
+        body: tools.map(t => {
+          const combined = t.definition_tokens + t.result_tokens;
+          const pct = totalInput > 0 ? `${((combined / totalInput) * 100).toFixed(1)}%` : '—';
+          return [
+            t.tool_name,
+            t.definition_tokens.toLocaleString(),
+            t.result_tokens > 0 ? t.result_tokens.toLocaleString() : '—',
+            pct,
+          ];
+        }),
+        theme: 'striped',
+        headStyles: { fillColor: [55, 65, 81] },
+        margin: { left: 40, right: 40 },
+        tableWidth: pageW - 80,
+      });
+      y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 18;
+    }
+
+    // ── Requests ───────────────────────────────────────────────────────
+    const reqs = requests.data?.requests ?? [];
+    if (reqs.length > 0) {
+      doc.setFontSize(12);
+      doc.setTextColor(30, 30, 30);
+      doc.text('Requests', 40, y);
+      y += 6;
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Time', 'Provider', 'Model', 'Tokens in', 'Tokens out', 'Status']],
+        body: reqs.map(r => [
+          new Date(r.timestamp).toLocaleString(),
+          r.provider,
+          r.model ?? '—',
+          r.tokens_total_input.toLocaleString(),
+          r.tokens_total_output.toLocaleString(),
+          String(r.status_code ?? '—'),
+        ]),
+        theme: 'striped',
+        headStyles: { fillColor: [55, 65, 81] },
+        margin: { left: 40, right: 40 },
+        tableWidth: pageW - 80,
+        styles: { fontSize: 8 },
+      });
+    }
+
+    // ── Save ───────────────────────────────────────────────────────────
+    const ts = new Date(s.started_at)
+      .toISOString()
+      .replace('T', ' ')
+      .replace(/:/g, '-')
+      .slice(0, 19);
+    doc.save(`${s.name} - ${ts}.pdf`);
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -50,6 +182,12 @@ export default function SessionDetail() {
               End session
             </button>
           )}
+          <button
+            onClick={exportPdf}
+            className="px-3 py-1 text-sm bg-indigo-700 hover:bg-indigo-600 text-white rounded"
+          >
+            Export PDF
+          </button>
           <button
             onClick={() => {
               if (confirm(`Delete session "${s.name}"?`)) {
@@ -96,6 +234,12 @@ export default function SessionDetail() {
             loading={timeline.isLoading}
           />
         </div>
+      </div>
+
+      {/* Tool breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} />
+        <ToolBreakdownTable tools={toolStats.data?.tools ?? []} totalInputTokens={st?.tokens_total_input} />
       </div>
 
       {/* Requests table */}
