@@ -69,8 +69,16 @@ def _detect_agent(user_agent: str) -> str:
 # ---------------------------------------------------------------------------
 
 class ContextSpyAddon:
-    def __init__(self) -> None:
+    def __init__(self, provider_override: str | None = None) -> None:
         self.ws_manager: ConnectionManager | None = None
+        # When set, skip host-based detection and always use this provider.
+        # Used by reverse-proxy mode where the upstream is a known local server.
+        self._provider_override = provider_override
+
+    def _get_provider(self, host: str, port: int) -> str | None:
+        if self._provider_override is not None:
+            return self._provider_override
+        return _detect_provider(host, port)
 
     def request(self, flow: http.HTTPFlow) -> None:
         flow.metadata["ts_start"] = time.monotonic()
@@ -85,7 +93,7 @@ class ContextSpyAddon:
         # SSE streaming response — buffer all chunks, process when stream ends
         host = flow.request.pretty_host
         port = flow.request.port
-        if _detect_provider(host, port) is None:
+        if self._get_provider(host, port) is None:
             return  # not an LLM host — skip overhead
 
         sse_chunks: list[bytes] = []
@@ -141,7 +149,7 @@ class ContextSpyAddon:
 
         host = flow.request.pretty_host
         port = flow.request.port
-        provider = _detect_provider(host, port)
+        provider = self._get_provider(host, port)
         if provider is None:
             return
 
@@ -167,7 +175,7 @@ class ContextSpyAddon:
             return
         host = flow.request.pretty_host
         port = flow.request.port
-        provider = _detect_provider(host, port)
+        provider = self._get_provider(host, port)
         if provider is None:
             return
 

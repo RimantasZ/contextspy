@@ -31,7 +31,7 @@ def start(
     web_port: int = typer.Option(5173, "--web-port", help="Web server listen port"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
 ) -> None:
-    """Start the proxy and web server (Ctrl+C to stop)."""
+    """Start the proxy and web server in cloud/forward mode (Ctrl+C to stop)."""
     import uvicorn
     from contextspy.config import Settings
     from contextspy.proxy.cert import cert_exists, install_cert
@@ -66,6 +66,86 @@ def start(
 
     from contextspy.api.main import create_app
     application = create_app(settings)
+
+    uvicorn.run(
+        application,
+        host=settings.web.bind_addr,
+        port=settings.web.port,
+        log_level="info",
+        log_config={
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {"format": "%(asctime)s %(levelname)-8s %(name)s: %(message)s", "datefmt": "%H:%M:%S"},
+            },
+            "handlers": {
+                "default": {"class": "logging.StreamHandler", "formatter": "default"},
+            },
+            "loggers": {
+                "contextspy": {"handlers": ["default"], "level": "DEBUG", "propagate": False},
+                "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+                "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
+                "uvicorn.access": {"handlers": ["default"], "level": "WARNING", "propagate": False},
+            },
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# start-local
+# ---------------------------------------------------------------------------
+
+@app.command("start-local")
+def start_local(
+    web_port: int = typer.Option(5173, "--web-port", help="Web server listen port"),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
+) -> None:
+    """Start reverse-proxy listeners for local LLM servers (no cert needed).
+
+    Reads [[reverse_targets]] from ~/.contextspy/config.toml.  Each target
+    specifies a listen port and the upstream URL of your local server.  Point
+    your client at http://127.0.0.1:<listen_port> instead of the server
+    directly and contextspy will intercept every request.
+
+    The web dashboard and SQLite database are shared with 'start', so you can
+    run both modes simultaneously.
+    """
+    import uvicorn
+    from contextspy.config import Settings
+
+    settings = Settings.load()
+    settings.web.port = web_port
+    settings.ensure_dirs()
+    settings.write_defaults()
+
+    if not settings.reverse_targets:
+        console.print(
+            "[red]No [[reverse_targets]] found in ~/.contextspy/config.toml[/red]\n"
+            "Add at least one target, for example:\n\n"
+            "  [[reverse_targets]]\n"
+            '  name        = "llama-server"\n'
+            "  listen_port = 8889\n"
+            '  target_url  = "http://127.0.0.1:8080"\n'
+            '  provider    = "openai"\n'
+        )
+        raise typer.Exit(1)
+
+    url = f"http://{settings.web.bind_addr}:{settings.web.port}"
+    console.print(f"[bold green]ContextSpy[/bold green] (local mode) starting at {url}")
+    for t in settings.reverse_targets:
+        console.print(f"  [{t.name}]  localhost:{t.listen_port} → {t.target_url}  (provider={t.provider})")
+    console.print(f"  DB:  {settings.storage.db_path}")
+    console.print("Press [bold]Ctrl+C[/bold] to stop.\n")
+
+    if not no_browser:
+        import threading
+        def _open():
+            import time; time.sleep(1.5)
+            webbrowser.open(url)
+        threading.Thread(target=_open, daemon=True).start()
+
+    from contextspy.api.main import create_app_local
+    application = create_app_local(settings)
 
     uvicorn.run(
         application,
@@ -204,7 +284,8 @@ def help_cmd() -> None:
     """List all available commands."""
     console.print("\n[bold cyan]ContextSpy[/bold cyan] — LLM context window analyser and proxy\n")
     rows = [
-        ("start",           "Start the proxy + web dashboard (Ctrl+C to stop)"),
+        ("start",           "Start the proxy and web dashboard (cloud APIs, forward mode)"),
+        ("start-local",     "Start reverse proxies for local LLM servers (no cert needed)"),
         ("status",          "Show proxy status and active session"),
         ("install-cert",    "Install the mitmproxy CA cert into the system trust store"),
         ("reset-db",        "Delete all requests and sessions from the local database"),
@@ -213,6 +294,9 @@ def help_cmd() -> None:
         ("setup-claude",    "Print env-var commands to route Claude Code through the proxy"),
         ("setup-copilot",   "Print env-var commands to route GitHub Copilot through the proxy"),
         ("setup-opencode",  "Print env-var commands to route opencode through the proxy"),
+        ("setup-llamaserver", "Print setup instructions for llama.cpp/llama-server"),
+        ("setup-ollama",    "Print setup instructions for Ollama"),
+        ("setup-vllm",      "Print setup instructions for vLLM"),
         ("session start",   "Start a named session"),
         ("session end",     "End the current active session"),
         ("session list",    "List all sessions"),
@@ -451,8 +535,75 @@ def setup_copilot() -> None:
 
 
 # ---------------------------------------------------------------------------
-# setup-opencode
+# setup-opencode  (already present above)
+# setup-llamaserver
 # ---------------------------------------------------------------------------
+
+def _print_local_setup_header(server_name: str, default_server_port: int, default_listen_port: int) -> tuple[int, int]:
+    """Print the common config.toml block and return (server_port, listen_port)."""
+    from contextspy.config import Settings
+    settings = Settings.load()
+    console.print(f"\n[bold cyan]{server_name} — ContextSpy local reverse-proxy setup[/bold cyan]\n")
+    console.print(
+        f"In this mode contextspy acts as a reverse proxy in front of {server_name}.\n"
+        "No CA certificate is needed — traffic stays on localhost and is plain HTTP.\n"
+    )
+    console.print("[bold]1. Add to ~/.contextspy/config.toml:[/bold]")
+    console.print(f"\n  [[reverse_targets]]")
+    console.print(f'  name        = "{server_name.lower().replace(" ", "-")}"')
+    console.print(f'  listen_port = {default_listen_port}   # contextspy listens here')
+    console.print(f'  target_url  = "http://127.0.0.1:{default_server_port}"  # your {server_name} port')
+    console.print( '  provider    = "openai"   # OpenAI-compatible API')
+    console.print()
+    console.print("[bold]2. Start contextspy in local mode:[/bold]")
+    console.print("  uv run contextspy start-local\n")
+    return default_server_port, default_listen_port
+
+
+@app.command("setup-llamaserver")
+def setup_llamaserver() -> None:
+    """Print setup instructions for llama.cpp / llama-server."""
+    server_port, listen_port = _print_local_setup_header("llama-server", 8080, 8889)
+    console.print("[bold]3. Point your client at ContextSpy instead of llama-server directly:[/bold]")
+    console.print(f"  Change base URL from  http://127.0.0.1:{server_port}/v1")
+    console.print(f"                    to  http://127.0.0.1:{listen_port}/v1\n")
+    console.print("[bold]4. Launch llama-server as normal:[/bold]")
+    console.print(f"  llama-server -m your-model.gguf --port {server_port}\n")
+    console.print("[dim]Tip: llama-server exposes the OpenAI-compatible /v1/chat/completions endpoint.[/dim]")
+    console.print("[dim]The 'openai' provider parser handles it with full token breakdown.[/dim]\n")
+
+
+@app.command("setup-ollama")
+def setup_ollama() -> None:
+    """Print setup instructions for Ollama."""
+    server_port, listen_port = _print_local_setup_header("Ollama", 11434, 8890)
+    console.print("[bold]3. Point your client at ContextSpy instead of Ollama directly:[/bold]")
+    console.print(f"  Change base URL from  http://127.0.0.1:{server_port}/v1")
+    console.print(f"                    to  http://127.0.0.1:{listen_port}/v1\n")
+    console.print("[bold]4. Ollama runs as a background service — no extra step needed.[/bold]\n")
+    console.print("[bold]Alternatively[/bold] — use contextspy's built-in Ollama forward-proxy support:")
+    console.print("  Run [bold]contextspy start[/bold] (normal cloud mode).")
+    console.print(f"  Ollama on port 11434 is auto-detected by the forward proxy.")
+    console.print("  Set HTTPS_PROXY=http://127.0.0.1:8888 in your client.\n")
+    console.print("[dim]Ollama /v1/chat/completions is OpenAI-compatible (Ollama >= 0.1.24).[/dim]")
+    console.print("[dim]The raw /api/generate and /api/chat endpoints are not yet parsed.[/dim]\n")
+
+
+@app.command("setup-vllm")
+def setup_vllm() -> None:
+    """Print setup instructions for vLLM."""
+    server_port, listen_port = _print_local_setup_header("vLLM", 8000, 8891)
+    console.print("[bold]3. Point your client at ContextSpy instead of vLLM directly:[/bold]")
+    console.print(f"  Change base URL from  http://127.0.0.1:{server_port}/v1")
+    console.print(f"                    to  http://127.0.0.1:{listen_port}/v1\n")
+    console.print("[bold]4. Launch vLLM as normal:[/bold]")
+    console.print(f"  vllm serve your-model --port {server_port}\n")
+    console.print("[dim]vLLM exposes a fully OpenAI-compatible API; use provider = \"openai\" in config.[/dim]")
+    console.print("[dim]If vLLM uses a different port, update target_url and listen_port accordingly.[/dim]\n")
+
+
+if __name__ == "__main__":
+    app()
 
 @app.command("setup-opencode")
 def setup_opencode() -> None:

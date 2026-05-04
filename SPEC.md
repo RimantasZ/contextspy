@@ -1,13 +1,18 @@
-# ContextSpy — Technical Specification v0.2
+# ContextSpy — Technical Specification v0.3
 
-> **Status:** Implemented — April 30, 2026  
+> **Status:** Implemented — May 2026  
 > **Purpose:** Living specification — reflects the currently running codebase.
 
 ---
 
 ## 1. Overview
 
-ContextSpy is a local HTTPS proxy that sits between LLM coding agents (GitHub Copilot, Claude, opencode, OpenAI SDK clients) and their provider APIs. It captures every LLM request, analyses the composition of the context window, counts tokens per category, persists statistics in a local SQLite database, and serves a React web dashboard with charts and per-request drill-downs.
+ContextSpy is a local proxy that sits between LLM coding agents (GitHub Copilot, Claude, opencode, OpenAI SDK clients) and their provider APIs — either cloud APIs or local LLM servers. It captures every LLM request, analyses the composition of the context window, counts tokens per category, persists statistics in a local SQLite database, and serves a React web dashboard with charts and per-request drill-downs.
+
+ContextSpy operates in two complementary modes:
+
+- **Cloud / forward-proxy mode** (`contextspy start`): acts as an HTTPS MITM proxy for requests to cloud LLM APIs (OpenAI, Anthropic, GitHub Copilot, etc.). Requires the mitmproxy CA certificate to be installed in the OS trust store.
+- **Local / reverse-proxy mode** (`contextspy start-local`): acts as a plain-HTTP reverse proxy in front of local LLM servers (llama.cpp/llama-server, Ollama, vLLM, etc.). No TLS, no certificate installation — the client simply changes its base URL to point at the ContextSpy listener port.
 
 **Core value:** answer the question *"where are my tokens actually going?"* — how much of each context window is system prompt, MCP tool definitions, tool call results, file contents, conversation history, etc.
 
@@ -37,6 +42,8 @@ ContextSpy is a local HTTPS proxy that sits between LLM coding agents (GitHub Co
 
 ## 4. Architecture
 
+### 4.1 Cloud / Forward-Proxy Mode
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Coding Agent (Copilot / Claude / opencode / openai SDK)     │
@@ -45,42 +52,72 @@ ContextSpy is a local HTTPS proxy that sits between LLM coding agents (GitHub Co
                         │  via HTTPS_PROXY=http://127.0.0.1:8888
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  ContextSpy Proxy  (mitmproxy, 127.0.0.1:8888)                 │
-│  • TLS termination via local CA cert                          │
-│  • Filters to known LLM hostnames only                        │
-│  • Calls analysis pipeline on each response                   │
-│  • Writes records to SQLite                                   │
+│  ContextSpy Proxy  (mitmproxy, 127.0.0.1:8888)               │
+│  • TLS termination via local CA cert                         │
+│  • Filters to known LLM hostnames only                       │
+│  • Calls analysis pipeline on each response                  │
+│  • Writes records to SQLite                                  │
 └───────────────────────┬──────────────────────────────────────┘
                         │  forwards original HTTPS request
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  LLM Provider API                                             │
-│  (api.openai.com, api.anthropic.com, localhost:11434, …)      │
+│  LLM Provider API                                            │
+│  (api.openai.com, api.anthropic.com, localhost:11434, …)     │
 └──────────────────────────────────────────────────────────────┘
+```
 
+### 4.2 Local / Reverse-Proxy Mode
+
+```
 ┌──────────────────────────────────────────────────────────────┐
-│  ContextSpy Web Server  (FastAPI + Uvicorn, 127.0.0.1:5173)    │
-│  • REST API for sessions, requests, stats, proxy control      │
-│  • WebSocket endpoint for live updates                        │
-│  • Serves built React UI as static files                      │
+│  Client app (opencode / script / SDK)                        │
+│  base_url = http://127.0.0.1:8889/v1   (ContextSpy port)     │
+└───────────────────────┬──────────────────────────────────────┘
+                        │  plain HTTP  (no TLS, no proxy env var)
+                        ▼
+┌──────────────────────────────────────────────────────────────┐
+│  ContextSpy Reverse Proxy (mitmproxy, 127.0.0.1:8889)        │
+│  mode = reverse:http://127.0.0.1:8080                        │
+│  • provider_override = "openai" (no hostname detection)      │
+│  • Calls analysis pipeline on each response                  │
+│  • Writes records to SQLite                                  │
+└───────────────────────┬──────────────────────────────────────┘
+                        │  plain HTTP forwarded to local server
+                        ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Local LLM Server (llama-server / Ollama / vLLM)             │
+│  127.0.0.1:8080  (or whatever port the server uses)          │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Multiple `[[reverse_targets]]` can be configured simultaneously — each gets its own mitmproxy DumpMaster on a separate listen port.
+
+### 4.3 Shared Infrastructure
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  ContextSpy Web Server  (FastAPI + Uvicorn, 127.0.0.1:5173)  │
+│  • REST API for sessions, requests, stats, proxy control     │
+│  • WebSocket endpoint for live updates                       │
+│  • Serves built React UI as static files                     │
 └───────────────────────┬──────────────────────────────────────┘
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  SQLite Database  (~/.ContextSpy/ContextSpy.db)                   │
+│  SQLite Database  (~/.contextspy/contextspy.db)               │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The proxy addon and the FastAPI backend run **in the same Python process**: mitmproxy runs via its async API in a dedicated thread; FastAPI/Uvicorn runs in the main asyncio event loop. They communicate via direct in-process calls to a shared database layer (thread-safe via SQLAlchemy connection pool).
+Both modes share the same database, web server, and dashboard. The proxy addon and FastAPI backend run **in the same Python process**: mitmproxy runs via its async API in a dedicated thread (one per target in local mode); FastAPI/Uvicorn runs in the main asyncio event loop.
 
 ---
 
 ## 5. Components
 
-### 5.1 HTTPS Proxy
+### 5.1 HTTPS Proxy (Cloud / Forward Mode)
 
 **Technology:** `mitmproxy` Python library (inline addon API).  
-**Port:** `8888` (configurable via `--proxy-port`; default changed from 8080 because port 8080 is commonly occupied by other local services).  
+**Port:** `8888` (configurable via `--proxy-port`).  
 **Bind address:** `127.0.0.1` only.
 
 #### TLS Interception
@@ -109,10 +146,19 @@ Only intercept flows to the following hosts (all other traffic is passed through
 
 #### Addon Class: `ContextSpyAddon`
 
+Accepts an optional `provider_override: str | None` constructor argument. When set, the addon skips hostname-based provider detection and always uses the specified provider string. Used by reverse-proxy mode where the upstream is a known local server.
+
 The addon handles both regular JSON responses and SSE streaming responses:
 
-```python
+```
 class ContextSpyAddon:
+    def __init__(self, provider_override=None):
+        ...
+    def _get_provider(self, host, port):
+        if self._provider_override:
+            return self._provider_override
+        return _detect_provider(host, port)
+
     def request(self, flow):
         flow.metadata["ts_start"] = time.monotonic()
 
@@ -141,6 +187,28 @@ class ContextSpyAddon:
 - A `_BindWatcher` logging handler watches the mitmproxy logger for `"listening at"` / `"failed to listen"` messages and sets a `_bound` flag accordingly.
 - `is_running()` returns `True` only when `_bound` is `True` **and** the proxy thread is alive.
 - `with_termlog=False, with_dumper=False` suppresses mitmproxy's own log/dump addons.
+
+---
+
+### 5.1b Reverse Proxy (Local / `start-local` Mode)
+
+**Technology:** `mitmproxy` `DumpMaster` in `reverse:` mode — one instance per `[[reverse_targets]]` entry.  
+**Ports:** Configured per-target in `config.toml` (e.g. `8889`, `8890`).  
+**TLS:** None — the upstream is plain HTTP on localhost.  
+**Provider detection:** Bypassed — `provider_override` is set from config, so the full OpenAI/Anthropic parser runs unconditionally.
+
+Each reverse target is described by:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | str | Human label (e.g. `"llama-server"`) |
+| `listen_port` | int | Port contextspy binds (e.g. `8889`) |
+| `target_url` | str | Upstream URL (e.g. `"http://127.0.0.1:8080"`) |
+| `provider` | str | Parser to use: `"openai"` \| `"anthropic"` \| `"ollama"` |
+
+All three local server types expose an OpenAI-compatible `/v1/chat/completions` endpoint, so `provider = "openai"` is the correct choice for llama-server, Ollama (`/v1` endpoint, requires Ollama ≥ 0.1.24), and vLLM.
+
+`start_local_proxies(settings, ws_manager)` in `contextspy/proxy/runner.py` iterates over `settings.reverse_targets` and spawns one daemon thread per target. `stop_local_proxies()` shuts them all down cleanly.
 
 ---
 
@@ -438,52 +506,70 @@ The production build (`ui/dist/`) is served as static files by FastAPI. During d
 **CLI framework:** Typer.
 
 ```
-ContextSpy start [--proxy-port 8888] [--web-port 5173] [--no-browser]
-    Start both the proxy and web server in the same process.
+contextspy start [--proxy-port 8888] [--web-port 5173] [--no-browser]
+    Start both the forward proxy and web server (cloud mode).
     Opens browser to http://127.0.0.1:5173 on startup.
     Ctrl+C for clean shutdown.
 
-ContextSpy help
+contextspy start-local [--web-port 5173] [--no-browser]
+    Start reverse-proxy listeners for local LLM servers + web server.
+    Reads [[reverse_targets]] from ~/.contextspy/config.toml.
+    No CA certificate required.
+    Ctrl+C for clean shutdown.
+
+contextspy help
     Print a table of all available commands with descriptions.
 
-ContextSpy status
+contextspy status
     Show whether the proxy is running, active session name, DB path.
 
-ContextSpy install-cert
+contextspy install-cert
     Run OS-specific CA cert trust-store installation.
 
-ContextSpy reset-db [--yes]
+contextspy reset-db [--yes]
     Delete ALL requests and sessions from the local SQLite database.
     Prompts for confirmation unless --yes is passed.
 
-ContextSpy db-stats
+contextspy db-stats
     Print row counts for each table in the database (offline — no server needed).
 
-ContextSpy report
+contextspy report
     Print aggregate stats: total requests, input/output tokens (estimated and
     provider-reported), and an input token category breakdown table with
     percentages and a bar indicator.
 
-ContextSpy setup-claude
+contextspy setup-claude
     Print the exact PowerShell and Bash env-var commands needed to route
     Claude Code traffic through the proxy (HTTPS_PROXY + NODE_EXTRA_CA_CERTS).
 
-ContextSpy setup-copilot
+contextspy setup-copilot
     Print the exact PowerShell, Bash, and VS Code settings.json snippet
     needed to route GitHub Copilot traffic through the proxy.
 
-ContextSpy session start <name>
+contextspy setup-opencode
+    Print env-var commands to route opencode through the proxy.
+
+contextspy setup-llamaserver
+    Print config.toml snippet and client base-URL change for llama.cpp / llama-server.
+
+contextspy setup-ollama
+    Print config.toml snippet and client base-URL change for Ollama.
+
+contextspy setup-vllm
+    Print config.toml snippet and client base-URL change for vLLM.
+
+contextspy session start <name>
     Start a named session (calls POST /api/sessions).
     Ends any currently active session first.
 
-ContextSpy session end
+contextspy session end
     End the active session (calls POST /api/sessions/{active_id}/end).
 
-ContextSpy session list
+contextspy session list
     Print a table of sessions.
 ```
 
-`session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-stats`, `report`, `setup-claude`, and `setup-copilot` work offline.
+`session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-stats`, `report`, and all `setup-*` commands work offline.
 
 ---
 
@@ -663,7 +749,7 @@ Frontend dependencies (`ui/package.json`):
 
 ## 10. Configuration
 
-Config file: `~/.ContextSpy/config.toml` (created on first run with defaults).
+Config file: `~/.contextspy/config.toml` (created on first run with defaults).
 
 ```toml
 [proxy]
@@ -675,11 +761,19 @@ port = 5173
 bind_addr = "127.0.0.1"
 
 [storage]
-db_path = "~/.ContextSpy/ContextSpy.db"
+db_path = "~/.contextspy/contextspy.db"
 
 [intercepted_hosts]
 # Add extra hosts if needed (besides the built-in list)
 extra_hosts = []
+
+# Each [[reverse_targets]] block defines one local LLM server to intercept
+# in reverse-proxy mode (used by 'contextspy start-local').
+# [[reverse_targets]]
+# name        = "llama-server"            # display label
+# listen_port = 8889                      # port contextspy listens on
+# target_url  = "http://127.0.0.1:8080"  # where your server actually runs
+# provider    = "openai"                  # parser: "openai" | "anthropic" | "ollama"
 ```
 
 Config values can be overridden by CLI flags. The `config.py` module loads this file and exposes a `Settings` object.
@@ -690,16 +784,31 @@ Config values can be overridden by CLI flags. The `config.py` module loads this 
 
 ## 11. Startup Sequence
 
-When `ContextSpy start` is called:
+### 11.1 Cloud Mode (`contextspy start`)
+
+When `contextspy start` is called:
 
 1. Load and validate config.
-2. Ensure `~/.ContextSpy/` directory exists.
+2. Ensure `~/.contextspy/` directory exists.
 3. Initialise SQLite DB (create tables if not exists, run startup vacuum).
 4. Check CA cert; if absent, generate via mitmproxy and attempt trust-store installation. If install fails, print instructions.
-5. Start mitmproxy `DumpMaster` with `ContextSpyAddon` in a daemon thread.
+5. Start mitmproxy `DumpMaster` with `ContextSpyAddon` (no `provider_override`) in a daemon thread.
 6. Start FastAPI/Uvicorn in the main asyncio event loop on `127.0.0.1:5173`.
 7. Open `http://127.0.0.1:5173` in the default browser.
 8. On `Ctrl+C`: send shutdown signal to mitmproxy thread, wait for it to stop, close DB connections, exit.
+
+### 11.2 Local Mode (`contextspy start-local`)
+
+When `contextspy start-local` is called:
+
+1. Load and validate config; abort if `reverse_targets` is empty (print helpful config snippet).
+2. Ensure `~/.contextspy/` directory exists.
+3. Initialise SQLite DB (create tables if not exists, run startup vacuum).
+4. **Skip CA cert check** — no TLS interception needed.
+5. For each `[[reverse_targets]]` entry: start a mitmproxy `DumpMaster` in `reverse:` mode with `ContextSpyAddon(provider_override=target.provider)` in a daemon thread.
+6. Start FastAPI/Uvicorn in the main asyncio event loop on `127.0.0.1:5173`.
+7. Open `http://127.0.0.1:5173` in the default browser.
+8. On `Ctrl+C`: send shutdown signal to all reverse-proxy threads, wait for them to stop, close DB connections, exit.
 
 ---
 

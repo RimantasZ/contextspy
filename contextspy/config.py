@@ -27,11 +27,21 @@ class StorageSettings:
 
 
 @dataclass
+class ReverseTarget:
+    """A local LLM server to proxy in reverse mode."""
+    name: str                   # human label, e.g. "llama-server"
+    listen_port: int            # port contextspy listens on, e.g. 8889
+    target_url: str             # upstream URL, e.g. "http://127.0.0.1:8080"
+    provider: str = "openai"    # parser to use: "openai" | "anthropic" | "ollama"
+
+
+@dataclass
 class Settings:
     proxy: ProxySettings = field(default_factory=ProxySettings)
     web: WebSettings = field(default_factory=WebSettings)
     storage: StorageSettings = field(default_factory=StorageSettings)
     extra_hosts: list[str] = field(default_factory=list)
+    reverse_targets: list[ReverseTarget] = field(default_factory=list)
     config_dir: Path = field(default_factory=lambda: _DEFAULT_DIR)
 
     @classmethod
@@ -55,6 +65,16 @@ class Settings:
                     settings.storage.db_path = Path(s["db_path"]).expanduser()
             if "intercepted_hosts" in data:
                 settings.extra_hosts = data["intercepted_hosts"].get("extra_hosts", [])
+            if "reverse_targets" in data:
+                for rt in data["reverse_targets"]:
+                    settings.reverse_targets.append(
+                        ReverseTarget(
+                            name=rt["name"],
+                            listen_port=int(rt["listen_port"]),
+                            target_url=rt["target_url"],
+                            provider=rt.get("provider", "openai"),
+                        )
+                    )
         return settings
 
     def ensure_dirs(self) -> None:
@@ -81,6 +101,14 @@ db_path = "{db_path_toml}"
 [intercepted_hosts]
 # Add extra hosts if needed (besides the built-in list)
 extra_hosts = []
+
+# Uncomment and edit to enable local reverse-proxy mode.
+# Each [[reverse_targets]] block defines one local LLM server to intercept.
+# [[reverse_targets]]
+# name        = "llama-server"   # display label
+# listen_port = 8889             # port contextspy listens on
+# target_url  = "http://127.0.0.1:8080"  # where your server actually runs
+# provider    = "openai"         # parser: "openai" | "anthropic" | "ollama"
 """,
                 encoding="utf-8",
             )
