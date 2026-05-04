@@ -34,24 +34,54 @@ def install_cert() -> tuple[bool, str]:
             return False, _manual_instructions(system) + f"\n\nError: {result.stderr.strip()}"
 
         elif system == "Darwin":
-            result = subprocess.run(
-                [
-                    "security",
-                    "add-trusted-cert",
-                    "-d",
-                    "-r",
-                    "trustRoot",
-                    "-k",
-                    "/Library/Keychains/System.keychain",
-                    str(_MITMPROXY_CA),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode == 0:
-                return True, "Certificate installed in macOS system keychain."
-            return False, _manual_instructions(system) + f"\n\nError: {result.stderr.strip()}"
+            # macOS `security add-trusted-cert` can fail if the PEM contains
+            # both a private key and a certificate. Extract the certificate
+            # portion to a temporary file first (using OpenSSL), then install.
+            import tempfile
+
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as tf:
+                    temp_cert_path = Path(tf.name)
+
+                ext = subprocess.run(
+                    ["openssl", "x509", "-in", str(_MITMPROXY_CA), "-outform", "pem", "-out", str(temp_cert_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if ext.returncode != 0:
+                    # OpenSSL failed to parse the file; fall back to manual instructions.
+                    try:
+                        temp_cert_path.unlink()
+                    except Exception:
+                        pass
+                    return False, _manual_instructions(system) + f"\n\nOpenSSL error: {ext.stderr.strip()}"
+
+                result = subprocess.run(
+                    [
+                        "security",
+                        "add-trusted-cert",
+                        "-d",
+                        "-r",
+                        "trustRoot",
+                        "-k",
+                        "/Library/Keychains/System.keychain",
+                        str(temp_cert_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                try:
+                    temp_cert_path.unlink()
+                except Exception:
+                    pass
+
+                if result.returncode == 0:
+                    return True, "Certificate installed in macOS system keychain."
+                return False, _manual_instructions(system) + f"\n\nError: {result.stderr.strip()}"
+            except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as exc:
+                return False, _manual_instructions(system) + f"\n\nException: {exc}"
 
         elif system == "Linux":
             import shutil
