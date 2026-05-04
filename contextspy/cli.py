@@ -549,8 +549,8 @@ def _print_local_setup_header(server_name: str, default_server_port: int, defaul
         "No CA certificate is needed — traffic stays on localhost and is plain HTTP.\n"
     )
     console.print("[bold]1. Add to ~/.contextspy/config.toml:[/bold]")
-    console.print(f"\n  [[reverse_targets]]")
-    console.print(f'  name        = "{server_name.lower().replace(" ", "-")}"')
+    console.print(f"\n  [[reverse_targets]]", markup=False)
+    console.print(f'  name        = "{server_name.lower().replace(" ", "-")}"', markup=False)
     console.print(f'  listen_port = {default_listen_port}   # contextspy listens here')
     console.print(f'  target_url  = "http://127.0.0.1:{default_server_port}"  # your {server_name} port')
     console.print( '  provider    = "openai"   # OpenAI-compatible API')
