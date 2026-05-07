@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, useDeleteSession, useToolStats } from '../api/hooks';
+import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, useDeleteSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
@@ -14,6 +14,9 @@ export default function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [bucket, setBucket] = useState<Bucket>('hour');
+  const [renamingTitle, setRenamingTitle] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const renameTitleRef = useRef<HTMLInputElement>(null);
 
   const session = useSession(id ?? '');
   const stats = useStatsSession(id ?? '');
@@ -22,12 +25,32 @@ export default function SessionDetail() {
   const toolStats = useToolStats(id);
   const endSession = useEndSession();
   const deleteSession = useDeleteSession();
+  const renameSession = useRenameSession();
 
-  if (session.isLoading) return <div className="p-6 text-gray-400">Loading\u2026</div>;
+  // focus input when rename mode activates
+  useEffect(() => {
+    if (renamingTitle) renameTitleRef.current?.select();
+  }, [renamingTitle]);
+
+  if (session.isLoading) return <div className="p-6 text-gray-400">Loading…</div>;
   if (!session.data) return <div className="p-6 text-red-400">Session not found.</div>;
 
   const s = session.data.session;
   const st = stats.data;
+
+  function startRename() {
+    setRenameValue(s.name);
+    setRenamingTitle(true);
+  }
+
+  function commitRename() {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== s.name) {
+      renameSession.mutate({ id: s.id, name: trimmed }, { onSuccess: () => setRenamingTitle(false), onError: () => setRenamingTitle(false) });
+    } else {
+      setRenamingTitle(false);
+    }
+  }
 
   function exportPdf() {
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
@@ -164,7 +187,30 @@ export default function SessionDetail() {
           <button onClick={() => navigate('/sessions')} className="text-gray-400 hover:text-white text-sm">
             ← Sessions
           </button>
-          <h1 className="text-xl font-bold text-white">{s.name}</h1>
+          <h1 className="text-xl font-bold text-white">
+            {renamingTitle ? (
+              <span className="flex items-center gap-1">
+                <input
+                  ref={renameTitleRef}
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingTitle(false); }}
+                  className="bg-gray-700 text-white text-xl font-bold rounded px-2 py-0.5 border border-gray-500 focus:outline-none focus:border-indigo-400 w-64"
+                />
+                <button onClick={commitRename} className="text-green-400 hover:text-green-300 text-sm px-1" title="Save">✓</button>
+                <button onClick={() => setRenamingTitle(false)} className="text-gray-400 hover:text-gray-300 text-sm px-1" title="Cancel">✕</button>
+              </span>
+            ) : (
+              <span className="flex items-center gap-2 group">
+                {s.name}
+                <button onClick={startRename} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-white transition-opacity" title="Rename session">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 11l6.536-6.536a2 2 0 012.828 0l.172.172a2 2 0 010 2.828L12 14H9v-3z" />
+                  </svg>
+                </button>
+              </span>
+            )}
+          </h1>
           {s.ended_at === null && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-900 text-green-300 text-xs">
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />

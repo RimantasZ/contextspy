@@ -51,6 +51,14 @@ def end_session(db: OrmSession, session_id: str) -> Session | None:
     return session
 
 
+def rename_session(db: OrmSession, session_id: str, new_name: str) -> Session | None:
+    session = db.get(Session, session_id)
+    if session:
+        session.name = new_name
+        db.flush()
+    return session
+
+
 def delete_session(db: OrmSession, session_id: str) -> bool:
     session = db.get(Session, session_id)
     if not session:

@@ -1,5 +1,6 @@
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSessions, useDeleteSession } from '../api/hooks';
+import { useSessions, useDeleteSession, useRenameSession } from '../api/hooks';
 import { SessionControls } from '../components/SessionControls';
 
 function formatDuration(start: string, end: string | null): string {
@@ -11,10 +12,42 @@ function formatDuration(start: string, end: string | null): string {
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 }
 
+function InlineRename({ id, currentName, onDone }: { id: string; currentName: string; onDone: () => void }) {
+  const [value, setValue] = useState(currentName);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const rename = useRenameSession();
+
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
+
+  function save() {
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== currentName) {
+      rename.mutate({ id, name: trimmed }, { onSuccess: onDone, onError: onDone });
+    } else {
+      onDone();
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onDone(); }}
+        className="bg-gray-700 text-white text-sm rounded px-2 py-0.5 border border-gray-500 focus:outline-none focus:border-indigo-400 w-48"
+      />
+      <button onClick={save} className="text-green-400 hover:text-green-300 text-xs px-1" title="Save">✓</button>
+      <button onClick={onDone} className="text-gray-400 hover:text-gray-300 text-xs px-1" title="Cancel">✕</button>
+    </div>
+  );
+}
+
 export default function Sessions() {
   const navigate = useNavigate();
   const { data, isLoading } = useSessions();
   const deleteSession = useDeleteSession();
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const sessions = data?.sessions ?? [];
 
@@ -50,7 +83,24 @@ export default function Sessions() {
                   className="border-b border-gray-700 hover:bg-gray-750 cursor-pointer transition-colors"
                   onClick={() => navigate(`/sessions/${s.id}`)}
                 >
-                  <td className="px-4 py-3 text-white font-medium">{s.name}</td>
+                  <td className="px-4 py-3 text-white font-medium">
+                    {editingId === s.id ? (
+                      <InlineRename id={s.id} currentName={s.name} onDone={() => setEditingId(null)} />
+                    ) : (
+                      <div className="flex items-center gap-2 group">
+                        <span>{s.name}</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setEditingId(s.id); }}
+                          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-white transition-opacity"
+                          title="Rename session"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 11l6.536-6.536a2 2 0 012.828 0l.172.172a2 2 0 010 2.828L12 14H9v-3z" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-400">
                     {new Date(s.started_at).toLocaleString()}
                   </td>

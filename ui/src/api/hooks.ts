@@ -38,6 +38,17 @@ export function useEndSession() {
   })
 }
 
+export function useRenameSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => sessionsApi.rename(id, name),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['session', id] })
+    },
+  })
+}
+
 export function useDeleteSession() {
   const qc = useQueryClient()
   return useMutation({

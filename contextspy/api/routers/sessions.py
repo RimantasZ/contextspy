@@ -16,6 +16,10 @@ class CreateSessionRequest(BaseModel):
     name: str
 
 
+class RenameSessionRequest(BaseModel):
+    name: str
+
+
 def _get_ws() -> ConnectionManager:
     from contextspy.api.main import get_ws_manager
     return get_ws_manager()
@@ -82,3 +86,15 @@ def delete_session(session_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"deleted": session_id}
+
+
+@router.patch("/sessions/{session_id}")
+def rename_session(session_id: str, body: RenameSessionRequest):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name must not be empty")
+    with get_db() as db:
+        session = crud.rename_session(db, session_id, name)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"session": session.to_dict()}

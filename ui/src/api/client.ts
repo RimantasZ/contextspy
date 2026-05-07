@@ -94,6 +94,11 @@ export const sessionsApi = {
     }),
   end: (id: string) =>
     apiFetch<{ session: Session }>(`/sessions/${id}/end`, { method: 'POST' }),
+  rename: (id: string, name: string) =>
+    apiFetch<{ session: Session }>(`/sessions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
   delete: (id: string) =>
     apiFetch<{ deleted: string }>(`/sessions/${id}`, { method: 'DELETE' }),
 }
