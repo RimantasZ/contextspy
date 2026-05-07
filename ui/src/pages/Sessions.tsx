@@ -87,18 +87,7 @@ export default function Sessions() {
                     {editingId === s.id ? (
                       <InlineRename id={s.id} currentName={s.name} onDone={() => setEditingId(null)} />
                     ) : (
-                      <div className="flex items-center gap-2 group">
-                        <span>{s.name}</span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setEditingId(s.id); }}
-                          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-white transition-opacity"
-                          title="Rename session"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 11l6.536-6.536a2 2 0 012.828 0l.172.172a2 2 0 010 2.828L12 14H9v-3z" />
-                          </svg>
-                        </button>
-                      </div>
+                      s.name
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-400">
@@ -123,16 +112,24 @@ export default function Sessions() {
                     className="px-4 py-3 text-right"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete session "${s.name}"?`)) {
-                          deleteSession.mutate(s.id);
-                        }
-                      }}
-                      className="text-xs text-red-400 hover:text-red-300"
-                    >
-                      Delete
-                    </button>
+                    <div className="flex items-center justify-end gap-3">
+                      <button
+                        onClick={() => setEditingId(s.id)}
+                        className="text-xs text-gray-400 hover:text-white"
+                      >
+                        Rename
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete session "${s.name}"?`)) {
+                            deleteSession.mutate(s.id);
+                          }
+                        }}
+                        className="text-xs text-red-400 hover:text-red-300"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

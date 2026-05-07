@@ -201,14 +201,7 @@ export default function SessionDetail() {
                 <button onClick={() => setRenamingTitle(false)} className="text-gray-400 hover:text-gray-300 text-sm px-1" title="Cancel">✕</button>
               </span>
             ) : (
-              <span className="flex items-center gap-2 group">
-                {s.name}
-                <button onClick={startRename} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-white transition-opacity" title="Rename session">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 11l6.536-6.536a2 2 0 012.828 0l.172.172a2 2 0 010 2.828L12 14H9v-3z" />
-                  </svg>
-                </button>
-              </span>
+              s.name
             )}
           </h1>
           {s.ended_at === null && (
@@ -233,6 +226,12 @@ export default function SessionDetail() {
             className="px-3 py-1 text-sm bg-indigo-700 hover:bg-indigo-600 text-white rounded"
           >
             Export PDF
+          </button>
+          <button
+            onClick={startRename}
+            className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded"
+          >
+            Rename
           </button>
           <button
             onClick={() => {
