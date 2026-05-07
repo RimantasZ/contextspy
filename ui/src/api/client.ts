@@ -99,8 +99,8 @@ export const sessionsApi = {
       method: 'PATCH',
       body: JSON.stringify({ name }),
     }),
-  delete: (id: string) =>
-    apiFetch<{ deleted: string }>(`/sessions/${id}`, { method: 'DELETE' }),
+  delete: (id: string, deleteRequests = false) =>
+    apiFetch<{ deleted: string }>(`/sessions/${id}?delete_requests=${deleteRequests}`, { method: 'DELETE' }),
 }
 
 // ---- Requests API ---------------------------------------------------------

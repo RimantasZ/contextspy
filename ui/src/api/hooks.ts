@@ -52,7 +52,8 @@ export function useRenameSession() {
 export function useDeleteSession() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => sessionsApi.delete(id),
+    mutationFn: ({ id, deleteRequests = false }: { id: string; deleteRequests?: boolean }) =>
+      sessionsApi.delete(id, deleteRequests),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
   })
 }

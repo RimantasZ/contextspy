@@ -80,9 +80,12 @@ def end_session(session_id: str):
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(session_id: str):
+def delete_session(session_id: str, delete_requests: bool = False):
     with get_db() as db:
-        ok = crud.delete_session(db, session_id)
+        if delete_requests:
+            ok = crud.delete_session_with_requests(db, session_id)
+        else:
+            ok = crud.delete_session(db, session_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"deleted": session_id}

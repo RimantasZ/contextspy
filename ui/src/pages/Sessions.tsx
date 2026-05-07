@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSessions, useDeleteSession, useRenameSession } from '../api/hooks';
+import { useSessions, useRenameSession } from '../api/hooks';
 import { SessionControls } from '../components/SessionControls';
+import { DeleteSessionModal } from '../components/DeleteSessionModal';
 
 function formatDuration(start: string, end: string | null): string {
   const from = new Date(start).getTime();
@@ -46,8 +47,8 @@ function InlineRename({ id, currentName, onDone }: { id: string; currentName: st
 export default function Sessions() {
   const navigate = useNavigate();
   const { data, isLoading } = useSessions();
-  const deleteSession = useDeleteSession();
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deletingSession, setDeletingSession] = useState<{ id: string; name: string } | null>(null);
 
   const sessions = data?.sessions ?? [];
 
@@ -120,11 +121,7 @@ export default function Sessions() {
                         Rename
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(`Delete session "${s.name}"?`)) {
-                            deleteSession.mutate(s.id);
-                          }
-                        }}
+                        onClick={() => setDeletingSession({ id: s.id, name: s.name })}
                         className="text-xs text-red-400 hover:text-red-300"
                       >
                         Delete
@@ -137,6 +134,14 @@ export default function Sessions() {
           </table>
         )}
       </div>
+
+      {deletingSession && (
+        <DeleteSessionModal
+          sessionId={deletingSession.id}
+          sessionName={deletingSession.name}
+          onClose={() => setDeletingSession(null)}
+        />
+      )}
     </div>
   );
 }

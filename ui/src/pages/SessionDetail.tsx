@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, useDeleteSession, useToolStats, useRenameSession } from '../api/hooks';
+import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
 import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
+import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -24,8 +25,8 @@ export default function SessionDetail() {
   const requests = useRequests({ session_id: id, limit: 200 });
   const toolStats = useToolStats(id);
   const endSession = useEndSession();
-  const deleteSession = useDeleteSession();
   const renameSession = useRenameSession();
+  const [deletingSession, setDeletingSession] = useState(false);
 
   // focus input when rename mode activates
   useEffect(() => {
@@ -234,11 +235,7 @@ export default function SessionDetail() {
             Rename
           </button>
           <button
-            onClick={() => {
-              if (confirm(`Delete session "${s.name}"?`)) {
-                deleteSession.mutate(s.id, { onSuccess: () => navigate('/sessions') });
-              }
-            }}
+            onClick={() => setDeletingSession(true)}
             className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-red-400 rounded"
           >
             Delete
@@ -295,6 +292,15 @@ export default function SessionDetail() {
           onRowClick={(reqId) => navigate(`/requests/${reqId}`)}
         />
       </div>
+
+      {deletingSession && (
+        <DeleteSessionModal
+          sessionId={s.id}
+          sessionName={s.name}
+          onClose={() => setDeletingSession(false)}
+          onDeleted={() => navigate('/sessions')}
+        />
+      )}
     </div>
   );
 }

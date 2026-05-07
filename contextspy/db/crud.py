@@ -73,6 +73,20 @@ def delete_session(db: OrmSession, session_id: str) -> bool:
     return True
 
 
+def delete_session_with_requests(db: OrmSession, session_id: str) -> bool:
+    """Delete session and all requests (+ cascaded tool_stats) that belong to it."""
+    session = db.get(Session, session_id)
+    if not session:
+        return False
+    db.execute(
+        text("DELETE FROM requests WHERE session_id = :sid"),
+        {"sid": session_id},
+    )
+    db.delete(session)
+    db.flush()
+    return True
+
+
 def purge_raw_bodies(db: OrmSession, session_id: str) -> None:
     db.execute(
         text(
