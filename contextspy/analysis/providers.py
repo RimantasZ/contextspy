@@ -102,6 +102,11 @@ def parse_openai(req_body: dict, resp_body: dict) -> ParsedRequest:
     if choices:
         msg = choices[0].get("message") or choices[0].get("delta") or {}
         response_text = _content_to_str(msg.get("content", ""))
+        # Also serialise tool-call arguments so output tokens are counted correctly
+        tool_calls = msg.get("tool_calls") or []
+        if tool_calls:
+            tc_text = json.dumps(tool_calls)
+            response_text = (response_text + "\n" + tc_text).strip() if response_text else tc_text
 
     return ParsedRequest(
         model=model,
@@ -233,8 +238,8 @@ def parse_ollama(req_body: dict, resp_body: dict) -> ParsedRequest:
 def _sse_to_anthropic_resp(raw: bytes) -> dict:
     """Convert Anthropic SSE stream bytes into a resp_body dict for parse_anthropic."""
     text = raw.decode("utf-8", errors="replace")
-    input_tokens: int = 0
-    output_tokens: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     model: str | None = None
     text_parts: list[str] = []
 
@@ -253,28 +258,39 @@ def _sse_to_anthropic_resp(raw: bytes) -> dict:
             msg = event.get("message", {})
             model = model or msg.get("model")
             usage = msg.get("usage", {})
-            input_tokens = usage.get("input_tokens", input_tokens)
+            if "input_tokens" in usage:
+                input_tokens = usage["input_tokens"]
         elif event_type == "content_block_delta":
             delta = event.get("delta", {})
-            if delta.get("type") == "text_delta":
+            dtype = delta.get("type", "")
+            if dtype == "text_delta":
                 text_parts.append(delta.get("text", ""))
+            elif dtype == "input_json_delta":
+                # Tool-use argument fragment — include for output token counting
+                text_parts.append(delta.get("partial_json", ""))
         elif event_type == "message_delta":
             usage = event.get("usage", {})
-            output_tokens = usage.get("output_tokens", output_tokens)
+            if "output_tokens" in usage:
+                output_tokens = usage["output_tokens"]
 
-    return {
+    resp: dict = {
         "model": model,
         "content": [{"type": "text", "text": "".join(text_parts)}],
-        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
     }
+    if input_tokens is not None or output_tokens is not None:
+        resp["usage"] = {"input_tokens": input_tokens or 0, "output_tokens": output_tokens or 0}
+    return resp
 
 
 def _sse_to_openai_resp(raw: bytes) -> dict:
-    """Convert OpenAI SSE stream bytes into a resp_body dict for parse_openai."""
+    """Convert OpenAI-compatible SSE stream bytes into a normalised resp_body dict."""
     text = raw.decode("utf-8", errors="replace")
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    text_parts: list[str] = []
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    content_parts: list[str] = []
+    tool_arg_parts: dict[int, list[str]] = {}   # index → argument fragments
+    finish_reason: str | None = None
+    model: str | None = None
 
     for line in text.splitlines():
         if not line.startswith("data: "):
@@ -286,19 +302,56 @@ def _sse_to_openai_resp(raw: bytes) -> dict:
             event = json.loads(payload)
         except json.JSONDecodeError:
             continue
+
+        if event.get("model"):
+            model = event["model"]
+
         for choice in event.get("choices", []):
             delta = choice.get("delta", {})
-            text_parts.append(delta.get("content") or "")
+            # Text content
+            if delta.get("content"):
+                content_parts.append(delta["content"])
+            # Tool-call argument fragments (needed for output token counting)
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                args = (tc.get("function") or {}).get("arguments")
+                if args:
+                    tool_arg_parts.setdefault(idx, []).append(args)
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+
+        # Usage only present in final chunk on many servers
         usage = event.get("usage") or {}
-        if usage.get("prompt_tokens"):
+        if usage.get("prompt_tokens") is not None:
             prompt_tokens = usage["prompt_tokens"]
-        if usage.get("completion_tokens"):
+        if usage.get("completion_tokens") is not None:
             completion_tokens = usage["completion_tokens"]
 
-    return {
-        "choices": [{"message": {"role": "assistant", "content": "".join(text_parts)}}],
-        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+    response_content: str | None = "".join(content_parts) if content_parts else None
+    tool_calls = [
+        {"index": i, "function": {"arguments": "".join(parts)}}
+        for i, parts in sorted(tool_arg_parts.items())
+    ]
+
+    resp: dict = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": response_content,
+                **(({"tool_calls": tool_calls}) if tool_calls else {}),
+            },
+            "finish_reason": finish_reason,
+        }],
     }
+    if model:
+        resp["model"] = model
+    # Only include usage when the server actually reported it
+    if prompt_tokens is not None or completion_tokens is not None:
+        resp["usage"] = {
+            "prompt_tokens": prompt_tokens or 0,
+            "completion_tokens": completion_tokens or 0,
+        }
+    return resp
 
 
 def parse_sse_request(
@@ -314,6 +367,11 @@ def parse_sse_request(
             if "/messages" in endpoint:
                 resp_body = _sse_to_anthropic_resp(raw_sse)
                 return parse_anthropic(req_body, resp_body)
+        elif provider == "ollama":
+            # /v1/chat/completions is OpenAI-compatible (Ollama >= 0.1.24)
+            if "/v1/chat/completions" in endpoint:
+                resp_body = _sse_to_openai_resp(raw_sse)
+                return parse_openai(req_body, resp_body)
         return None
     except Exception:
         return None
@@ -330,6 +388,9 @@ def parse_request(
             if "/messages" in endpoint:
                 return parse_anthropic(req_body, resp_body)
         elif provider == "ollama":
+            # /v1/chat/completions is OpenAI-compatible (Ollama >= 0.1.24)
+            if "/v1/chat/completions" in endpoint:
+                return parse_openai(req_body, resp_body)
             if "/api/chat" in endpoint:
                 return parse_ollama(req_body, resp_body)
         return None

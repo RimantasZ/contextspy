@@ -167,8 +167,28 @@ class ContextSpyAddon:
             duration_ms = int((time.monotonic() - flow.metadata["ts_start"]) * 1000)
 
         parsed = parse_sse_request(provider, endpoint, req_body, raw_sse)
+
+        # Store a clean synthetic JSON response (not raw SSE with all data: lines)
+        if parsed is not None:
+            synthetic: dict = {
+                "choices": [{
+                    "message": {"role": "assistant", "content": parsed.response_text},
+                    "finish_reason": "stop",
+                }],
+            }
+            if parsed.model:
+                synthetic["model"] = parsed.model
+            if parsed.provider_input_tokens is not None or parsed.provider_output_tokens is not None:
+                synthetic["usage"] = {
+                    "prompt_tokens": parsed.provider_input_tokens,
+                    "completion_tokens": parsed.provider_output_tokens,
+                }
+            raw_resp_text: str = json.dumps(synthetic, ensure_ascii=False)
+        else:
+            raw_resp_text = raw_sse.decode("utf-8", errors="replace")
+
         self._save_request(flow, provider, agent, endpoint, req_body, parsed,
-                           duration_ms, raw_sse.decode("utf-8", errors="replace"))
+                           duration_ms, raw_resp_text)
 
     def _handle_response(self, flow: http.HTTPFlow) -> None:
         if flow.response is None:
