@@ -125,6 +125,20 @@ export default function RequestDetail() {
                   <span>Input: </span>
                   <span className="text-white">{req.provider_input_tokens?.toLocaleString() ?? '—'}</span>
                   <span className="ml-1">(est. {req.tokens_total_input.toLocaleString()})</span>
+                  {(req.cache_read_tokens != null || req.cache_creation_tokens != null) && (
+                    <div className="mt-0.5 pl-0 space-y-0.5">
+                      {(req.cache_read_tokens ?? 0) > 0 && (
+                        <div className="text-teal-400">
+                          ↳ {req.cache_read_tokens!.toLocaleString()} read from cache
+                        </div>
+                      )}
+                      {(req.cache_creation_tokens ?? 0) > 0 && (
+                        <div className="text-amber-400">
+                          ↳ {req.cache_creation_tokens!.toLocaleString()} written to cache
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <span>Output: </span>

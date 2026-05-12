@@ -228,12 +228,16 @@ class ContextSpyAddon:
             model = parsed.model
             provider_input = parsed.provider_input_tokens
             provider_output = parsed.provider_output_tokens
+            cache_read = parsed.cache_read_tokens
+            cache_creation = parsed.cache_creation_tokens
         else:
             from contextspy.analysis.classifier import CategoryBreakdown
             breakdown = CategoryBreakdown()
             model = req_body.get("model")
             provider_input = None
             provider_output = None
+            cache_read = None
+            cache_creation = None
 
         with get_db() as db:
             active_session = crud.get_active_session(db)
@@ -251,6 +255,8 @@ class ContextSpyAddon:
                 "status_code": flow.response.status_code if flow.response else None,
                 "provider_input_tokens": provider_input,
                 "provider_output_tokens": provider_output,
+                "cache_read_tokens": cache_read,
+                "cache_creation_tokens": cache_creation,
                 "raw_request_body": flow.request.get_text(),
                 "raw_response_body": raw_resp_text,
             }

@@ -72,6 +72,9 @@ class Request(Base):
     # Provider-reported usage
     provider_input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     provider_output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Anthropic prompt-cache breakdown (None for non-Anthropic providers)
+    cache_read_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cache_creation_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     tokenizer: Mapped[str] = mapped_column(
         String, nullable=False, default="tiktoken/cl100k_base"
@@ -106,6 +109,8 @@ class Request(Base):
             "tokens_total_output": self.tokens_total_output,
             "provider_input_tokens": self.provider_input_tokens,
             "provider_output_tokens": self.provider_output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
             "tokenizer": self.tokenizer,
         }
         if include_raw:

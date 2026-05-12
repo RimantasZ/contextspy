@@ -27,6 +27,9 @@ class ParsedRequest:
     raw_endpoint: str = ""
     # Maps tool_call_id → tool_name for accurate result attribution
     tool_call_map: dict[str, str] = field(default_factory=dict)
+    # Anthropic prompt-cache breakdown (None for non-Anthropic providers)
+    cache_read_tokens: int | None = None
+    cache_creation_tokens: int | None = None
 
 
 def _content_to_str(content: Any) -> str:
@@ -179,11 +182,20 @@ def parse_anthropic(req_body: dict, resp_body: dict) -> ParsedRequest:
     # Provider usage
     provider_input = None
     provider_output = None
+    cache_read: int | None = None
+    cache_creation: int | None = None
     response_text = ""
     usage = resp_body.get("usage", {})
     if usage:
-        provider_input = usage.get("input_tokens")
         provider_output = usage.get("output_tokens")
+        # cache_read/creation may be 0 or absent on non-cache requests
+        raw_read = usage.get("cache_read_input_tokens")
+        raw_creation = usage.get("cache_creation_input_tokens")
+        cache_read = raw_read if raw_read is not None else None
+        cache_creation = raw_creation if raw_creation is not None else None
+        # provider_input_tokens = full context (billed + cached)
+        billed = usage.get("input_tokens") or 0
+        provider_input = billed + (cache_read or 0) + (cache_creation or 0)
     resp_content = resp_body.get("content", [])
     if isinstance(resp_content, list):
         response_text = _content_to_str(resp_content)
@@ -198,6 +210,8 @@ def parse_anthropic(req_body: dict, resp_body: dict) -> ParsedRequest:
         provider_output_tokens=provider_output,
         response_text=response_text,
         tool_call_map=tool_call_map,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_creation,
     )
 
 
@@ -240,6 +254,8 @@ def _sse_to_anthropic_resp(raw: bytes) -> dict:
     text = raw.decode("utf-8", errors="replace")
     input_tokens: int | None = None
     output_tokens: int | None = None
+    cache_read: int | None = None
+    cache_creation: int | None = None
     model: str | None = None
     text_parts: list[str] = []
 
@@ -260,6 +276,10 @@ def _sse_to_anthropic_resp(raw: bytes) -> dict:
             usage = msg.get("usage", {})
             if "input_tokens" in usage:
                 input_tokens = usage["input_tokens"]
+            if "cache_read_input_tokens" in usage:
+                cache_read = usage["cache_read_input_tokens"]
+            if "cache_creation_input_tokens" in usage:
+                cache_creation = usage["cache_creation_input_tokens"]
         elif event_type == "content_block_delta":
             delta = event.get("delta", {})
             dtype = delta.get("type", "")
@@ -277,8 +297,13 @@ def _sse_to_anthropic_resp(raw: bytes) -> dict:
         "model": model,
         "content": [{"type": "text", "text": "".join(text_parts)}],
     }
-    if input_tokens is not None or output_tokens is not None:
-        resp["usage"] = {"input_tokens": input_tokens or 0, "output_tokens": output_tokens or 0}
+    if input_tokens is not None or output_tokens is not None or cache_read is not None or cache_creation is not None:
+        resp["usage"] = {
+            "input_tokens": input_tokens or 0,
+            "output_tokens": output_tokens or 0,
+            "cache_read_input_tokens": cache_read,
+            "cache_creation_input_tokens": cache_creation,
+        }
     return resp
 
 

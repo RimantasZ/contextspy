@@ -45,6 +45,8 @@ export interface Request {
   tokens_total_output: number
   provider_input_tokens: number | null
   provider_output_tokens: number | null
+  cache_read_tokens: number | null
+  cache_creation_tokens: number | null
   tokenizer: string
   raw_request_body?: string | null
   raw_response_body?: string | null

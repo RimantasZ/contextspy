@@ -24,6 +24,23 @@ def init_db(db_path: Path) -> None:
     )
     _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
     Base.metadata.create_all(_engine)
+    _migrate(_engine)
+
+
+def _migrate(engine) -> None:
+    """Apply additive schema migrations for existing databases."""
+    new_columns = [
+        ("cache_read_tokens", "INTEGER"),
+        ("cache_creation_tokens", "INTEGER"),
+    ]
+    with engine.connect() as conn:
+        for col, col_type in new_columns:
+            try:
+                conn.execute(text(f"ALTER TABLE requests ADD COLUMN {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                # Column already exists — ignore
+                pass
 
 
 def get_engine():
