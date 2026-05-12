@@ -228,6 +228,7 @@ interface Props {
 export function ParsedViewer({ rawBody }: Props) {
   const [tokenized, setTokenized] = useState<string[][] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [showHighlight, setShowHighlight] = useState(true)
 
   const blocks = rawBody ? extractBlocks(rawBody) : []
 
@@ -258,17 +259,31 @@ export function ParsedViewer({ rawBody }: Props) {
   }
 
   return (
-    <div className="p-3 space-y-2 overflow-auto max-h-[700px]">
-      {loading && (
-        <p className="text-xs text-gray-500 italic px-1 pb-1">Tokenizing…</p>
-      )}
-      {blocks.map((block, i) => (
-        <TokenBlock
-          key={block.id}
-          block={block}
-          tokens={tokenized ? tokenized[i] ?? null : null}
-        />
-      ))}
+    <div className="overflow-auto max-h-[700px]">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-800">
+        {loading
+          ? <span className="text-xs text-gray-500 italic">Tokenizing…</span>
+          : <span className="text-xs text-gray-500">{blocks.length} block{blocks.length !== 1 ? 's' : ''}</span>
+        }
+        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showHighlight}
+            onChange={e => setShowHighlight(e.target.checked)}
+            className="accent-indigo-500"
+          />
+          Highlight tokens
+        </label>
+      </div>
+      <div className="p-3 space-y-2">
+        {blocks.map((block, i) => (
+          <TokenBlock
+            key={block.id}
+            block={block}
+            tokens={showHighlight && tokenized ? tokenized[i] ?? null : null}
+          />
+        ))}
+      </div>
     </div>
   )
 }

@@ -1,11 +1,53 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { ParsedViewer } from './ParsedViewer';
+import { tokenizeApi } from '../api/client';
+
+// ---------------------------------------------------------------------------
+// Response text extractor
+// ---------------------------------------------------------------------------
+
+type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
+
+function extractResponseText(parsed: unknown): string | null {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const body = parsed as Record<string, unknown>;
+  // OpenAI / synthetic format
+  const choices = body.choices;
+  if (Array.isArray(choices) && choices.length > 0) {
+    const msg = ((choices[0] as Record<string, unknown>).message ?? {}) as Record<string, unknown>;
+    const content = msg.content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return (content as { type?: string; text?: string }[])
+        .filter(b => b.type === 'text')
+        .map(b => b.text ?? '')
+        .join('\n');
+    }
+    return null;
+  }
+  // Anthropic format
+  const content = body.content;
+  if (Array.isArray(content)) {
+    return (content as { type?: string; text?: string }[])
+      .filter(b => b.type === 'text')
+      .map(b => b.text ?? '')
+      .join('\n');
+  }
+  return null;
+}
+
+const TOKEN_COLORS = [
+  'rgba(99,102,241,0.32)', 'rgba(52,211,153,0.25)', 'rgba(251,191,36,0.28)',
+  'rgba(239,68,68,0.22)',  'rgba(56,189,248,0.25)', 'rgba(167,139,250,0.28)',
+  'rgba(251,146,60,0.25)', 'rgba(34,197,94,0.22)',  'rgba(244,114,182,0.22)',
+  'rgba(20,184,166,0.25)',
+];
 
 // ---------------------------------------------------------------------------
 // Syntax-highlighted, collapsible JSON tree
 // ---------------------------------------------------------------------------
 
-type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
+
 
 interface NodeProps {
   value: JsonValue;
@@ -165,13 +207,21 @@ interface Props {
   title: string;
   content: string | null | undefined;
   parsedBody?: string | null;
+  /** When true shows 3-tab output view: JSON tree / Raw text / Response text */
+  responseMode?: boolean;
 }
 
-export function RawViewer({ title, content, parsedBody }: Props) {
+export function RawViewer({ title, content, parsedBody, responseMode }: Props) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'parsed' | 'raw'>('parsed');
+  const [respTab, setRespTab] = useState<'json' | 'raw' | 'text'>('json');
   const [search, setSearch] = useState('');
   const searchLower = search.toLowerCase();
+
+  // Response "Text" tab — token highlight state
+  const [showHighlight, setShowHighlight] = useState(true);
+  const [respTokens, setRespTokens] = useState<string[] | null>(null);
+  const [loadingText, setLoadingText] = useState(false);
 
   const { parsed, isSse, isJson } = useMemo(() => {
     if (!content) return { parsed: null, isSse: false, isJson: false };
@@ -189,6 +239,21 @@ export function RawViewer({ title, content, parsedBody }: Props) {
   const copyToClipboard = useCallback(() => {
     if (content) navigator.clipboard.writeText(content);
   }, [content]);
+
+  // Reset tokens when content changes
+  useEffect(() => { setRespTokens(null); }, [content]);
+
+  // Fetch tokens for response "Text" tab
+  useEffect(() => {
+    if (!responseMode || respTab !== 'text' || !isJson || respTokens !== null || loadingText) return;
+    const text = extractResponseText(parsed);
+    if (!text) return;
+    setLoadingText(true);
+    tokenizeApi.tokenize([text])
+      .then(r => setRespTokens(r.results[0] ?? []))
+      .catch(() => setRespTokens([]))
+      .finally(() => setLoadingText(false));
+  }, [responseMode, respTab, isJson, parsed, respTokens, loadingText]);
 
   const purged = content === null || content === undefined;
 
@@ -224,7 +289,116 @@ export function RawViewer({ title, content, parsedBody }: Props) {
             <p className="px-4 py-3 text-sm text-gray-500 italic">
               Raw content has been purged.
             </p>
+          ) : responseMode ? (
+            /* ----------------------------------------------------------------
+               Response mode: JSON | Raw | Text tabs
+            ---------------------------------------------------------------- */
+            <>
+              <div className="flex border-b border-gray-800">
+                {([
+                  ['json', 'JSON'],
+                  ['raw',  'Raw'],
+                  ['text', 'Text'],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setRespTab(key)}
+                    className={`px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
+                      respTab === key
+                        ? 'border-indigo-500 text-indigo-300'
+                        : 'border-transparent text-gray-500 hover:text-gray-300'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* JSON tab — collapsible tree */}
+              {respTab === 'json' && (
+                <>
+                  <div className="px-3 py-2 border-b border-gray-800">
+                    <input
+                      type="text"
+                      placeholder="Search…"
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
+                    {isJson ? (
+                      <JsonNode value={parsed as JsonValue} depth={0} searchLower={searchLower} />
+                    ) : (
+                      <pre className="text-gray-300 whitespace-pre-wrap break-all">{content}</pre>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* Raw tab — plain text */}
+              {respTab === 'raw' && (
+                <div className="p-4 overflow-auto max-h-[600px]">
+                  <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-all">
+                    {isJson ? JSON.stringify(parsed, null, 2) : content}
+                  </pre>
+                </div>
+              )}
+
+              {/* Text tab — response text with optional token highlighting */}
+              {respTab === 'text' && (() => {
+                const respText = isJson ? extractResponseText(parsed) : null;
+                if (!respText) {
+                  return (
+                    <p className="px-4 py-3 text-sm text-gray-500 italic">
+                      No response text found.
+                    </p>
+                  );
+                }
+                return (
+                  <>
+                    <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-800">
+                      {loadingText
+                        ? <span className="text-xs text-gray-500 italic">Tokenizing…</span>
+                        : respTokens !== null
+                          ? <span className="text-xs text-gray-500">{respTokens.length.toLocaleString()} tokens</span>
+                          : <span className="text-xs text-gray-500" />
+                      }
+                      <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={showHighlight}
+                          onChange={e => setShowHighlight(e.target.checked)}
+                          className="accent-indigo-500"
+                        />
+                        Highlight tokens
+                      </label>
+                    </div>
+                    <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
+                      {showHighlight && respTokens !== null ? (
+                        <span className="whitespace-pre-wrap break-words leading-6">
+                          {respTokens.map((tok, i) => (
+                            <span
+                              key={i}
+                              style={{ background: TOKEN_COLORS[i % TOKEN_COLORS.length] }}
+                              className="rounded-[2px] text-gray-100"
+                            >
+                              {tok}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <pre className="text-gray-300 whitespace-pre-wrap break-words">{respText}</pre>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </>
           ) : (
+            /* ----------------------------------------------------------------
+               Default mode: Parsed + Raw tabs (request panel)
+            ---------------------------------------------------------------- */
             <>
               {/* Tab bar — only when parsedBody is provided */}
               {parsedBody != null && (
