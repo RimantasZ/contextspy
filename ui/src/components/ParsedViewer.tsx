@@ -90,7 +90,14 @@ function packRows(blocks: OvBlock[], tokensPerRow: number): OvBlock[][] {
   return rows
 }
 
-function ContextOverview({ blocks, tokenCounts }: { blocks: ParsedBlock[], tokenCounts: number[] }) {
+function ContextOverview({
+  blocks, tokenCounts, selectedId, onSelect,
+}: {
+  blocks: ParsedBlock[]
+  tokenCounts: number[]
+  selectedId: string | null
+  onSelect: (id: string | null) => void
+}) {
   const ovBlocks: OvBlock[] = blocks.map((b, i) => ({
     ...b, tokenCount: Math.max(tokenCounts[i] ?? 1, 1),
   }))
@@ -98,33 +105,68 @@ function ContextOverview({ blocks, tokenCounts }: { blocks: ParsedBlock[], token
   if (totalTokens === 0) return null
   const tokensPerRow = Math.max(Math.ceil(totalTokens / 6), 200)
   const rows = packRows(ovBlocks, tokensPerRow)
+  const selectedBlock = selectedId ? ovBlocks.find(b => b.id === selectedId) : null
 
   return (
-    <div className="p-3 space-y-1">
-      {rows.map((row, ri) => (
-        <div key={ri} className="flex gap-1" style={{ height: 52 }}>
-          {row.map(b => (
-            <div
-              key={b.id}
-              style={{
-                flex: `${b.tokenCount} 1 0`,
-                minWidth: 0,
-                background: CAT_BG[b.category],
-                borderLeft: `3px solid ${CAT_BORDER[b.category]}`,
-              }}
-              className="rounded-sm px-2 py-1.5 overflow-hidden"
-              title={`${b.label}: ${b.tokenCount.toLocaleString()} tokens`}
-            >
-              <div className={`text-xs font-medium truncate leading-tight ${CAT_LABEL[b.category]}`}>
-                {shortLabel(b.label)}
-              </div>
-              <div className="text-[10px] text-gray-500 tabular-nums mt-0.5 leading-tight">
-                {b.tokenCount.toLocaleString()}
-              </div>
+    <div>
+      <div className="p-3 space-y-1">
+        {rows.map((row, ri) => (
+          <div key={ri} className="flex gap-1" style={{ height: 52 }}>
+            {row.map(b => (
+              <button
+                key={b.id}
+                onClick={() => onSelect(selectedId === b.id ? null : b.id)}
+                style={{
+                  flex: `${b.tokenCount} 1 0`,
+                  minWidth: 0,
+                  background: selectedId === b.id
+                    ? CAT_BORDER[b.category]
+                    : CAT_BG[b.category],
+                  borderLeft: `3px solid ${CAT_BORDER[b.category]}`,
+                  outline: selectedId === b.id ? `2px solid ${CAT_BORDER[b.category]}` : 'none',
+                  outlineOffset: '1px',
+                }}
+                className="rounded-sm px-2 py-1.5 overflow-hidden text-left transition-all hover:brightness-125 cursor-pointer"
+                title={`${b.label}: ${b.tokenCount.toLocaleString()} tokens`}
+              >
+                <div className={`text-xs font-medium truncate leading-tight ${selectedId === b.id ? 'text-white' : CAT_LABEL[b.category]}`}>
+                  {shortLabel(b.label)}
+                </div>
+                <div className={`text-[10px] tabular-nums mt-0.5 leading-tight ${selectedId === b.id ? 'text-gray-200' : 'text-gray-500'}`}>
+                  {b.tokenCount.toLocaleString()}
+                </div>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {selectedBlock && (
+        <div className="border-t border-gray-700 mx-3 mb-3">
+          <div
+            className="flex items-center justify-between px-3 py-2 rounded-t"
+            style={{ background: CAT_BG[selectedBlock.category], borderLeft: `3px solid ${CAT_BORDER[selectedBlock.category]}` }}
+          >
+            <span className={`text-xs font-medium ${CAT_LABEL[selectedBlock.category]}`}>
+              {selectedBlock.label}
+            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] text-gray-500 tabular-nums">
+                {selectedBlock.tokenCount.toLocaleString()} tokens
+              </span>
+              <button
+                onClick={() => onSelect(null)}
+                className="text-gray-500 hover:text-gray-300 text-xs leading-none"
+              >
+                ✕
+              </button>
             </div>
-          ))}
+          </div>
+          <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-words max-h-[320px] overflow-auto bg-gray-900 px-3 py-2.5 rounded-b border border-gray-700 border-t-0">
+            {selectedBlock.text}
+          </pre>
         </div>
-      ))}
+      )}
     </div>
   )
 }
@@ -309,10 +351,12 @@ function TokenBlock({ block, tokens }: BlockProps) {
 // ---------------------------------------------------------------------------
 interface Props {
   rawBody: string | null | undefined
+  rawContent?: string | null
 }
 
-export function ParsedViewer({ rawBody }: Props) {
-  const [innerTab, setInnerTab] = useState<'overview' | 'blocks'>('overview')
+export function ParsedViewer({ rawBody, rawContent }: Props) {
+  const [tab, setTab] = useState<'overview' | 'parsed' | 'raw'>('overview')
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
   const [tokenized, setTokenized] = useState<string[][] | null>(null)
   const [loading, setLoading] = useState(false)
   const [showHighlight, setShowHighlight] = useState(true)
@@ -334,6 +378,7 @@ export function ParsedViewer({ rawBody }: Props) {
 
   useEffect(() => {
     setTokenized(null)
+    setSelectedBlockId(null)
     fetchTokens()
   }, [fetchTokens])
 
@@ -348,35 +393,37 @@ export function ParsedViewer({ rawBody }: Props) {
   const tokenCounts = tokenized ? blocks.map((_, i) => tokenized[i]?.length ?? 0) : null
   const totalTokens = tokenCounts ? tokenCounts.reduce((s, c) => s + c, 0) : null
 
+  // Pretty-print for Raw tab
+  let rawPretty = rawContent ?? rawBody ?? ''
+  try { rawPretty = JSON.stringify(JSON.parse(rawPretty), null, 2) } catch { /* keep as-is */ }
+
   return (
     <div className="overflow-auto max-h-[700px]">
-      {/* Inner tab bar */}
+      {/* Top-level tab bar */}
       <div className="flex items-center justify-between border-b border-gray-800">
         <div className="flex">
-          {(['overview', 'blocks'] as const).map(t => (
+          {(['overview', 'parsed', 'raw'] as const).map(t => (
             <button
               key={t}
-              onClick={() => setInnerTab(t)}
-              className={`px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
-                innerTab === t
+              onClick={() => setTab(t)}
+              className={`px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors capitalize ${
+                tab === t
                   ? 'border-indigo-500 text-indigo-300'
                   : 'border-transparent text-gray-500 hover:text-gray-300'
               }`}
             >
-              {t === 'overview' ? 'Overview' : 'Blocks'}
+              {t === 'overview' ? 'Overview' : t === 'parsed' ? 'Parsed' : 'Raw'}
             </button>
           ))}
         </div>
         <div className="pr-3 flex items-center gap-3">
-          {loading && (
-            <span className="text-xs text-gray-500 italic">Tokenizing…</span>
-          )}
+          {loading && <span className="text-xs text-gray-500 italic">Tokenizing…</span>}
           {!loading && totalTokens !== null && (
             <span className="text-xs text-gray-500 tabular-nums">
               {totalTokens.toLocaleString()} tokens
             </span>
           )}
-          {innerTab === 'blocks' && (
+          {tab === 'parsed' && (
             <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -391,18 +438,23 @@ export function ParsedViewer({ rawBody }: Props) {
       </div>
 
       {/* Overview tab */}
-      {innerTab === 'overview' && (
+      {tab === 'overview' && (
         tokenCounts === null ? (
           <div className="p-4 text-xs text-gray-500 italic">
             {loading ? 'Tokenizing…' : 'No data available.'}
           </div>
         ) : (
-          <ContextOverview blocks={blocks} tokenCounts={tokenCounts} />
+          <ContextOverview
+            blocks={blocks}
+            tokenCounts={tokenCounts}
+            selectedId={selectedBlockId}
+            onSelect={setSelectedBlockId}
+          />
         )
       )}
 
-      {/* Blocks tab */}
-      {innerTab === 'blocks' && (
+      {/* Parsed tab */}
+      {tab === 'parsed' && (
         <div className="p-3 space-y-2">
           {blocks.map((block, i) => (
             <TokenBlock
@@ -411,6 +463,15 @@ export function ParsedViewer({ rawBody }: Props) {
               tokens={showHighlight && tokenized ? tokenized[i] ?? null : null}
             />
           ))}
+        </div>
+      )}
+
+      {/* Raw tab */}
+      {tab === 'raw' && (
+        <div className="p-4 overflow-auto max-h-[600px]">
+          <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-all">
+            {rawPretty}
+          </pre>
         </div>
       )}
     </div>

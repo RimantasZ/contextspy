@@ -397,35 +397,14 @@ export function RawViewer({ title, content, parsedBody, responseMode }: Props) {
             </>
           ) : (
             /* ----------------------------------------------------------------
-               Default mode: Parsed + Raw tabs (request panel)
+               Default mode: ParsedViewer owns Overview / Parsed / Raw tabs
             ---------------------------------------------------------------- */
             <>
-              {/* Tab bar — only when parsedBody is provided */}
-              {parsedBody != null && (
-                <div className="flex border-b border-gray-800">
-                  {(['parsed', 'raw'] as const).map(t => (
-                    <button
-                      key={t}
-                      onClick={() => setTab(t)}
-                      className={`px-4 py-2 text-xs font-medium capitalize border-b-2 -mb-px transition-colors ${
-                        tab === t
-                          ? 'border-indigo-500 text-indigo-300'
-                          : 'border-transparent text-gray-500 hover:text-gray-300'
-                      }`}
-                    >
-                      {t === 'parsed' ? 'Parsed' : 'Raw'}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {/* Parsed tab */}
-              {parsedBody != null && tab === 'parsed' && (
-                <ParsedViewer rawBody={parsedBody} />
-              )}
-              {/* Raw tab (or sole content when no parsedBody) */}
-              {(parsedBody == null || tab === 'raw') && (
+              {parsedBody != null ? (
+                <ParsedViewer rawBody={parsedBody} rawContent={content} />
+              ) : (
+                /* No parsedBody — fall back to JSON/SSE/text viewer */
                 <>
-                  {/* Search bar */}
                   <div className="px-3 py-2 border-b border-gray-800">
                     <input
                       type="text"
@@ -435,7 +414,6 @@ export function RawViewer({ title, content, parsedBody, responseMode }: Props) {
                       className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
                     />
                   </div>
-                  {/* Content */}
                   <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
                     {isSse ? (
                       <SseViewer raw={parsed as string} searchLower={searchLower} />
