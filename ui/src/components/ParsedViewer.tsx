@@ -39,9 +39,95 @@ const CAT_LABEL: Record<Category, string> = {
   other:       'text-gray-400',
 }
 
+// Solid bg + left-border colours for the overview rectangles
+const CAT_BG: Record<Category, string> = {
+  system:      'rgba(168,85,247,0.18)',
+  tool_def:    'rgba(245,158,11,0.18)',
+  user:        'rgba(59,130,246,0.18)',
+  assistant:   'rgba(16,185,129,0.18)',
+  tool_result: 'rgba(20,184,166,0.18)',
+  other:       'rgba(107,114,128,0.14)',
+}
+const CAT_BORDER: Record<Category, string> = {
+  system:      'rgba(168,85,247,0.55)',
+  tool_def:    'rgba(245,158,11,0.55)',
+  user:        'rgba(59,130,246,0.55)',
+  assistant:   'rgba(16,185,129,0.55)',
+  tool_result: 'rgba(20,184,166,0.55)',
+  other:       'rgba(107,114,128,0.45)',
+}
+
+function shortLabel(label: string): string {
+  if (label.startsWith('Tool: ')) return label.slice(6)
+  if (label.startsWith('Tool Result: ')) return label.slice(13)
+  if (label === 'System Prompt') return 'System'
+  const a = label.match(/^Assistant \(msg (\d+)\)$/)
+  if (a) return `Asst. ${a[1]}`
+  const u = label.match(/^User \(msg (\d+)\)$/)
+  if (u) return `User ${u[1]}`
+  const tr = label.match(/^Tool Result \(msg (\d+)\)$/)
+  if (tr) return `Result ${tr[1]}`
+  return label
+}
+
 // ---------------------------------------------------------------------------
-// Block extraction from raw request body JSON
+// Context overview — contribution-graph-style justified block layout
 // ---------------------------------------------------------------------------
+interface OvBlock extends ParsedBlock { tokenCount: number }
+
+function packRows(blocks: OvBlock[], tokensPerRow: number): OvBlock[][] {
+  const rows: OvBlock[][] = []
+  let current: OvBlock[] = []
+  let rowTotal = 0
+  for (const b of blocks) {
+    if (rowTotal + b.tokenCount > tokensPerRow && current.length > 0) {
+      rows.push(current); current = [b]; rowTotal = b.tokenCount
+    } else {
+      current.push(b); rowTotal += b.tokenCount
+    }
+  }
+  if (current.length > 0) rows.push(current)
+  return rows
+}
+
+function ContextOverview({ blocks, tokenCounts }: { blocks: ParsedBlock[], tokenCounts: number[] }) {
+  const ovBlocks: OvBlock[] = blocks.map((b, i) => ({
+    ...b, tokenCount: Math.max(tokenCounts[i] ?? 1, 1),
+  }))
+  const totalTokens = ovBlocks.reduce((s, b) => s + b.tokenCount, 0)
+  if (totalTokens === 0) return null
+  const tokensPerRow = Math.max(Math.ceil(totalTokens / 6), 200)
+  const rows = packRows(ovBlocks, tokensPerRow)
+
+  return (
+    <div className="p-3 space-y-1">
+      {rows.map((row, ri) => (
+        <div key={ri} className="flex gap-1" style={{ height: 52 }}>
+          {row.map(b => (
+            <div
+              key={b.id}
+              style={{
+                flex: `${b.tokenCount} 1 0`,
+                minWidth: 0,
+                background: CAT_BG[b.category],
+                borderLeft: `3px solid ${CAT_BORDER[b.category]}`,
+              }}
+              className="rounded-sm px-2 py-1.5 overflow-hidden"
+              title={`${b.label}: ${b.tokenCount.toLocaleString()} tokens`}
+            >
+              <div className={`text-xs font-medium truncate leading-tight ${CAT_LABEL[b.category]}`}>
+                {shortLabel(b.label)}
+              </div>
+              <div className="text-[10px] text-gray-500 tabular-nums mt-0.5 leading-tight">
+                {b.tokenCount.toLocaleString()}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
 interface ParsedBlock {
   id: string
   label: string
@@ -226,6 +312,7 @@ interface Props {
 }
 
 export function ParsedViewer({ rawBody }: Props) {
+  const [innerTab, setInnerTab] = useState<'overview' | 'blocks'>('overview')
   const [tokenized, setTokenized] = useState<string[][] | null>(null)
   const [loading, setLoading] = useState(false)
   const [showHighlight, setShowHighlight] = useState(true)
@@ -258,32 +345,74 @@ export function ParsedViewer({ rawBody }: Props) {
     return <p className="px-4 py-3 text-sm text-gray-500 italic">Cannot parse request body.</p>
   }
 
+  const tokenCounts = tokenized ? blocks.map((_, i) => tokenized[i]?.length ?? 0) : null
+  const totalTokens = tokenCounts ? tokenCounts.reduce((s, c) => s + c, 0) : null
+
   return (
     <div className="overflow-auto max-h-[700px]">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-800">
-        {loading
-          ? <span className="text-xs text-gray-500 italic">Tokenizing…</span>
-          : <span className="text-xs text-gray-500">{blocks.length} block{blocks.length !== 1 ? 's' : ''}</span>
-        }
-        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showHighlight}
-            onChange={e => setShowHighlight(e.target.checked)}
-            className="accent-indigo-500"
-          />
-          Highlight tokens
-        </label>
+      {/* Inner tab bar */}
+      <div className="flex items-center justify-between border-b border-gray-800">
+        <div className="flex">
+          {(['overview', 'blocks'] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => setInnerTab(t)}
+              className={`px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
+                innerTab === t
+                  ? 'border-indigo-500 text-indigo-300'
+                  : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {t === 'overview' ? 'Overview' : 'Blocks'}
+            </button>
+          ))}
+        </div>
+        <div className="pr-3 flex items-center gap-3">
+          {loading && (
+            <span className="text-xs text-gray-500 italic">Tokenizing…</span>
+          )}
+          {!loading && totalTokens !== null && (
+            <span className="text-xs text-gray-500 tabular-nums">
+              {totalTokens.toLocaleString()} tokens
+            </span>
+          )}
+          {innerTab === 'blocks' && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showHighlight}
+                onChange={e => setShowHighlight(e.target.checked)}
+                className="accent-indigo-500"
+              />
+              Highlight
+            </label>
+          )}
+        </div>
       </div>
-      <div className="p-3 space-y-2">
-        {blocks.map((block, i) => (
-          <TokenBlock
-            key={block.id}
-            block={block}
-            tokens={showHighlight && tokenized ? tokenized[i] ?? null : null}
-          />
-        ))}
-      </div>
+
+      {/* Overview tab */}
+      {innerTab === 'overview' && (
+        tokenCounts === null ? (
+          <div className="p-4 text-xs text-gray-500 italic">
+            {loading ? 'Tokenizing…' : 'No data available.'}
+          </div>
+        ) : (
+          <ContextOverview blocks={blocks} tokenCounts={tokenCounts} />
+        )
+      )}
+
+      {/* Blocks tab */}
+      {innerTab === 'blocks' && (
+        <div className="p-3 space-y-2">
+          {blocks.map((block, i) => (
+            <TokenBlock
+              key={block.id}
+              block={block}
+              tokens={showHighlight && tokenized ? tokenized[i] ?? null : null}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
