@@ -209,9 +209,10 @@ interface Props {
   parsedBody?: string | null;
   /** When true shows 3-tab output view: JSON tree / Raw text / Response text */
   responseMode?: boolean;
+  totalInputTokens?: number | null;
 }
 
-export function RawViewer({ title, content, parsedBody, responseMode }: Props) {
+export function RawViewer({ title, content, parsedBody, responseMode, totalInputTokens }: Props) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'parsed' | 'raw'>('parsed');
   const [respTab, setRespTab] = useState<'json' | 'raw' | 'text'>('json');
@@ -401,7 +402,7 @@ export function RawViewer({ title, content, parsedBody, responseMode }: Props) {
             ---------------------------------------------------------------- */
             <>
               {parsedBody != null ? (
-                <ParsedViewer rawBody={parsedBody} rawContent={content} />
+                <ParsedViewer rawBody={parsedBody} rawContent={content} totalInputTokens={totalInputTokens} />
               ) : (
                 /* No parsedBody — fall back to JSON/SSE/text viewer */
                 <>

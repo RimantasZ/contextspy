@@ -352,9 +352,10 @@ function TokenBlock({ block, tokens }: BlockProps) {
 interface Props {
   rawBody: string | null | undefined
   rawContent?: string | null
+  totalInputTokens?: number | null
 }
 
-export function ParsedViewer({ rawBody, rawContent }: Props) {
+export function ParsedViewer({ rawBody, rawContent, totalInputTokens }: Props) {
   const [tab, setTab] = useState<'overview' | 'parsed' | 'raw'>('overview')
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
   const [tokenized, setTokenized] = useState<string[][] | null>(null)
@@ -418,9 +419,9 @@ export function ParsedViewer({ rawBody, rawContent }: Props) {
         </div>
         <div className="pr-3 flex items-center gap-3">
           {loading && <span className="text-xs text-gray-500 italic">Tokenizing…</span>}
-          {!loading && totalTokens !== null && (
+          {!loading && (totalInputTokens != null || totalTokens !== null) && (
             <span className="text-xs text-gray-500 tabular-nums">
-              {totalTokens.toLocaleString()} tokens
+              {(totalInputTokens ?? totalTokens!).toLocaleString()} tokens
             </span>
           )}
           {tab === 'parsed' && (
