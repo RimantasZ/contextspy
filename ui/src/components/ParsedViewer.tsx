@@ -117,7 +117,7 @@ function ContextOverview({
                 key={b.id}
                 onClick={() => onSelect(selectedId === b.id ? null : b.id)}
                 style={{
-                  flex: `${b.tokenCount} 1 0`,
+                  flex: `${Math.max(20, Math.sqrt(b.tokenCount))} 1 0`,
                   minWidth: 0,
                   background: selectedId === b.id
                     ? CAT_BORDER[b.category]
