@@ -221,20 +221,6 @@ export default function Dashboard() {
         <StatCard label="Providers" value={s ? Object.keys(s.by_provider).length : '—'} />
       </div>
 
-      {/* Secondary stat cards: latency + errors */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Avg latency" value={fmtMs(s?.latency.avg_ms ?? null)} />
-        <StatCard label="P95 latency" value={fmtMs(s?.latency.p95_ms ?? null)} />
-        <StatCard
-          label="Errors"
-          value={s ? Object.entries(s.by_status).filter(([c]) => c !== 'unknown' && parseInt(c) >= 400).reduce((acc, [, n]) => acc + n, 0) : '—'}
-          sub={s && s.request_count > 0
-            ? `${Math.round((Object.entries(s.by_status).filter(([c]) => c !== 'unknown' && parseInt(c) >= 400).reduce((acc, [, n]) => acc + n, 0) / s.request_count) * 100)}% error rate`
-            : undefined}
-        />
-        <StatCard label="Models" value={s ? Object.keys(s.by_model).length : '—'} />
-      </div>
-
       {/* Charts + sessions row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-gray-800 rounded-lg p-4">
@@ -264,6 +250,20 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} />
         <ToolBreakdownTable tools={toolStats.data?.tools ?? []} totalInputTokens={s?.tokens_total_input} />
+      </div>
+
+      {/* Secondary stat cards: latency + errors */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Avg latency" value={fmtMs(s?.latency.avg_ms ?? null)} />
+        <StatCard label="P95 latency" value={fmtMs(s?.latency.p95_ms ?? null)} />
+        <StatCard
+          label="Errors"
+          value={s ? Object.entries(s.by_status).filter(([c]) => c !== 'unknown' && parseInt(c) >= 400).reduce((acc, [, n]) => acc + n, 0) : '—'}
+          sub={s && s.request_count > 0
+            ? `${Math.round((Object.entries(s.by_status).filter(([c]) => c !== 'unknown' && parseInt(c) >= 400).reduce((acc, [, n]) => acc + n, 0) / s.request_count) * 100)}% error rate`
+            : undefined}
+        />
+        <StatCard label="Models" value={s ? Object.keys(s.by_model).length : '—'} />
       </div>
 
       {/* Model breakdown + Latency */}
