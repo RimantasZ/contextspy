@@ -275,3 +275,100 @@ def get_timeline(
         buckets[key]["tokens_total_input"] += r.tokens_total_input
 
     return sorted(buckets.values(), key=lambda x: x["bucket"])
+
+
+# ---------------------------------------------------------------------------
+# Sessions summary (for dashboard timeline table)
+# ---------------------------------------------------------------------------
+
+def get_sessions_summary(db: OrmSession) -> list[dict]:
+    """
+    Return a combined timeline of sessions and no-session gap periods,
+    ordered newest-first.  Each entry has:
+      type, session_id, name, started_at, ended_at, is_active,
+      request_count, tokens_in, tokens_out
+    """
+    # All sessions, oldest-first for gap detection
+    sessions = list(
+        db.execute(select(Session).order_by(Session.started_at.asc())).scalars().all()
+    )
+
+    # Per-session request stats in one aggregation query
+    session_stats_rows = db.execute(
+        select(
+            Request.session_id,
+            func.count().label("req_count"),
+            func.sum(Request.tokens_total_input).label("tok_in"),
+            func.sum(Request.tokens_total_output).label("tok_out"),
+        )
+        .where(Request.session_id.isnot(None))
+        .group_by(Request.session_id)
+    ).all()
+    session_stats: dict[str, tuple[int, int, int]] = {
+        row.session_id: (row.req_count, row.tok_in or 0, row.tok_out or 0)
+        for row in session_stats_rows
+    }
+
+    # All null-session requests, oldest-first
+    null_req_rows = db.execute(
+        select(
+            Request.timestamp,
+            Request.tokens_total_input,
+            Request.tokens_total_output,
+        )
+        .where(Request.session_id.is_(None))
+        .order_by(Request.timestamp.asc())
+    ).all()
+
+    # Build gap windows: each window is (start_boundary, end_boundary)
+    # where None means "no bound" (i.e. −∞ or +∞)
+    windows: list[tuple] = []
+    if not sessions:
+        windows.append((None, None))
+    else:
+        windows.append((None, sessions[0].started_at))
+        for i in range(len(sessions) - 1):
+            windows.append((sessions[i].ended_at, sessions[i + 1].started_at))
+        last = sessions[-1]
+        if not last.is_active:
+            windows.append((last.ended_at, None))
+
+    entries: list[dict] = []
+
+    for win_start, win_end in windows:
+        reqs = [
+            r for r in null_req_rows
+            if (win_start is None or r.timestamp >= win_start)
+            and (win_end is None or r.timestamp < win_end)
+        ]
+        if not reqs:
+            continue
+        entries.append({
+            "type": "gap",
+            "session_id": None,
+            "name": None,
+            "started_at": reqs[0].timestamp.isoformat(),
+            "ended_at": reqs[-1].timestamp.isoformat(),
+            "is_active": False,
+            "request_count": len(reqs),
+            "tokens_in": sum(r.tokens_total_input for r in reqs),
+            "tokens_out": sum(r.tokens_total_output for r in reqs),
+        })
+
+    # Session entries
+    for s in sessions:
+        stats = session_stats.get(s.id, (0, 0, 0))
+        entries.append({
+            "type": "session",
+            "session_id": s.id,
+            "name": s.name,
+            "started_at": s.started_at.isoformat(),
+            "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+            "is_active": bool(s.is_active),
+            "request_count": stats[0],
+            "tokens_in": stats[1],
+            "tokens_out": stats[2],
+        })
+
+    entries.sort(key=lambda e: e["started_at"], reverse=True)
+    return entries

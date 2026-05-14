@@ -36,3 +36,9 @@ def stats_tools(
 ):
     with get_db() as db:
         return {"tools": crud.get_tool_stats(db, session_id=session_id, request_id=request_id)}
+
+
+@router.get("/stats/sessions-summary")
+def stats_sessions_summary():
+    with get_db() as db:
+        return {"entries": crud.get_sessions_summary(db)}

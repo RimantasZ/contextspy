@@ -111,6 +111,14 @@ export function useToolStats(sessionId?: string) {
   })
 }
 
+export function useSessionsSummary() {
+  return useQuery({
+    queryKey: ['stats', 'sessions-summary'],
+    queryFn: () => statsApi.sessionsSummary(),
+    refetchInterval: 10_000,
+  })
+}
+
 export function useRequestToolStats(requestId: string) {
   return useQuery({
     queryKey: ['stats', 'tools', 'request', requestId],

@@ -72,6 +72,18 @@ export interface TimelineBucket {
   tokens_total_input: number
 }
 
+export interface SessionSummaryEntry {
+  type: 'session' | 'gap'
+  session_id: string | null
+  name: string | null
+  started_at: string
+  ended_at: string | null
+  is_active: boolean
+  request_count: number
+  tokens_in: number
+  tokens_out: number
+}
+
 export interface ToolStat {
   tool_name: string
   definition_tokens: number
@@ -137,6 +149,7 @@ export const statsApi = {
     if (requestId) q.set('request_id', requestId)
     return apiFetch<{ tools: ToolStat[] }>(`/stats/tools?${q}`)
   },
+  sessionsSummary: () => apiFetch<{ entries: SessionSummaryEntry[] }>('/stats/sessions-summary'),
 }
 
 // ---- Proxy API ------------------------------------------------------------
