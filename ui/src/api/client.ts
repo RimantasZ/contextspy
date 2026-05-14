@@ -57,6 +57,15 @@ export interface CategoryStats {
   pct: number
 }
 
+export interface LatencyStats {
+  avg_ms: number | null
+  p50_ms: number | null
+  p95_ms: number | null
+  p99_ms: number | null
+  min_ms: number | null
+  max_ms: number | null
+}
+
 export interface Stats {
   request_count: number
   tokens_total_input: number
@@ -64,6 +73,9 @@ export interface Stats {
   by_category: Record<string, CategoryStats>
   by_provider: Record<string, number>
   by_agent: Record<string, number>
+  by_model: Record<string, number>
+  latency: LatencyStats
+  by_status: Record<string, number>
 }
 
 export interface TimelineBucket {
@@ -120,14 +132,17 @@ export const sessionsApi = {
 // ---- Requests API ---------------------------------------------------------
 
 export const requestsApi = {
-  list: (params: { session_id?: string; provider?: string; agent?: string; limit?: number; offset?: number }) => {
-    const q = new URLSearchParams()
-    if (params.session_id) q.set('session_id', params.session_id)
-    if (params.provider) q.set('provider', params.provider)
-    if (params.agent) q.set('agent', params.agent)
-    if (params.limit != null) q.set('limit', String(params.limit))
-    if (params.offset != null) q.set('offset', String(params.offset))
-    return apiFetch<{ requests: Request[] }>(`/requests?${q}`)
+  list: (params: { session_id?: string; provider?: string; agent?: string; model?: string; q?: string; status_category?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams()
+    if (params.session_id) qs.set('session_id', params.session_id)
+    if (params.provider) qs.set('provider', params.provider)
+    if (params.agent) qs.set('agent', params.agent)
+    if (params.model) qs.set('model', params.model)
+    if (params.q) qs.set('q', params.q)
+    if (params.status_category) qs.set('status_category', params.status_category)
+    if (params.limit != null) qs.set('limit', String(params.limit))
+    if (params.offset != null) qs.set('offset', String(params.offset))
+    return apiFetch<{ requests: Request[] }>(`/requests?${qs}`)
   },
   get: (id: string) => apiFetch<{ request: Request }>(`/requests/${id}`),
 }

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import Request, Session, ToolStat
@@ -121,23 +121,55 @@ def list_requests(
     session_id: str | None = None,
     provider: str | None = None,
     agent: str | None = None,
+    model: str | None = None,
+    q: str | None = None,
+    status_category: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Request]:
-    q = select(Request).order_by(Request.timestamp.desc())
+    stmt = select(Request).order_by(Request.timestamp.desc())
     if session_id is not None:
-        q = q.where(Request.session_id == session_id)
+        stmt = stmt.where(Request.session_id == session_id)
     if provider:
-        q = q.where(Request.provider == provider)
+        stmt = stmt.where(Request.provider == provider)
     if agent:
-        q = q.where(Request.agent == agent)
-    q = q.limit(limit).offset(offset)
-    return list(db.execute(q).scalars().all())
+        stmt = stmt.where(Request.agent == agent)
+    if model:
+        stmt = stmt.where(Request.model == model)
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                Request.model.ilike(like),
+                Request.agent.ilike(like),
+                Request.endpoint.ilike(like),
+                Request.provider.ilike(like),
+            )
+        )
+    if status_category == "success":
+        stmt = stmt.where(Request.status_code >= 200, Request.status_code < 300)
+    elif status_category == "error":
+        stmt = stmt.where(
+            or_(Request.status_code == None, Request.status_code >= 400)  # noqa: E711
+        )
+    stmt = stmt.limit(limit).offset(offset)
+    return list(db.execute(stmt).scalars().all())
 
 
 # ---------------------------------------------------------------------------
 # Stats helpers
 # ---------------------------------------------------------------------------
+
+def _percentile(sorted_vals: list[int], p: float) -> int | None:
+    if not sorted_vals:
+        return None
+    k = (len(sorted_vals) - 1) * p / 100.0
+    lo = int(k)
+    hi = lo + 1
+    if hi >= len(sorted_vals):
+        return sorted_vals[lo]
+    return round(sorted_vals[lo] + (k - lo) * (sorted_vals[hi] - sorted_vals[lo]))
+
 
 _CATEGORY_COLS = [
     "tokens_system_prompt",
@@ -181,6 +213,29 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         key = r.agent or "unknown"
         by_agent[key] = by_agent.get(key, 0) + 1
 
+    # by_model
+    by_model: dict[str, int] = {}
+    for r in rows:
+        key = r.model or "unknown"
+        by_model[key] = by_model.get(key, 0) + 1
+
+    # latency percentiles
+    latency_vals = sorted(r.duration_ms for r in rows if r.duration_ms is not None)
+    latency = {
+        "avg_ms": round(sum(latency_vals) / len(latency_vals)) if latency_vals else None,
+        "p50_ms": _percentile(latency_vals, 50),
+        "p95_ms": _percentile(latency_vals, 95),
+        "p99_ms": _percentile(latency_vals, 99),
+        "min_ms": latency_vals[0] if latency_vals else None,
+        "max_ms": latency_vals[-1] if latency_vals else None,
+    }
+
+    # by_status (exact HTTP status codes)
+    by_status: dict[str, int] = {}
+    for r in rows:
+        key = str(r.status_code) if r.status_code is not None else "unknown"
+        by_status[key] = by_status.get(key, 0) + 1
+
     return {
         "request_count": len(rows),
         "tokens_total_input": total_input,
@@ -188,10 +243,14 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         "by_category": by_category,
         "by_provider": by_provider,
         "by_agent": by_agent,
+        "by_model": by_model,
+        "latency": latency,
+        "by_status": by_status,
     }
 
 
 def _empty_stats() -> dict:
+    _empty_latency = {"avg_ms": None, "p50_ms": None, "p95_ms": None, "p99_ms": None, "min_ms": None, "max_ms": None}
     return {
         "request_count": 0,
         "tokens_total_input": 0,
@@ -202,6 +261,9 @@ def _empty_stats() -> dict:
         },
         "by_provider": {},
         "by_agent": {},
+        "by_model": {},
+        "latency": _empty_latency,
+        "by_status": {},
     }
 
 

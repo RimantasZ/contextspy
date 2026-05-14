@@ -4,17 +4,24 @@ import { TokenDonut } from '../components/TokenDonut';
 import { RequestTable } from '../components/RequestTable';
 import { SessionControls } from '../components/SessionControls';
 import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
-import type { SessionSummaryEntry } from '../api/client';
+import type { SessionSummaryEntry, LatencyStats } from '../api/client';
 
-function StatCard({ label, value }: { label: string; value: string | number }) {
+function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
     <div className="bg-gray-800 rounded-lg p-4">
       <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>
       <p className="text-2xl font-semibold text-white">
         {typeof value === 'number' ? value.toLocaleString() : value}
       </p>
+      {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
     </div>
   );
+}
+
+function fmtMs(ms: number | null): string {
+  if (ms === null) return '—';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function formatDuration(startedAt: string, endedAt: string | null): string {
@@ -109,6 +116,85 @@ function SessionsTable({ entries, onSessionClick }: {
   );
 }
 
+function ModelBreakdown({ byModel, onModelClick }: {
+  byModel: Record<string, number>;
+  onModelClick: (model: string) => void;
+}) {
+  const entries = Object.entries(byModel)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 10);
+  const total = entries.reduce((s, [, n]) => s + n, 0);
+
+  if (entries.length === 0) {
+    return <p className="text-gray-500 text-sm py-4 text-center">No data</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {entries.map(([model, count]) => {
+        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+        return (
+          <div key={model}
+            className="flex items-center gap-2 cursor-pointer group"
+            onClick={() => onModelClick(model)}
+          >
+            <span className="text-xs text-gray-300 truncate w-40 group-hover:text-white transition-colors" title={model}>
+              {model}
+            </span>
+            <div className="flex-1 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+              <div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-xs text-gray-400 w-16 text-right tabular-nums">
+              {count.toLocaleString()} ({pct}%)
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LatencyPanel({ latency, byStatus }: { latency: LatencyStats | undefined; byStatus: Record<string, number> | undefined }) {
+  const errorCount = Object.entries(byStatus ?? {})
+    .filter(([code]) => code !== 'unknown' && parseInt(code) >= 400)
+    .reduce((s, [, n]) => s + n, 0);
+  const unknownCount = byStatus?.['unknown'] ?? 0;
+
+  const rows = [
+    { label: 'Avg', value: fmtMs(latency?.avg_ms ?? null) },
+    { label: 'P50', value: fmtMs(latency?.p50_ms ?? null) },
+    { label: 'P95', value: fmtMs(latency?.p95_ms ?? null) },
+    { label: 'P99', value: fmtMs(latency?.p99_ms ?? null) },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        {rows.map(({ label, value }) => (
+          <div key={label} className="bg-gray-700/50 rounded p-3">
+            <p className="text-xs text-gray-400 mb-0.5">{label}</p>
+            <p className="text-lg font-semibold text-white">{value}</p>
+          </div>
+        ))}
+      </div>
+      {(errorCount > 0 || unknownCount > 0) && (
+        <div className="flex gap-3">
+          {errorCount > 0 && (
+            <span className="text-xs bg-red-900/60 text-red-300 px-2 py-1 rounded">
+              {errorCount} error{errorCount !== 1 ? 's' : ''}
+            </span>
+          )}
+          {unknownCount > 0 && (
+            <span className="text-xs bg-gray-700 text-gray-400 px-2 py-1 rounded">
+              {unknownCount} unknown status
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
 
@@ -133,6 +219,20 @@ export default function Dashboard() {
         <StatCard label="Tokens out" value={s ? s.tokens_total_output.toLocaleString() : '—'} />
         <StatCard label="Total requests" value={s?.request_count ?? '—'} />
         <StatCard label="Providers" value={s ? Object.keys(s.by_provider).length : '—'} />
+      </div>
+
+      {/* Secondary stat cards: latency + errors */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Avg latency" value={fmtMs(s?.latency.avg_ms ?? null)} />
+        <StatCard label="P95 latency" value={fmtMs(s?.latency.p95_ms ?? null)} />
+        <StatCard
+          label="Errors"
+          value={s ? Object.entries(s.by_status).filter(([c]) => c !== 'unknown' && parseInt(c) >= 400).reduce((acc, [, n]) => acc + n, 0) : '—'}
+          sub={s && s.request_count > 0
+            ? `${Math.round((Object.entries(s.by_status).filter(([c]) => c !== 'unknown' && parseInt(c) >= 400).reduce((acc, [, n]) => acc + n, 0) / s.request_count) * 100)}% error rate`
+            : undefined}
+        />
+        <StatCard label="Models" value={s ? Object.keys(s.by_model).length : '—'} />
       </div>
 
       {/* Charts + sessions row */}
@@ -164,6 +264,21 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} />
         <ToolBreakdownTable tools={toolStats.data?.tools ?? []} totalInputTokens={s?.tokens_total_input} />
+      </div>
+
+      {/* Model breakdown + Latency */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-gray-800 rounded-lg p-4">
+          <p className="text-sm font-medium text-gray-300 mb-3">Models</p>
+          <ModelBreakdown
+            byModel={s?.by_model ?? {}}
+            onModelClick={(model) => navigate(`/requests?model=${encodeURIComponent(model)}`)}
+          />
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4">
+          <p className="text-sm font-medium text-gray-300 mb-3">Latency &amp; Errors</p>
+          <LatencyPanel latency={s?.latency} byStatus={s?.by_status} />
+        </div>
       </div>
 
       {/* Recent requests */}

@@ -13,6 +13,9 @@ def list_requests(
     session_id: str | None = Query(default=None),
     provider: str | None = Query(default=None),
     agent: str | None = Query(default=None),
+    model: str | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    status_category: str | None = Query(default=None, pattern="^(success|error)$"),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
@@ -22,6 +25,9 @@ def list_requests(
             session_id=session_id,
             provider=provider,
             agent=agent,
+            model=model,
+            q=q,
+            status_category=status_category,
             limit=limit,
             offset=offset,
         )
