@@ -15,4 +15,4 @@ dev-ui:
 	cd ui && npm run dev
 
 clean:
-	rm -rf ui/dist ui/node_modules __pycache__ contextspy/**/__pycache__
+	rm -rf ui/dist ui/node_modules contextspy/_web __pycache__ contextspy/**/__pycache__ dist/ build/ *.egg-info

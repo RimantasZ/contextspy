@@ -26,6 +26,9 @@ ENV/
 .uv/
 uv.lock
 
+# Generated frontend build (inside Python package — build artifact, not committed)
+contextspy/_web/
+
 # Distribution / packaging
 .Python
 pip-wheel-metadata/
