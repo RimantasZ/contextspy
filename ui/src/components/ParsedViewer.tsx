@@ -91,10 +91,11 @@ function packRows(blocks: OvBlock[], tokensPerRow: number): OvBlock[][] {
 }
 
 function ContextOverview({
-  blocks, tokenCounts, selectedId, onSelect,
+  blocks, tokenCounts, tokensList, selectedId, onSelect,
 }: {
   blocks: ParsedBlock[]
   tokenCounts: number[]
+  tokensList?: (string[] | null)[] | null
   selectedId: string | null
   onSelect: (id: string | null) => void
 }) {
@@ -105,7 +106,9 @@ function ContextOverview({
   if (totalTokens === 0) return null
   const tokensPerRow = Math.max(Math.ceil(totalTokens / 6), 200)
   const rows = packRows(ovBlocks, tokensPerRow)
-  const selectedBlock = selectedId ? ovBlocks.find(b => b.id === selectedId) : null
+  const selectedBlockIndex = selectedId ? ovBlocks.findIndex(b => b.id === selectedId) : -1
+  const selectedBlock = selectedBlockIndex >= 0 ? ovBlocks[selectedBlockIndex] : null
+  const selectedTokens = selectedBlockIndex >= 0 && tokensList ? tokensList[selectedBlockIndex] ?? null : null
 
   return (
     <div>
@@ -162,8 +165,20 @@ function ContextOverview({
               </button>
             </div>
           </div>
-          <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-words max-h-[320px] overflow-auto bg-gray-900 px-3 py-2.5 rounded-b border border-gray-700 border-t-0">
-            {selectedBlock.text}
+          <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-words max-h-[320px] overflow-auto bg-gray-900 px-3 py-2.5 rounded-b border border-gray-700 border-t-0 leading-6">
+            {selectedTokens ? (
+              selectedTokens.map((tok, j) => (
+                <span
+                  key={j}
+                  style={{ background: TOKEN_COLORS[j % TOKEN_COLORS.length] }}
+                  className="rounded-[2px] text-gray-100"
+                >
+                  {tok}
+                </span>
+              ))
+            ) : (
+              selectedBlock.text
+            )}
           </pre>
         </div>
       )}
@@ -361,6 +376,7 @@ export function ParsedViewer({ rawBody, rawContent, totalInputTokens }: Props) {
   const [tokenized, setTokenized] = useState<string[][] | null>(null)
   const [loading, setLoading] = useState(false)
   const [showHighlight, setShowHighlight] = useState(true)
+  const [colorizeOverview, setColorizeOverview] = useState(false)
 
   const blocks = rawBody ? extractBlocks(rawBody) : []
 
@@ -424,6 +440,17 @@ export function ParsedViewer({ rawBody, rawContent, totalInputTokens }: Props) {
               {(totalInputTokens ?? totalTokens!).toLocaleString()} tokens
             </span>
           )}
+          {tab === 'overview' && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={colorizeOverview}
+                onChange={e => setColorizeOverview(e.target.checked)}
+                className="accent-indigo-500"
+              />
+              Highlight tokens
+            </label>
+          )}
           {tab === 'parsed' && (
             <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
               <input
@@ -432,7 +459,7 @@ export function ParsedViewer({ rawBody, rawContent, totalInputTokens }: Props) {
                 onChange={e => setShowHighlight(e.target.checked)}
                 className="accent-indigo-500"
               />
-              Highlight
+              Highlight tokens
             </label>
           )}
         </div>
@@ -448,6 +475,7 @@ export function ParsedViewer({ rawBody, rawContent, totalInputTokens }: Props) {
           <ContextOverview
             blocks={blocks}
             tokenCounts={tokenCounts}
+            tokensList={colorizeOverview ? tokenized : null}
             selectedId={selectedBlockId}
             onSelect={setSelectedBlockId}
           />
