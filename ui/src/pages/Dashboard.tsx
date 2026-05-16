@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStatsOverview, useRequests, useToolStats, useSessions, useSessionsSummary } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
@@ -45,10 +46,16 @@ function formatStart(ts: string): string {
   });
 }
 
+const SESSIONS_PAGE_SIZE = 5;
+
 function SessionsTable({ entries, onSessionClick }: {
   entries: SessionSummaryEntry[];
   onSessionClick: (id: string) => void;
 }) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.ceil(entries.length / SESSIONS_PAGE_SIZE);
+  const visible = entries.slice(page * SESSIONS_PAGE_SIZE, (page + 1) * SESSIONS_PAGE_SIZE);
+
   if (entries.length === 0) {
     return <p className="text-gray-500 text-sm py-4 text-center">No sessions yet</p>;
   }
@@ -66,7 +73,7 @@ function SessionsTable({ entries, onSessionClick }: {
           </tr>
         </thead>
         <tbody>
-          {entries.map((entry, i) => {
+          {visible.map((entry, i) => {
             const isGap = entry.type === 'gap';
             const isActive = entry.is_active;
             const name = isGap
@@ -75,7 +82,7 @@ function SessionsTable({ entries, onSessionClick }: {
 
             return (
               <tr
-                key={entry.session_id ?? `gap-${i}`}
+                key={entry.session_id ?? `gap-${page}-${i}`}
                 className={`border-b border-gray-700/50 last:border-0 ${
                   !isGap ? 'cursor-pointer hover:bg-gray-700/40 transition-colors' : ''
                 }`}
@@ -112,6 +119,27 @@ function SessionsTable({ entries, onSessionClick }: {
           })}
         </tbody>
       </table>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-700">
+          <button
+            disabled={page === 0}
+            onClick={() => setPage((p) => p - 1)}
+            className="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded disabled:opacity-40 hover:bg-gray-600 transition-colors"
+          >
+            ← Prev
+          </button>
+          <span className="text-xs text-gray-500">
+            {page + 1} / {totalPages}
+          </span>
+          <button
+            disabled={page === totalPages - 1}
+            onClick={() => setPage((p) => p + 1)}
+            className="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded disabled:opacity-40 hover:bg-gray-600 transition-colors"
+          >
+            Next →
+          </button>
+        </div>
+      )}
     </div>
   );
 }
