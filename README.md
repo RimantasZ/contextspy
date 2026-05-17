@@ -32,11 +32,21 @@ server certificates.
 ### Prerequisites
 
 - Python 3.11+
-- [uv](https://github.com/astral-sh/uv) (`pip install uv`)
-- Node.js 18+ and npm (for the UI build — pre-built `ui/dist/` is included)
+- [uv](https://github.com/astral-sh/uv) (`pip install uv`) — or plain `pip`
 - Administrator / sudo access (for CA cert installation)
+- Node.js 18+ and npm — only needed if you want to modify the frontend
 
 ### Install
+
+**From PyPI (recommended):**
+
+```bash
+pip install contextspy
+# or with uv:
+uv tool install contextspy
+```
+
+**From source:**
 
 ```bash
 git clone https://github.com/you/contextspy.git
@@ -47,10 +57,12 @@ uv pip install -e .
 
 ### Build the UI (optional — only needed if you change the frontend)
 
+The built UI is bundled with the package. Only rebuild if you modify `ui/src/`:
+
 ```bash
 cd ui
 npm install
-npm run build
+npm run build   # outputs to contextspy/_web/
 cd ..
 ```
 
@@ -96,7 +108,7 @@ You can also run `uv run contextspy setup-<agent>` for a printed reminder.
 
 #### GitHub Copilot (VS Code)
 
-Add to VS Code `settings.json` (`Ctrl+Shift+P` → "Open User Settings JSON"):
+**Option A — VS Code `settings.json`** (`Ctrl+Shift+P` → "Open User Settings JSON"):
 
 ```json
 {
@@ -105,7 +117,19 @@ Add to VS Code `settings.json` (`Ctrl+Shift+P` → "Open User Settings JSON"):
 }
 ```
 
-Or run for the exact snippet:
+**Option B — environment variables** (set before launching VS Code):
+
+```bash
+# PowerShell
+$env:HTTPS_PROXY = "http://127.0.0.1:8888"
+$env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
+
+# Bash / zsh
+export HTTPS_PROXY=http://127.0.0.1:8888
+export NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca-cert.pem
+```
+
+Run for the exact snippet:
 ```bash
 uv run contextspy setup-copilot
 ```
@@ -115,15 +139,16 @@ uv run contextspy setup-copilot
 ```bash
 # PowerShell
 $env:HTTPS_PROXY = "http://127.0.0.1:8888"
-$env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca.pem"
+$env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
 
 # Bash / zsh
 export HTTPS_PROXY=http://127.0.0.1:8888
-export NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca.pem
+export NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca-cert.pem
 ```
 
 > `NODE_EXTRA_CA_CERTS` is required because Claude CLI is an Electron/Node app and has
 > its own bundled certificate store that ignores the OS trust store.
+> Use `mitmproxy-ca-cert.pem` (cert-only), not `mitmproxy-ca.pem` (key+cert bundle).
 
 Run for the exact snippet:
 ```bash
@@ -135,10 +160,17 @@ uv run contextspy setup-claude
 ```bash
 # PowerShell
 $env:HTTPS_PROXY = "http://127.0.0.1:8888"
+$env:SSL_CERT_FILE = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
+$env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
 
 # Bash / zsh
 export HTTPS_PROXY=http://127.0.0.1:8888
+export SSL_CERT_FILE=~/.mitmproxy/mitmproxy-ca-cert.pem
+export NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca-cert.pem
 ```
+
+> opencode uses both the Go TLS stack (`SSL_CERT_FILE`) and Node.js components
+> (`NODE_EXTRA_CA_CERTS`), so both variables are needed.
 
 Run for the exact snippet:
 ```bash
@@ -422,7 +454,7 @@ All data is stored in `~/.contextspy/`:
 | `~/.contextspy/config.toml` | Configuration (auto-created) |
 
 Raw request/response bodies are stored per-request and purged automatically
-24 hours after a session ends to save disk space.
+7 days after capture to save disk space (on next server startup).
 
 ---
 
@@ -462,4 +494,4 @@ npm run dev   # Vite on :5174, proxies /api to :5173
 
 ## License
 
-MIT
+Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
