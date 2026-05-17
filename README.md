@@ -49,7 +49,7 @@ uv tool install contextspy
 **From source:**
 
 ```bash
-git clone https://github.com/you/contextspy.git
+git clone https://github.com/RimantasZ/contextspy.git
 cd contextspy
 uv venv
 uv pip install -e .
