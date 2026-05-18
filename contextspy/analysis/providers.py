@@ -420,7 +420,7 @@ def parse_request(
 ) -> ParsedRequest | None:
     try:
         if provider in ("openai", "openai_azure", "copilot"):
-            if "/chat/completions" in endpoint:
+            if "/chat/completions" in endpoint or "/completions" in endpoint:
                 return parse_openai(req_body, resp_body)
         elif provider == "anthropic":
             if "/messages" in endpoint:

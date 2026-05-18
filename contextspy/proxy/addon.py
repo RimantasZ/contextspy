@@ -41,7 +41,10 @@ _HOST_PROVIDER: list[tuple[str, str]] = [
     ("api.openai.com", "openai"),
     ("openai.azure.com", "openai_azure"),
     ("api.anthropic.com", "anthropic"),
+    # GitHub Copilot — covers both the legacy proxy host and the current API domain
+    # (*.githubcopilot.com catches api.githubcopilot.com, telemetry.githubcopilot.com, etc.)
     ("copilot-proxy.githubusercontent.com", "copilot"),
+    ("githubcopilot.com", "copilot"),
 ]
 _OLLAMA_PORTS = {11434}
 
@@ -236,6 +239,15 @@ class ContextSpyAddon:
     def _save_request(self, flow: http.HTTPFlow, provider: str, agent: str,
                       endpoint: str, req_body: dict, parsed: ParsedRequest | None,
                       duration_ms: int | None, raw_resp_text: str | None) -> None:
+        # Skip non-LLM endpoints (telemetry, auth, health checks, etc.)
+        # Only persist requests that we could actually parse OR that look like
+        # known LLM API paths so telemetry traffic is not stored as empty rows.
+        _LLM_PATHS = ("/chat/completions", "/completions", "/messages",
+                      "/api/chat", "/api/generate")
+        if parsed is None and not any(p in endpoint for p in _LLM_PATHS):
+            logger.debug("Skipping non-LLM endpoint: %s %s", provider, endpoint)
+            return
+
         if parsed is not None:
             breakdown = classify(parsed)
             model = parsed.model
@@ -282,6 +294,9 @@ class ContextSpyAddon:
                 if tool_rows:
                     crud.upsert_tool_stats(db, req_record.id, tool_rows)
 
+            # Serialise while the session is still open to avoid detached-instance errors
+            ws_payload = req_record.to_dict(include_raw=False)
+
         ts_str = data["timestamp"].strftime("%H:%M:%S")
         logger.info(
             "[%s] %s › %s | model=%s | in=%d out=%d tokens | %s",
@@ -299,7 +314,7 @@ class ContextSpyAddon:
                 import asyncio
                 asyncio.run_coroutine_threadsafe(
                     self.ws_manager.broadcast(
-                        {"event": "new_request", "data": req_record.to_dict(include_raw=False)}
+                        {"event": "new_request", "data": ws_payload}
                     ),
                     self.ws_manager.loop,
                 )
