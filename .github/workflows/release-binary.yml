@@ -1,0 +1,65 @@
+name: Release Binary
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # required to create releases and upload assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: macos-arm64
+          - os: macos-13
+            arch: macos-x86_64
+          - os: ubuntu-22.04
+            arch: linux-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build frontend
+        run: |
+          cd ui
+          npm ci
+          npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies and PyInstaller
+        run: |
+          pip install uv
+          uv venv
+          uv pip install -e "." pyinstaller
+
+      - name: Build binary
+        run: .venv/bin/pyinstaller contextspy.spec
+
+      - name: Package and checksum
+        run: |
+          cd dist
+          tar czf contextspy-${{ matrix.arch }}.tar.gz contextspy
+          shasum -a 256 contextspy-${{ matrix.arch }}.tar.gz > contextspy-${{ matrix.arch }}.tar.gz.sha256
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/contextspy-${{ matrix.arch }}.tar.gz
+            dist/contextspy-${{ matrix.arch }}.tar.gz.sha256
