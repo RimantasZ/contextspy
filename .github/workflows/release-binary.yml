@@ -63,3 +63,87 @@ jobs:
           files: |
             dist/contextspy-${{ matrix.arch }}.tar.gz
             dist/contextspy-${{ matrix.arch }}.tar.gz.sha256
+
+  update-formula:
+    name: Update Homebrew formula
+    needs: build
+    runs-on: ubuntu-latest
+    # Requires a PAT with 'repo' scope stored as secret HOMEBREW_TAP_PAT.
+    # The PAT must have write access to rimantas/homebrew-contextspy.
+    if: ${{ secrets.HOMEBREW_TAP_PAT != '' }}
+
+    steps:
+      - name: Download sha256 files from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "*.sha256" \
+            --dir /tmp/sums
+
+      - name: Clone tap repo
+        env:
+          HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
+        run: |
+          git clone \
+            "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/rimantas/homebrew-contextspy.git" \
+            tap
+
+      - name: Patch formula version and sha256 values
+        run: |
+          TAG="${{ github.ref_name }}"
+          export FORMULA_VERSION="${TAG#v}"
+          export FORMULA_ARM64=$(awk '{print $1}' /tmp/sums/contextspy-macos-arm64.tar.gz.sha256)
+          export FORMULA_X86_64=$(awk '{print $1}' /tmp/sums/contextspy-macos-x86_64.tar.gz.sha256)
+          export FORMULA_LINUX=$(awk '{print $1}' /tmp/sums/contextspy-linux-x86_64.tar.gz.sha256)
+
+          python3 <<'PYEOF'
+import re, os
+
+version = os.environ["FORMULA_VERSION"]
+arm64   = os.environ["FORMULA_ARM64"]
+x86_64  = os.environ["FORMULA_X86_64"]
+linux   = os.environ["FORMULA_LINUX"]
+
+with open("tap/Formula/contextspy.rb") as f:
+    rb = f.read()
+
+rb = re.sub(
+    r'(version\s+")[^"]*(")',
+    lambda m: f'{m.group(1)}{version}{m.group(2)}',
+    rb,
+)
+rb = re.sub(
+    r'(contextspy-macos-arm64\.tar\.gz"\n\s+sha256 ")[^"]*(")',
+    lambda m: f'{m.group(1)}{arm64}{m.group(2)}',
+    rb,
+)
+rb = re.sub(
+    r'(contextspy-macos-x86_64\.tar\.gz"\n\s+sha256 ")[^"]*(")',
+    lambda m: f'{m.group(1)}{x86_64}{m.group(2)}',
+    rb,
+)
+rb = re.sub(
+    r'(contextspy-linux-x86_64\.tar\.gz"\n\s+sha256 ")[^"]*(")',
+    lambda m: f'{m.group(1)}{linux}{m.group(2)}',
+    rb,
+)
+
+with open("tap/Formula/contextspy.rb", "w") as f:
+    f.write(rb)
+PYEOF
+
+      - name: Commit and push formula update
+        env:
+          HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/contextspy.rb
+          git diff --staged --quiet \
+            || git commit -m "contextspy ${VERSION}" \
+            && git push
