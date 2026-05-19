@@ -305,6 +305,14 @@ def _sse_to_anthropic_resp(raw: bytes) -> dict:
             usage = event.get("usage", {})
             if "output_tokens" in usage:
                 output_tokens = usage["output_tokens"]
+            # Some providers (e.g. Copilot via Bedrock) report all token counts in
+            # message_delta rather than message_start — capture as fallback.
+            if "input_tokens" in usage and input_tokens is None:
+                input_tokens = usage["input_tokens"]
+            if "cache_read_input_tokens" in usage and cache_read is None:
+                cache_read = usage["cache_read_input_tokens"]
+            if "cache_creation_input_tokens" in usage and cache_creation is None:
+                cache_creation = usage["cache_creation_input_tokens"]
 
     resp: dict = {
         "model": model,
@@ -392,24 +400,39 @@ def _sse_to_openai_resp(raw: bytes) -> dict:
     return resp
 
 
+def _wire_format(endpoint: str) -> str | None:
+    """Detect the API wire format from the request path.
+
+    Returns one of: "anthropic", "openai", "ollama_native", or None.
+    Dispatch is endpoint-based so e.g. Copilot relaying to Claude is parsed
+    with the Anthropic parser regardless of which host was detected.
+    """
+    if "/messages" in endpoint:
+        return "anthropic"
+    if "/chat/completions" in endpoint or "/completions" in endpoint:
+        return "openai"
+    if "/api/chat" in endpoint or "/api/generate" in endpoint:
+        return "ollama_native"
+    return None
+
+
 def parse_sse_request(
     provider: str, endpoint: str, req_body: dict, raw_sse: bytes
 ) -> ParsedRequest | None:
-    """Parse an SSE streaming response into a ParsedRequest."""
+    """Parse an SSE streaming response into a ParsedRequest.
+
+    ``provider`` is kept for callers but dispatch is endpoint-based via
+    ``_wire_format`` so any host can use any protocol (e.g. Copilot → Claude).
+    """
+    fmt = _wire_format(endpoint)
     try:
-        if provider in ("openai", "openai_azure", "copilot"):
-            if "/chat/completions" in endpoint:
-                resp_body = _sse_to_openai_resp(raw_sse)
-                return parse_openai(req_body, resp_body)
-        elif provider == "anthropic":
-            if "/messages" in endpoint:
-                resp_body = _sse_to_anthropic_resp(raw_sse)
-                return parse_anthropic(req_body, resp_body)
-        elif provider == "ollama":
-            # /v1/chat/completions is OpenAI-compatible (Ollama >= 0.1.24)
-            if "/v1/chat/completions" in endpoint:
-                resp_body = _sse_to_openai_resp(raw_sse)
-                return parse_openai(req_body, resp_body)
+        if fmt == "anthropic":
+            resp_body = _sse_to_anthropic_resp(raw_sse)
+            return parse_anthropic(req_body, resp_body)
+        elif fmt == "openai":
+            resp_body = _sse_to_openai_resp(raw_sse)
+            return parse_openai(req_body, resp_body)
+        # ollama_native streams NDJSON (not SSE) — handled by the non-SSE path
         return None
     except Exception:
         return None
@@ -418,19 +441,19 @@ def parse_sse_request(
 def parse_request(
     provider: str, endpoint: str, req_body: dict, resp_body: dict
 ) -> ParsedRequest | None:
+    """Parse a non-streaming (buffered) response into a ParsedRequest.
+
+    ``provider`` is kept for callers but dispatch is endpoint-based via
+    ``_wire_format`` so any host can use any protocol.
+    """
+    fmt = _wire_format(endpoint)
     try:
-        if provider in ("openai", "openai_azure", "copilot"):
-            if "/chat/completions" in endpoint or "/completions" in endpoint:
-                return parse_openai(req_body, resp_body)
-        elif provider == "anthropic":
-            if "/messages" in endpoint:
-                return parse_anthropic(req_body, resp_body)
-        elif provider == "ollama":
-            # /v1/chat/completions is OpenAI-compatible (Ollama >= 0.1.24)
-            if "/v1/chat/completions" in endpoint:
-                return parse_openai(req_body, resp_body)
-            if "/api/chat" in endpoint:
-                return parse_ollama(req_body, resp_body)
+        if fmt == "anthropic":
+            return parse_anthropic(req_body, resp_body)
+        elif fmt == "openai":
+            return parse_openai(req_body, resp_body)
+        elif fmt == "ollama_native":
+            return parse_ollama(req_body, resp_body)
         return None
     except Exception:
         return None

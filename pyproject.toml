@@ -45,6 +45,9 @@ contextspy = "contextspy.cli:app"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["contextspy*"]
