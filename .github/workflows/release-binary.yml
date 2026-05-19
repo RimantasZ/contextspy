@@ -87,7 +87,7 @@ jobs:
           HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
         run: |
           git clone \
-            "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/rimantas/homebrew-contextspy.git" \
+            "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/RimantasZs/homebrew-contextspy.git" \
             tap
 
       - name: Patch formula version and sha256 values
