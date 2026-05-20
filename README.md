@@ -55,6 +55,31 @@ uv venv
 uv pip install -e .
 ```
 
+**Binary releases (macOS / Linux / Windows):**
+
+Pre-built single-file executables are attached to each [GitHub release](https://github.com/RimantasZ/contextspy/releases).
+Download and extract the archive for your platform, then run `./contextspy`.
+
+> **macOS Gatekeeper warning** — binaries downloaded from the internet are quarantined
+> by macOS and may show a warning that the file "cannot be opened because it was not
+> scanned for malware". Remove the quarantine flag after extracting:
+>
+> ```bash
+> xattr -d com.apple.quarantine ./contextspy
+> ```
+>
+> Alternatively, right-click the binary in Finder and choose **Open**, then click
+> **Open** in the dialog. This is a one-time step per downloaded binary.
+>
+> To avoid this entirely, install via **Homebrew** (see below) — Homebrew removes the
+> quarantine attribute automatically during install.
+
+**Via Homebrew (macOS / Linux — recommended for direct downloads):**
+
+```bash
+brew install rimantas/contextspy/contextspy
+```
+
 ### Build the UI (optional — only needed if you change the frontend)
 
 The built UI is bundled with the package. Only rebuild if you modify `ui/src/`:
