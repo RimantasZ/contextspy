@@ -133,6 +133,12 @@ def classify(parsed: ParsedRequest) -> CategoryBreakdown:
         else:
             breakdown.uncategorized += tokens
 
+    # ChatML overhead: ~4 tokens per message (role marker + framing tokens) +
+    # 3 tokens to prime the reply.  This matches OpenAI's own token-counting
+    # formula and significantly reduces the systematic undercount for long
+    # multi-turn / tool-heavy conversations.
+    chatml_overhead = 4 * len(parsed.messages) + 3
+
     breakdown.total_input = (
         breakdown.system_prompt
         + breakdown.tool_definitions
@@ -142,6 +148,7 @@ def classify(parsed: ParsedRequest) -> CategoryBreakdown:
         + breakdown.current_user_message
         + breakdown.assistant_prefill
         + breakdown.uncategorized
+        + chatml_overhead
     )
     breakdown.total_output = count_tokens(parsed.response_text)
 

@@ -90,12 +90,19 @@ def parse_openai(req_body: dict, resp_body: dict) -> ParsedRequest:
         is_tool_result = role == "tool" or bool(msg.get("tool_call_id"))
         tool_call_id = msg.get("tool_call_id")
 
-        # Build call_id → tool_name map from assistant tool_calls
-        for tc in msg.get("tool_calls") or []:
+        # Build call_id → tool_name map from assistant tool_calls, and include
+        # the serialised tool_calls JSON in content so those tokens are counted.
+        # (Assistant messages that only contain tool_calls have content=null in
+        # the wire format, but the provider bills the full function-call JSON.)
+        tool_calls_list = msg.get("tool_calls") or []
+        for tc in tool_calls_list:
             call_id = tc.get("id")
             name = (tc.get("function") or {}).get("name") or tc.get("name")
             if call_id and name:
                 tool_call_map[call_id] = name
+        if tool_calls_list and role == "assistant":
+            tc_text = json.dumps(tool_calls_list)
+            content = (content + "\n" + tc_text).strip() if content else tc_text
 
         messages.append(
             ParsedMessage(
