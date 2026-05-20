@@ -74,11 +74,21 @@ Download and extract the archive for your platform, then run `./contextspy`.
 > To avoid this entirely, install via **Homebrew** (see below) — Homebrew removes the
 > quarantine attribute automatically during install.
 
-**Via Homebrew (macOS / Linux — recommended for direct downloads):**
+**Via Homebrew (macOS — recommended for direct downloads):**
 
 ```bash
 brew install rimantas/contextspy/contextspy
 ```
+
+**Via `.deb` package (Ubuntu / Debian):**
+
+Download `contextspy_VERSION_amd64.deb` from the [latest release](https://github.com/RimantasZ/contextspy/releases/latest), then:
+
+```bash
+sudo dpkg -i contextspy_*_amd64.deb
+```
+
+This installs `contextspy` to `/usr/bin/` and integrates with `apt remove contextspy`.
 
 ### Build the UI (optional — only needed if you change the frontend)
 

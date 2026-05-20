@@ -72,6 +72,23 @@ jobs:
           tar czf contextspy-${{ matrix.arch }}.tar.gz ${{ matrix.bin_name }}
           shasum -a 256 contextspy-${{ matrix.arch }}.tar.gz > contextspy-${{ matrix.arch }}.tar.gz.sha256
 
+      - name: Build .deb package (Linux)
+        if: matrix.arch == 'linux-x86_64'
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          gem install fpm --no-document
+          fpm -s dir -t deb \
+            -n contextspy \
+            -v "${VERSION}" \
+            --architecture amd64 \
+            --license Apache-2.0 \
+            --description "LLM proxy that analyses token usage in context windows" \
+            --url "https://github.com/RimantasZ/contextspy" \
+            --package "dist/contextspy_${VERSION}_amd64.deb" \
+            dist/contextspy=/usr/bin/contextspy
+          sha256sum "dist/contextspy_${VERSION}_amd64.deb" | awk '{print $1}' > "dist/contextspy_${VERSION}_amd64.deb.sha256"
+
       - name: Package and checksum (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -88,6 +105,15 @@ jobs:
           files: |
             dist/contextspy-${{ matrix.arch }}${{ matrix.pkg_ext }}
             dist/contextspy-${{ matrix.arch }}${{ matrix.pkg_ext }}.sha256
+
+      - name: Upload .deb to GitHub Release
+        if: matrix.arch == 'linux-x86_64'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            dist/contextspy_*_amd64.deb
+            dist/contextspy_*_amd64.deb.sha256
 
   update-formula:
     name: Update Homebrew formula
