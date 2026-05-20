@@ -21,10 +21,19 @@ jobs:
         include:
           - os: macos-14
             arch: macos-arm64
-          - os: macos-13
-            arch: macos-x86_64
+            venv_scripts: .venv/bin
+            bin_name: contextspy
+            pkg_ext: .tar.gz
           - os: ubuntu-22.04
             arch: linux-x86_64
+            venv_scripts: .venv/bin
+            bin_name: contextspy
+            pkg_ext: .tar.gz
+          - os: windows-2022
+            arch: windows-x86_64
+            venv_scripts: .venv/Scripts
+            bin_name: contextspy.exe
+            pkg_ext: .zip
 
     runs-on: ${{ matrix.os }}
 
@@ -54,21 +63,31 @@ jobs:
           uv pip install -e "." pyinstaller
 
       - name: Build binary
-        run: .venv/bin/pyinstaller contextspy.spec
+        run: ${{ matrix.venv_scripts }}/pyinstaller contextspy.spec
 
-      - name: Package and checksum
+      - name: Package and checksum (Unix)
+        if: runner.os != 'Windows'
         run: |
           cd dist
-          tar czf contextspy-${{ matrix.arch }}.tar.gz contextspy
+          tar czf contextspy-${{ matrix.arch }}.tar.gz ${{ matrix.bin_name }}
           shasum -a 256 contextspy-${{ matrix.arch }}.tar.gz > contextspy-${{ matrix.arch }}.tar.gz.sha256
+
+      - name: Package and checksum (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location dist
+          Compress-Archive -Path ${{ matrix.bin_name }} -DestinationPath contextspy-${{ matrix.arch }}.zip
+          $hash = (Get-FileHash contextspy-${{ matrix.arch }}.zip -Algorithm SHA256).Hash.ToLower()
+          Set-Content contextspy-${{ matrix.arch }}.zip.sha256 $hash
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
-            dist/contextspy-${{ matrix.arch }}.tar.gz
-            dist/contextspy-${{ matrix.arch }}.tar.gz.sha256
+            dist/contextspy-${{ matrix.arch }}${{ matrix.pkg_ext }}
+            dist/contextspy-${{ matrix.arch }}${{ matrix.pkg_ext }}.sha256
 
   update-formula:
     name: Update Homebrew formula
@@ -103,7 +122,6 @@ jobs:
           python3 .github/scripts/update-formula.py \
             "${TAG#v}" \
             "$(awk '{print $1}' /tmp/sums/contextspy-macos-arm64.tar.gz.sha256)" \
-            "$(awk '{print $1}' /tmp/sums/contextspy-macos-x86_64.tar.gz.sha256)" \
             "$(awk '{print $1}' /tmp/sums/contextspy-linux-x86_64.tar.gz.sha256)"
 
       - name: Commit and push formula update

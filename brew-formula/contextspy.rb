@@ -12,10 +12,6 @@ class Contextspy < Formula
       url "https://github.com/RimantasZ/contextspy/releases/download/v#{version}/contextspy-macos-arm64.tar.gz"
       sha256 "REPLACE_ARM64_SHA256"
     end
-    on_intel do
-      url "https://github.com/RimantasZ/contextspy/releases/download/v#{version}/contextspy-macos-x86_64.tar.gz"
-      sha256 "REPLACE_X86_64_SHA256"
-    end
   end
 
   on_linux do

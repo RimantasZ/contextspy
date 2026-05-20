@@ -16,13 +16,13 @@
 """Patch version and sha256 values in Formula/contextspy.rb.
 
 Usage:
-    python3 update-formula.py <version> <arm64-sha256> <x86_64-sha256> <linux-sha256>
+    python3 update-formula.py <version> <arm64-sha256> <linux-sha256>
 """
 
 import re
 import sys
 
-version, arm64, x86_64, linux = sys.argv[1:5]
+version, arm64, linux = sys.argv[1:4]
 
 with open("tap/Formula/contextspy.rb") as f:
     rb = f.read()
@@ -35,11 +35,6 @@ rb = re.sub(
 rb = re.sub(
     r'(contextspy-macos-arm64\.tar\.gz"\n\s+sha256 ")[^"]*(")',
     lambda m: f"{m.group(1)}{arm64}{m.group(2)}",
-    rb,
-)
-rb = re.sub(
-    r'(contextspy-macos-x86_64\.tar\.gz"\n\s+sha256 ")[^"]*(")',
-    lambda m: f"{m.group(1)}{x86_64}{m.group(2)}",
     rb,
 )
 rb = re.sub(
