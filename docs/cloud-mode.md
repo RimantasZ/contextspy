@@ -1,0 +1,152 @@
+# Cloud API Mode (Forward Proxy)
+
+Use this mode to intercept requests going to **cloud LLM APIs** such as OpenAI,
+Anthropic (Claude), GitHub Copilot, or Azure OpenAI.
+
+ContextSpy acts as an HTTPS man-in-the-middle proxy. It terminates TLS, inspects the
+request, logs and analyses it, then re-encrypts and forwards it to the provider.
+
+```
+coding agent
+    │  HTTPS_PROXY=http://127.0.0.1:8888
+    ▼
+ContextSpy (mitmproxy, port 8888)
+    │  TLS terminate → inspect → re-encrypt → forward
+    ▼
+cloud LLM API (api.openai.com, api.anthropic.com, …)
+```
+
+---
+
+## Prerequisites
+
+- ContextSpy installed — see [Installation](install.md)
+- CA certificate installed in your OS trust store — see [CA certificate setup](install.md#ca-certificate-setup-cloudforward-proxy-mode-only)
+
+---
+
+## Step 1 — Start ContextSpy
+
+```bash
+contextspy start
+```
+
+This starts:
+- HTTPS forward proxy on **port 8888**
+- Web dashboard on **port 5173** (opens automatically in your browser)
+
+Options:
+```
+--proxy-port  PORT   Proxy listen port (default: 8888)
+--web-port    PORT   Dashboard port (default: 5173)
+--no-browser         Don't open the browser automatically
+```
+
+---
+
+## Step 2 — Configure your agent
+
+Pick the agent you use and follow the instructions below.
+Run `contextspy setup-<agent>` for a printed reminder at any time.
+
+### GitHub Copilot (VS Code)
+
+**Option A — VS Code `settings.json`** (`Ctrl+Shift+P` → "Open User Settings JSON"):
+
+```json
+{
+  "http.proxy": "http://127.0.0.1:8888",
+  "http.proxyStrictSSL": false
+}
+```
+
+**Option B — environment variables** (set before launching VS Code):
+
+```bash
+# macOS / Linux
+export HTTPS_PROXY=http://127.0.0.1:8888
+export NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca-cert.pem
+
+# PowerShell
+$env:HTTPS_PROXY = "http://127.0.0.1:8888"
+$env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
+```
+
+```bash
+contextspy setup-copilot   # prints the exact snippet
+```
+
+### Claude CLI / Claude Code
+
+```bash
+# macOS / Linux
+export HTTPS_PROXY=http://127.0.0.1:8888
+export NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca-cert.pem
+
+# PowerShell
+$env:HTTPS_PROXY = "http://127.0.0.1:8888"
+$env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
+```
+
+> `NODE_EXTRA_CA_CERTS` is required because Claude CLI is an Electron/Node app with its
+> own bundled certificate store that ignores the OS trust store.
+
+```bash
+contextspy setup-claude
+```
+
+### opencode
+
+```bash
+# macOS / Linux
+export HTTPS_PROXY=http://127.0.0.1:8888
+export SSL_CERT_FILE=~/.mitmproxy/mitmproxy-ca-cert.pem
+export NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca-cert.pem
+
+# PowerShell
+$env:HTTPS_PROXY = "http://127.0.0.1:8888"
+$env:SSL_CERT_FILE = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
+$env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
+```
+
+> opencode uses both the Go TLS stack (`SSL_CERT_FILE`) and Node.js components
+> (`NODE_EXTRA_CA_CERTS`), so both variables are needed.
+
+```bash
+contextspy setup-opencode
+```
+
+### Python / OpenAI SDK / httpx scripts
+
+```python
+import os
+os.environ["HTTPS_PROXY"] = "http://127.0.0.1:8888"
+```
+
+Or as environment variables:
+
+```bash
+# macOS / Linux
+HTTPS_PROXY=http://127.0.0.1:8888 python your_script.py
+
+# PowerShell
+$env:HTTPS_PROXY = "http://127.0.0.1:8888"
+python your_script.py
+```
+
+### Generic (curl, httpx CLI, etc.)
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:8888
+export HTTP_PROXY=http://127.0.0.1:8888
+```
+
+---
+
+## Step 3 — Use the dashboard
+
+Open http://127.0.0.1:5173. Requests appear in real-time as your agent makes LLM calls.
+
+- **Dashboard** — token usage totals, category breakdown chart, model distribution
+- **Requests** — table of all captured requests with token counts and category bars
+- **Sessions** — group requests by task; click **Start Session** and give it a name
