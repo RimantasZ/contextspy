@@ -77,7 +77,7 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${TAG#v}"
-          gem install fpm --no-document
+          sudo gem install fpm --no-document
           fpm -s dir -t deb \
             -n contextspy \
             -v "${VERSION}" \
