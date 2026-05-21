@@ -127,7 +127,7 @@ OS trust store so HTTPS connections through the proxy are trusted.
 uv run contextspy install-cert
 ```
 
-- **Windows**: runs `certutil -addstore Root ~/.mitmproxy/mitmproxy-ca.pem` (requires elevated prompt or UAC prompt)
+- **Windows**: runs `certutil -addstore Root ~/.mitmproxy/mitmproxy-ca-cert.pem` (requires elevated prompt or UAC prompt)
 - **macOS**: runs `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ...` (requires sudo)
 - **Linux**: copies cert to `/usr/local/share/ca-certificates/` and runs `update-ca-certificates`
 

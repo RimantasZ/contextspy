@@ -122,10 +122,10 @@ Both modes share the same database, web server, and dashboard. The proxy addon a
 
 #### TLS Interception
 
-- On first `ContextSpy start`, check for `~/.mitmproxy/mitmproxy-ca.pem`; mitmproxy generates it automatically if absent.
+- On first `ContextSpy start`, check for `~/.mitmproxy/mitmproxy-ca-cert.pem`; mitmproxy generates it automatically if absent.
 - Detect OS and attempt automatic CA trust-store installation:
-  - **Windows:** `certutil -addstore Root ~/.mitmproxy/mitmproxy-ca.pem`
-  - **macOS:** `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/.mitmproxy/mitmproxy-ca.pem`
+  - **Windows:** `certutil -addstore Root ~/.mitmproxy/mitmproxy-ca-cert.pem`
+  - **macOS:** `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/.mitmproxy/mitmproxy-ca-cert.pem`
   - **Linux:** copy to `/usr/local/share/ca-certificates/mitmproxy-ca.crt` + `sudo update-ca-certificates`
 - If automatic installation fails, print clear manual instructions and continue.
 - mitmproxy dynamically signs per-domain certificates using the local CA — no external CA needed.
@@ -857,4 +857,4 @@ When `contextspy start-local` is called:
 | `is_running()` returning `True` when proxy is not bound | Only checked thread liveness | Added `_bound` flag set via `_BindWatcher` log handler |
 | Hooks not firing for Claude Code requests | Claude Code uses SSE streaming; `response()` hook never fires for `text/event-stream` | Added `responseheaders()` hook + streaming callback that collects SSE chunks |
 | `tiktoken` `ProxyError` on first run | tiktoken downloads `cl100k_base` data at first use; with `HTTPS_PROXY` set, the download is routed through the local proxy which can't handle it | `_get_encoder()` strips all proxy env vars from `os.environ` before calling `tiktoken.get_encoding()`, restores them in `finally` |
-| macOS cert install: `SecCertificateCreateFromData: Unknown format in import` | `cert.py` Darwin branch passes `mitmproxy-ca.pem` (key + cert bundle) to `security add-trusted-cert`; macOS requires the cert-only file | **Known bug, not yet fixed.** Should use `mitmproxy-ca-cert.pem` instead. Workaround: install manually via Keychain Access. |
+| macOS cert install: `SecCertificateCreateFromData: Unknown format in import` | `cert.py` Darwin branch passes `mitmproxy-ca.pem` (key + cert bundle) to `security add-trusted-cert`; macOS requires the cert-only file | **Fixed.** `cert.py` now uses `mitmproxy-ca-cert.pem` (cert-only PEM) on all platforms. |

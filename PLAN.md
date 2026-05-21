@@ -74,7 +74,7 @@
 ### Tasks
 
 - [ ] `contextspy/proxy/cert.py`:
-  - `cert_exists() → bool` — checks for `~/.mitmproxy/mitmproxy-ca.pem`.
+  - `cert_exists() → bool` — checks for `~/.mitmproxy/mitmproxy-ca-cert.pem`.
   - `install_cert() → (success: bool, message: str)` — OS-detecting logic for Windows (`certutil`), macOS (`security`), Linux (`update-ca-certificates`); falls back to printing manual instructions.
 - [ ] `contextspy/proxy/addon.py` — `ContextSpyAddon`:
   - `request()` — timestamps the flow.

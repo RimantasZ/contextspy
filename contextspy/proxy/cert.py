@@ -18,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-_MITMPROXY_CA = Path.home() / ".mitmproxy" / "mitmproxy-ca.pem"
+_MITMPROXY_CA = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
 
 
 def cert_exists() -> bool:
@@ -31,7 +31,7 @@ def install_cert() -> tuple[bool, str]:
     Returns (success, message).
     """
     if not cert_exists():
-        return False, "CA certificate not found at ~/.mitmproxy/mitmproxy-ca.pem. Run the proxy once to generate it."
+        return False, "CA certificate not found at ~/.mitmproxy/mitmproxy-ca-cert.pem. Run the proxy once to generate it."
 
     system = platform.system()
     try:
