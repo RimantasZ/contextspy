@@ -90,6 +90,54 @@ sudo dpkg -i contextspy_*_amd64.deb
 
 This installs `contextspy` to `/usr/bin/` and integrates with `apt remove contextspy`.
 
+**CA certificate setup (binary installs, forward/cloud proxy mode only)**
+
+After installing, run `contextspy` once so mitmproxy generates the CA certificate, then
+install it into your OS trust store:
+
+```bash
+# Generate the cert (run once, then Ctrl+C after a few seconds)
+contextspy start --no-browser
+```
+
+*macOS:*
+```bash
+contextspy install-cert
+# or manually:
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain \
+  ~/.mitmproxy/mitmproxy-ca-cert.pem
+```
+
+*Ubuntu / Linux:*
+```bash
+contextspy install-cert
+# or manually:
+sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy-ca.crt
+sudo update-ca-certificates
+```
+
+*Windows (elevated PowerShell):*
+```powershell
+contextspy install-cert
+# or manually:
+certutil -addstore -f Root "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
+```
+
+> **Node.js-based tools** (VS Code / GitHub Copilot, Claude CLI, opencode) ignore the
+> OS trust store. Set this environment variable before launching them:
+>
+> ```bash
+> # macOS / Linux
+> export NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca-cert.pem
+>
+> # PowerShell
+> $env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
+> ```
+>
+> The `contextspy setup-copilot`, `setup-claude`, and `setup-opencode` commands print
+> the exact snippet for your shell.
+
 ### Build the UI (optional — only needed if you change the frontend)
 
 The built UI is bundled with the package. Only rebuild if you modify `ui/src/`:
