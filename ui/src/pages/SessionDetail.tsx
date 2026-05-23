@@ -95,8 +95,8 @@ export default function SessionDetail() {
       head: [['Metric', 'Value']],
       body: [
         ['Requests', String(st?.request_count ?? 0)],
-        ['Tokens in', (st?.tokens_total_input ?? 0).toLocaleString()],
-        ['Tokens out', (st?.tokens_total_output ?? 0).toLocaleString()],
+        ['Context tokens', (st?.tokens_total_input ?? 0).toLocaleString()],
+        ['Generated tokens', (st?.tokens_total_output ?? 0).toLocaleString()],
       ],
       theme: 'striped',
       headStyles: { fillColor: [55, 65, 81] },
@@ -259,10 +259,10 @@ export default function SessionDetail() {
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          ['Requests', st?.request_count ?? '—'],
-          ['Tokens in', st ? st.tokens_total_input.toLocaleString() : '—'],
-          ['Tokens out', st ? st.tokens_total_output.toLocaleString() : '—'],
+          ['Context tokens', st ? st.tokens_total_input.toLocaleString() : '—'],
+          ['Generated tokens', st ? st.tokens_total_output.toLocaleString() : '—'],
           ['Started', new Date(s.started_at).toLocaleTimeString()],
+          ['Requests', st?.request_count ?? '—'],
         ].map(([label, value]) => (
           <div key={String(label)} className="bg-gray-800 rounded-lg p-4">
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>

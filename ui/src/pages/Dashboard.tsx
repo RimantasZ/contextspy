@@ -256,8 +256,8 @@ export default function Dashboard() {
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Tokens in" value={s ? s.tokens_total_input.toLocaleString() : '—'} />
-        <StatCard label="Tokens out" value={s ? s.tokens_total_output.toLocaleString() : '—'} />
+        <StatCard label="Context tokens" value={s ? s.tokens_total_input.toLocaleString() : '—'} />
+        <StatCard label="Generated tokens" value={s ? s.tokens_total_output.toLocaleString() : '—'} />
         <StatCard label="Total requests" value={s?.request_count ?? '—'} />
         <StatCard label="Providers" value={s ? Object.keys(s.by_provider).length : '—'} />
       </div>

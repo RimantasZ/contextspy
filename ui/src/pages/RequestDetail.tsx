@@ -88,8 +88,8 @@ export default function RequestDetail() {
           ['Status', req.status_code ?? '—'],
           ['Time', new Date(req.timestamp).toLocaleString()],
           ['Duration', req.duration_ms != null ? `${req.duration_ms}ms` : '—'],
-          ['Tokens in', req.tokens_total_input.toLocaleString()],
-          ['Tokens out', req.tokens_total_output.toLocaleString()],
+          ['Context tokens', req.tokens_total_input.toLocaleString()],
+          ['Generated tokens', req.tokens_total_output.toLocaleString()],
         ].map(([k, v]) => (
           <div key={String(k)}>
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">{k}</p>
