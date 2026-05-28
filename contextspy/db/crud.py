@@ -375,12 +375,32 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             func.count().label("req_count"),
             func.sum(Request.tokens_total_input).label("tok_in"),
             func.sum(Request.tokens_total_output).label("tok_out"),
+            func.sum(Request.tokens_system_prompt).label("tok_system_prompt"),
+            func.sum(Request.tokens_tool_definitions).label("tok_tool_definitions"),
+            func.sum(Request.tokens_tool_results).label("tok_tool_results"),
+            func.sum(Request.tokens_file_contents).label("tok_file_contents"),
+            func.sum(Request.tokens_conversation_history).label("tok_conversation_history"),
+            func.sum(Request.tokens_current_user_message).label("tok_current_user_message"),
+            func.sum(Request.tokens_assistant_prefill).label("tok_assistant_prefill"),
+            func.sum(Request.tokens_uncategorized).label("tok_uncategorized"),
         )
         .where(Request.session_id.isnot(None))
         .group_by(Request.session_id)
     ).all()
-    session_stats: dict[str, tuple[int, int, int]] = {
-        row.session_id: (row.req_count, row.tok_in or 0, row.tok_out or 0)
+    session_stats: dict[str, dict] = {
+        row.session_id: {
+            "req_count": row.req_count,
+            "tok_in": row.tok_in or 0,
+            "tok_out": row.tok_out or 0,
+            "tokens_system_prompt": row.tok_system_prompt or 0,
+            "tokens_tool_definitions": row.tok_tool_definitions or 0,
+            "tokens_tool_results": row.tok_tool_results or 0,
+            "tokens_file_contents": row.tok_file_contents or 0,
+            "tokens_conversation_history": row.tok_conversation_history or 0,
+            "tokens_current_user_message": row.tok_current_user_message or 0,
+            "tokens_assistant_prefill": row.tok_assistant_prefill or 0,
+            "tokens_uncategorized": row.tok_uncategorized or 0,
+        }
         for row in session_stats_rows
     }
 
@@ -390,6 +410,14 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             Request.timestamp,
             Request.tokens_total_input,
             Request.tokens_total_output,
+            Request.tokens_system_prompt,
+            Request.tokens_tool_definitions,
+            Request.tokens_tool_results,
+            Request.tokens_file_contents,
+            Request.tokens_conversation_history,
+            Request.tokens_current_user_message,
+            Request.tokens_assistant_prefill,
+            Request.tokens_uncategorized,
         )
         .where(Request.session_id.is_(None))
         .order_by(Request.timestamp.asc())
@@ -428,11 +456,26 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             "request_count": len(reqs),
             "tokens_in": sum(r.tokens_total_input for r in reqs),
             "tokens_out": sum(r.tokens_total_output for r in reqs),
+            "tokens_system_prompt": sum(r.tokens_system_prompt for r in reqs),
+            "tokens_tool_definitions": sum(r.tokens_tool_definitions for r in reqs),
+            "tokens_tool_results": sum(r.tokens_tool_results for r in reqs),
+            "tokens_file_contents": sum(r.tokens_file_contents for r in reqs),
+            "tokens_conversation_history": sum(r.tokens_conversation_history for r in reqs),
+            "tokens_current_user_message": sum(r.tokens_current_user_message for r in reqs),
+            "tokens_assistant_prefill": sum(r.tokens_assistant_prefill for r in reqs),
+            "tokens_uncategorized": sum(r.tokens_uncategorized for r in reqs),
         })
 
     # Session entries
+    _empty: dict = {
+        "req_count": 0, "tok_in": 0, "tok_out": 0,
+        "tokens_system_prompt": 0, "tokens_tool_definitions": 0,
+        "tokens_tool_results": 0, "tokens_file_contents": 0,
+        "tokens_conversation_history": 0, "tokens_current_user_message": 0,
+        "tokens_assistant_prefill": 0, "tokens_uncategorized": 0,
+    }
     for s in sessions:
-        stats = session_stats.get(s.id, (0, 0, 0))
+        stats = session_stats.get(s.id, _empty)
         entries.append({
             "type": "session",
             "session_id": s.id,
@@ -440,9 +483,17 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             "started_at": s.started_at.isoformat(),
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
             "is_active": bool(s.is_active),
-            "request_count": stats[0],
-            "tokens_in": stats[1],
-            "tokens_out": stats[2],
+            "request_count": stats["req_count"],
+            "tokens_in": stats["tok_in"],
+            "tokens_out": stats["tok_out"],
+            "tokens_system_prompt": stats["tokens_system_prompt"],
+            "tokens_tool_definitions": stats["tokens_tool_definitions"],
+            "tokens_tool_results": stats["tokens_tool_results"],
+            "tokens_file_contents": stats["tokens_file_contents"],
+            "tokens_conversation_history": stats["tokens_conversation_history"],
+            "tokens_current_user_message": stats["tokens_current_user_message"],
+            "tokens_assistant_prefill": stats["tokens_assistant_prefill"],
+            "tokens_uncategorized": stats["tokens_uncategorized"],
         })
 
     entries.sort(key=lambda e: e["started_at"], reverse=True)

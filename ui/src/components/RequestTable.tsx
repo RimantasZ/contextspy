@@ -13,6 +13,7 @@
 // limitations under the License.
 import { useState } from 'react';
 import type { Request, Session } from '../api/client';
+import { ContextBar } from './ContextBar';
 
 const PROVIDER_COLORS: Record<string, string> = {
   openai: 'bg-green-900 text-green-300',
@@ -28,68 +29,43 @@ const AGENT_COLORS: Record<string, string> = {
   unknown: 'bg-gray-700 text-gray-400',
 };
 
-const CATEGORY_COLORS: Record<string, string> = {
-  system_prompt: '#6366f1',
-  tool_definitions: '#8b5cf6',
-  tool_results: '#a78bfa',
-  file_contents: '#22c55e',
-  conversation_history: '#3b82f6',
-  current_user_message: '#06b6d4',
-  assistant_prefill: '#f59e0b',
-  uncategorized: '#6b7280',
-};
+type SortKey =
+  | 'timestamp'
+  | 'tokens_total_input'
+  | 'tokens_total_output'
+  | 'duration_ms'
+  | 'status_code'
+  | 'session'
+  | 'provider'
+  | 'agent'
+  | 'model';
 
-const CATEGORY_LABELS: Record<string, string> = {
-  system_prompt: 'System Prompt',
-  tool_definitions: 'Tool Definitions',
-  tool_results: 'Tool Results',
-  file_contents: 'File Contents',
-  conversation_history: 'Conversation History',
-  current_user_message: 'User Message',
-  assistant_prefill: 'Assistant Prefill',
-  uncategorized: 'Uncategorized',
-};
-
-const CATEGORY_ORDER = [
-  'system_prompt', 'tool_definitions', 'tool_results', 'file_contents',
-  'conversation_history', 'current_user_message', 'assistant_prefill', 'uncategorized',
-];
-
-function ContextBar({ req }: { req: Request }) {
-  const values: Record<string, number> = {
-    system_prompt: req.tokens_system_prompt,
-    tool_definitions: req.tokens_tool_definitions,
-    tool_results: req.tokens_tool_results,
-    file_contents: req.tokens_file_contents,
-    conversation_history: req.tokens_conversation_history,
-    current_user_message: req.tokens_current_user_message,
-    assistant_prefill: req.tokens_assistant_prefill,
-    uncategorized: req.tokens_uncategorized,
-  };
-  const total = Object.values(values).reduce((a, b) => a + b, 0);
-
-  if (total === 0) {
-    return <div className="h-2 w-24 rounded-full bg-gray-800" />;
-  }
-
-  const segments = CATEGORY_ORDER
-    .filter(cat => values[cat] > 0)
-    .map(cat => ({
-      key: cat,
-      pct: (values[cat] / total) * 100,
-      tooltip: `${CATEGORY_LABELS[cat]}: ${values[cat].toLocaleString()} (${((values[cat] / total) * 100).toFixed(1)}%)`,
-    }));
-
+function SortHeader({
+  label,
+  col,
+  sortKey,
+  sortDir,
+  onSort,
+  className = '',
+}: {
+  label: string;
+  col: SortKey;
+  sortKey: SortKey | null;
+  sortDir: 'asc' | 'desc';
+  onSort: (col: SortKey) => void;
+  className?: string;
+}) {
+  const active = sortKey === col;
   return (
-    <div className="flex h-2 w-24 rounded-full overflow-hidden gap-px">
-      {segments.map(seg => (
-        <div
-          key={seg.key}
-          style={{ width: `${seg.pct}%`, backgroundColor: CATEGORY_COLORS[seg.key] }}
-          title={seg.tooltip}
-        />
-      ))}
-    </div>
+    <th
+      className={`pb-2 pr-3 font-medium cursor-pointer select-none whitespace-nowrap hover:text-gray-200 ${className}`}
+      onClick={() => onSort(col)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {active && <span className="text-indigo-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+      </span>
+    </th>
   );
 }
 
@@ -128,11 +104,41 @@ interface Props {
 
 export function RequestTable({ requests, sessions, onRowClick }: Props) {
   const [hideEmpty, setHideEmpty] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const sessionMap = new Map((sessions ?? []).map(s => [s.id, s.name]));
 
-  const visible = hideEmpty
+  function handleSort(col: SortKey) {
+    if (sortKey === col) {
+      if (sortDir === 'asc') setSortDir('desc');
+      else { setSortKey(null); setSortDir('asc'); }
+    } else {
+      setSortKey(col);
+      setSortDir('asc');
+    }
+  }
+
+  const filtered = hideEmpty
     ? requests.filter(r => r.tokens_total_input > 0 || r.tokens_total_output > 0)
     : requests;
+
+  const visible = sortKey
+    ? [...filtered].sort((a, b) => {
+        let av: string | number | null | undefined;
+        let bv: string | number | null | undefined;
+        if (sortKey === 'session') {
+          av = a.session_id ? (sessionMap.get(a.session_id) ?? '') : '';
+          bv = b.session_id ? (sessionMap.get(b.session_id) ?? '') : '';
+        } else {
+          av = a[sortKey] as string | number | null;
+          bv = b[sortKey] as string | number | null;
+        }
+        if (av == null) return sortDir === 'asc' ? 1 : -1;
+        if (bv == null) return sortDir === 'asc' ? -1 : 1;
+        if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+        return sortDir === 'asc' ? (av as number) - (bv as number) : (bv as number) - (av as number);
+      })
+    : filtered;
 
   if (requests.length === 0) {
     return (
@@ -164,16 +170,16 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-gray-400 border-b border-gray-700">
-            <th className="pb-2 pr-4 font-medium">Time</th>
-            <th className="pb-2 pr-4 font-medium">Session</th>
-            <th className="pb-2 pr-4 font-medium">Provider</th>
-            <th className="pb-2 pr-4 font-medium">Agent</th>
-            <th className="pb-2 pr-4 font-medium">Model</th>
-            <th className="pb-2 pr-4 font-medium">Context composition</th>
-            <th className="pb-2 pr-4 font-medium text-right">Tokens (in)</th>
-            <th className="pb-2 pr-4 font-medium text-right">Tokens (out)</th>
-            <th className="pb-2 pr-4 font-medium text-right">Duration</th>
-            <th className="pb-2 font-medium text-right">Status</th>
+            <SortHeader label="Time" col="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Tokens (in)" col="tokens_total_input" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+            <SortHeader label="Tokens (out)" col="tokens_total_output" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+            <th className="pb-2 pr-3 font-medium whitespace-nowrap" style={{ minWidth: 256 }}>Context</th>
+            <SortHeader label="Duration" col="duration_ms" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+            <SortHeader label="Status" col="status_code" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+            <SortHeader label="Session" col="session" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Provider" col="provider" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Agent" col="agent" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Model" col="model" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
           </tr>
         </thead>
         <tbody>
@@ -183,10 +189,25 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
               onClick={() => onRowClick(req.id)}
               className="border-b border-gray-800 hover:bg-gray-800 cursor-pointer transition-colors"
             >
-              <td className="py-2 pr-4 text-gray-400 font-mono text-xs">
+              <td className="py-2 pr-3 text-gray-400 font-mono text-xs whitespace-nowrap">
                 {formatTime(req.timestamp)}
               </td>
-              <td className="py-2 pr-4">
+              <td className="py-2 pr-3 text-right text-gray-300">
+                {req.tokens_total_input > 0 ? req.tokens_total_input.toLocaleString() : '—'}
+              </td>
+              <td className="py-2 pr-3 text-right text-gray-300">
+                {req.tokens_total_output > 0 ? req.tokens_total_output.toLocaleString() : '—'}
+              </td>
+              <td className="py-2 pr-3">
+                <ContextBar data={req} />
+              </td>
+              <td className="py-2 pr-3 text-right text-gray-400 whitespace-nowrap">
+                {formatDuration(req.duration_ms)}
+              </td>
+              <td className="py-2 pr-3 text-right">
+                {statusBadge(req.status_code)}
+              </td>
+              <td className="py-2 pr-3">
                 {req.session_id && sessionMap.has(req.session_id) ? (
                   <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900 text-indigo-300 truncate max-w-[100px] inline-block" title={sessionMap.get(req.session_id)}>
                     {sessionMap.get(req.session_id)}
@@ -195,7 +216,7 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
                   <span className="text-gray-600 text-xs">n/a</span>
                 )}
               </td>
-              <td className="py-2 pr-4">
+              <td className="py-2 pr-3">
                 <span
                   className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                     PROVIDER_COLORS[req.provider] ?? PROVIDER_COLORS.unknown
@@ -204,7 +225,7 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
                   {req.provider}
                 </span>
               </td>
-              <td className="py-2 pr-4">
+              <td className="py-2 pr-3">
                 <span
                   className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                     AGENT_COLORS[req.agent ?? 'unknown'] ?? AGENT_COLORS.unknown
@@ -213,23 +234,8 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
                   {req.agent}
                 </span>
               </td>
-              <td className="py-2 pr-4 text-gray-300 truncate max-w-[140px]">
+              <td className="py-2 text-gray-300 truncate max-w-[120px]">
                 {req.model ?? '—'}
-              </td>
-              <td className="py-2 pr-4">
-                <ContextBar req={req} />
-              </td>
-              <td className="py-2 pr-4 text-right text-gray-300">
-                {req.tokens_total_input > 0 ? req.tokens_total_input.toLocaleString() : '—'}
-              </td>
-              <td className="py-2 pr-4 text-right text-gray-300">
-                {req.tokens_total_output > 0 ? req.tokens_total_output.toLocaleString() : '—'}
-              </td>
-              <td className="py-2 pr-4 text-right text-gray-400">
-                {formatDuration(req.duration_ms)}
-              </td>
-              <td className="py-2 text-right">
-                {statusBadge(req.status_code)}
               </td>
             </tr>
           ))}

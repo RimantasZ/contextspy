@@ -107,6 +107,14 @@ export interface SessionSummaryEntry {
   request_count: number
   tokens_in: number
   tokens_out: number
+  tokens_system_prompt: number
+  tokens_tool_definitions: number
+  tokens_tool_results: number
+  tokens_file_contents: number
+  tokens_conversation_history: number
+  tokens_current_user_message: number
+  tokens_assistant_prefill: number
+  tokens_uncategorized: number
 }
 
 export interface ToolStat {
