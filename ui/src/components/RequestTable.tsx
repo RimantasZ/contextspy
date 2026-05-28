@@ -28,6 +28,71 @@ const AGENT_COLORS: Record<string, string> = {
   unknown: 'bg-gray-700 text-gray-400',
 };
 
+const CATEGORY_COLORS: Record<string, string> = {
+  system_prompt: '#6366f1',
+  tool_definitions: '#8b5cf6',
+  tool_results: '#a78bfa',
+  file_contents: '#22c55e',
+  conversation_history: '#3b82f6',
+  current_user_message: '#06b6d4',
+  assistant_prefill: '#f59e0b',
+  uncategorized: '#6b7280',
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  system_prompt: 'System Prompt',
+  tool_definitions: 'Tool Definitions',
+  tool_results: 'Tool Results',
+  file_contents: 'File Contents',
+  conversation_history: 'Conversation History',
+  current_user_message: 'User Message',
+  assistant_prefill: 'Assistant Prefill',
+  uncategorized: 'Uncategorized',
+};
+
+const CATEGORY_ORDER = [
+  'system_prompt', 'tool_definitions', 'tool_results', 'file_contents',
+  'conversation_history', 'current_user_message', 'assistant_prefill', 'uncategorized',
+];
+
+function ContextBar({ req }: { req: Request }) {
+  const values: Record<string, number> = {
+    system_prompt: req.tokens_system_prompt,
+    tool_definitions: req.tokens_tool_definitions,
+    tool_results: req.tokens_tool_results,
+    file_contents: req.tokens_file_contents,
+    conversation_history: req.tokens_conversation_history,
+    current_user_message: req.tokens_current_user_message,
+    assistant_prefill: req.tokens_assistant_prefill,
+    uncategorized: req.tokens_uncategorized,
+  };
+  const total = Object.values(values).reduce((a, b) => a + b, 0);
+
+  if (total === 0) {
+    return <div className="h-2 w-24 rounded-full bg-gray-800" />;
+  }
+
+  const segments = CATEGORY_ORDER
+    .filter(cat => values[cat] > 0)
+    .map(cat => ({
+      key: cat,
+      pct: (values[cat] / total) * 100,
+      tooltip: `${CATEGORY_LABELS[cat]}: ${values[cat].toLocaleString()} (${((values[cat] / total) * 100).toFixed(1)}%)`,
+    }));
+
+  return (
+    <div className="flex h-2 w-24 rounded-full overflow-hidden gap-px">
+      {segments.map(seg => (
+        <div
+          key={seg.key}
+          style={{ width: `${seg.pct}%`, backgroundColor: CATEGORY_COLORS[seg.key] }}
+          title={seg.tooltip}
+        />
+      ))}
+    </div>
+  );
+}
+
 function statusBadge(code: number | null) {
   if (code === null) return null;
   let cls = 'bg-gray-700 text-gray-400';
@@ -104,6 +169,7 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
             <th className="pb-2 pr-4 font-medium">Provider</th>
             <th className="pb-2 pr-4 font-medium">Agent</th>
             <th className="pb-2 pr-4 font-medium">Model</th>
+            <th className="pb-2 pr-4 font-medium">Context composition</th>
             <th className="pb-2 pr-4 font-medium text-right">Tokens (in)</th>
             <th className="pb-2 pr-4 font-medium text-right">Tokens (out)</th>
             <th className="pb-2 pr-4 font-medium text-right">Duration</th>
@@ -149,6 +215,9 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
               </td>
               <td className="py-2 pr-4 text-gray-300 truncate max-w-[140px]">
                 {req.model ?? '—'}
+              </td>
+              <td className="py-2 pr-4">
+                <ContextBar req={req} />
               </td>
               <td className="py-2 pr-4 text-right text-gray-300">
                 {req.tokens_total_input > 0 ? req.tokens_total_input.toLocaleString() : '—'}
