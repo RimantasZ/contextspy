@@ -23,7 +23,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   uncategorized: '#6b7280',
 };
 
-const CATEGORY_LABELS: Record<string, string> = {
+export const CATEGORY_LABELS: Record<string, string> = {
   system_prompt: 'System Prompt',
   tool_definitions: 'Tool Definitions',
   tool_results: 'Tool Results',
@@ -34,7 +34,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   uncategorized: 'Uncategorized',
 };
 
-const CATEGORY_ORDER = [
+export const CATEGORY_ORDER = [
   'system_prompt', 'tool_definitions', 'tool_results', 'file_contents',
   'conversation_history', 'current_user_message', 'assistant_prefill', 'uncategorized',
 ];

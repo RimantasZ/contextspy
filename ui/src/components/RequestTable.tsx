@@ -13,7 +13,7 @@
 // limitations under the License.
 import { useState } from 'react';
 import type { Request, Session } from '../api/client';
-import { ContextBar } from './ContextBar';
+import { ContextBar, CATEGORY_COLORS, CATEGORY_LABELS, CATEGORY_ORDER } from './ContextBar';
 
 const PROVIDER_COLORS: Record<string, string> = {
   openai: 'bg-green-900 text-green-300',
@@ -38,7 +38,15 @@ type SortKey =
   | 'session'
   | 'provider'
   | 'agent'
-  | 'model';
+  | 'model'
+  | 'tokens_system_prompt'
+  | 'tokens_tool_definitions'
+  | 'tokens_tool_results'
+  | 'tokens_file_contents'
+  | 'tokens_conversation_history'
+  | 'tokens_current_user_message'
+  | 'tokens_assistant_prefill'
+  | 'tokens_uncategorized';
 
 function SortHeader({
   label,
@@ -173,7 +181,51 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
             <SortHeader label="Time" col="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortHeader label="Tokens (in)" col="tokens_total_input" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
             <SortHeader label="Tokens (out)" col="tokens_total_output" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-            <th className="pb-2 pr-3 font-medium whitespace-nowrap" style={{ minWidth: 256 }}>Context</th>
+            <th className="pb-2 pr-3 font-medium whitespace-nowrap" style={{ minWidth: 256 }}>
+              <div className="flex items-center gap-2">
+                <span>Context</span>
+                <div className="flex gap-px">
+                  {CATEGORY_ORDER.map(cat => {
+                    const catKey = `tokens_${cat}` as SortKey;
+                    const isActive = sortKey === catKey;
+                    return (
+                      <button
+                        key={cat}
+                        onClick={() => handleSort(catKey)}
+                        title={`Sort by ${CATEGORY_LABELS[cat]}`}
+                        style={{
+                          position: 'relative',
+                          width: 14,
+                          height: 14,
+                          backgroundColor: CATEGORY_COLORS[cat],
+                          cursor: 'pointer',
+                          border: isActive ? '1.5px solid rgba(255,255,255,0.85)' : '1.5px solid transparent',
+                          flexShrink: 0,
+                          padding: 0,
+                        }}
+                      >
+                        {isActive && (
+                          <span style={{
+                            position: 'absolute',
+                            inset: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 9,
+                            color: 'white',
+                            lineHeight: 1,
+                            userSelect: 'none',
+                            fontWeight: 'bold',
+                          }}>
+                            {sortDir === 'asc' ? '↑' : '↓'}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </th>
             <SortHeader label="Duration" col="duration_ms" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
             <SortHeader label="Status" col="status_code" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
             <SortHeader label="Session" col="session" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
