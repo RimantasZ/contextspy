@@ -73,7 +73,7 @@ export function useDeleteSession() {
 
 // ---- Requests -------------------------------------------------------------
 
-export function useRequests(params: { session_id?: string; provider?: string; agent?: string; model?: string; q?: string; status_category?: string; limit?: number; offset?: number }) {
+export function useRequests(params: { session_id?: string; provider?: string; agent?: string; model?: string; q?: string; status_category?: string; sort_by?: string; sort_dir?: string; limit?: number; offset?: number }) {
   return useQuery({
     queryKey: ['requests', params],
     queryFn: () => requestsApi.list(params),

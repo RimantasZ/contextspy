@@ -29,6 +29,8 @@ def list_requests(
     model: str | None = Query(default=None),
     q: str | None = Query(default=None, max_length=200),
     status_category: str | None = Query(default=None, pattern="^(success|error)$"),
+    sort_by: str = Query(default='timestamp', pattern="^(timestamp|tokens_total_input|tokens_total_output|duration_ms|status_code|session|provider|agent|model)$"),
+    sort_dir: str = Query(default='desc', pattern="^(asc|desc)$"),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
@@ -41,6 +43,8 @@ def list_requests(
             model=model,
             q=q,
             status_category=status_category,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
             limit=limit,
             offset=offset,
         )

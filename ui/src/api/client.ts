@@ -153,7 +153,7 @@ export const sessionsApi = {
 // ---- Requests API ---------------------------------------------------------
 
 export const requestsApi = {
-  list: (params: { session_id?: string; provider?: string; agent?: string; model?: string; q?: string; status_category?: string; limit?: number; offset?: number }) => {
+  list: (params: { session_id?: string; provider?: string; agent?: string; model?: string; q?: string; status_category?: string; sort_by?: string; sort_dir?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams()
     if (params.session_id) qs.set('session_id', params.session_id)
     if (params.provider) qs.set('provider', params.provider)
@@ -163,6 +163,8 @@ export const requestsApi = {
     if (params.status_category) qs.set('status_category', params.status_category)
     if (params.limit != null) qs.set('limit', String(params.limit))
     if (params.offset != null) qs.set('offset', String(params.offset))
+    if (params.sort_by != null) qs.set('sort_by', params.sort_by)
+    if (params.sort_dir != null) qs.set('sort_dir', params.sort_dir)
     return apiFetch<{ requests: Request[] }>(`/requests?${qs}`)
   },
   get: (id: string) => apiFetch<{ request: Request }>(`/requests/${id}`),

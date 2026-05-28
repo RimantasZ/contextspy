@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRequests, useStatsOverview } from '../api/hooks';
 import { RequestTable } from '../components/RequestTable';
+import type { SortKey } from '../components/RequestTable';
 
 const PAGE_SIZE = 50;
 
@@ -25,6 +26,14 @@ export default function Requests() {
   const [q, setQ] = useState('');
   const [statusCategory, setStatusCategory] = useState('');
   const [page, setPage] = useState(0);
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  function handleSortChange(key: SortKey | null, dir: 'asc' | 'desc') {
+    setSortKey(key);
+    setSortDir(dir);
+    setPage(0);
+  }
 
   const stats = useStatsOverview();
   const modelOptions = Object.keys(stats.data?.by_model ?? {}).sort();
@@ -34,6 +43,8 @@ export default function Requests() {
     agent: agent || undefined,
     q: q || undefined,
     status_category: statusCategory || undefined,
+    sort_by: sortKey ?? undefined,
+    sort_dir: sortKey ? sortDir : undefined,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
   });
@@ -105,7 +116,13 @@ export default function Requests() {
         {isLoading ? (
           <div className="text-center py-12 text-gray-500 text-sm">Loading…</div>
         ) : (
-          <RequestTable requests={reqs} onRowClick={(id) => navigate(`/requests/${id}`)} />
+          <RequestTable
+            requests={reqs}
+            onRowClick={(id) => navigate(`/requests/${id}`)}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSortChange={handleSortChange}
+          />
         )}
       </div>
 

@@ -17,6 +17,7 @@ import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, u
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
+import type { SortKey } from '../components/RequestTable';
 import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import jsPDF from 'jspdf';
@@ -32,10 +33,18 @@ export default function SessionDetail() {
   const [renameValue, setRenameValue] = useState('');
   const renameTitleRef = useRef<HTMLInputElement>(null);
 
+  const [reqSortKey, setReqSortKey] = useState<SortKey | null>(null);
+  const [reqSortDir, setReqSortDir] = useState<'asc' | 'desc'>('asc');
+
+  function handleReqSortChange(key: SortKey | null, dir: 'asc' | 'desc') {
+    setReqSortKey(key);
+    setReqSortDir(dir);
+  }
+
   const session = useSession(id ?? '');
   const stats = useStatsSession(id ?? '');
   const timeline = useTimeline(id, bucket);
-  const requests = useRequests({ session_id: id, limit: 200 });
+  const requests = useRequests({ session_id: id, sort_by: reqSortKey ?? undefined, sort_dir: reqSortKey ? reqSortDir : undefined, limit: 500 });
   const toolStats = useToolStats(id);
   const endSession = useEndSession();
   const renameSession = useRenameSession();
@@ -303,6 +312,9 @@ export default function SessionDetail() {
         <RequestTable
           requests={requests.data?.requests ?? []}
           onRowClick={(reqId) => navigate(`/requests/${reqId}`)}
+          sortKey={reqSortKey}
+          sortDir={reqSortDir}
+          onSortChange={handleReqSortChange}
         />
       </div>
 

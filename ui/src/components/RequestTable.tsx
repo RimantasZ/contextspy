@@ -29,7 +29,7 @@ const AGENT_COLORS: Record<string, string> = {
   unknown: 'bg-gray-700 text-gray-400',
 };
 
-type SortKey =
+export type SortKey =
   | 'timestamp'
   | 'tokens_total_input'
   | 'tokens_total_output'
@@ -100,21 +100,36 @@ interface Props {
   requests: Request[];
   sessions?: Session[];
   onRowClick: (id: string) => void;
+  /** Controlled sort — when provided the parent owns sort state */
+  sortKey?: SortKey | null;
+  sortDir?: 'asc' | 'desc';
+  onSortChange?: (key: SortKey | null, dir: 'asc' | 'desc') => void;
 }
 
-export function RequestTable({ requests, sessions, onRowClick }: Props) {
+export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortKey, sortDir: extSortDir, onSortChange }: Props) {
   const [hideEmpty, setHideEmpty] = useState(true);
-  const [sortKey, setSortKey] = useState<SortKey | null>(null);
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [internalSortKey, setInternalSortKey] = useState<SortKey | null>(null);
+  const [internalSortDir, setInternalSortDir] = useState<'asc' | 'desc'>('asc');
   const sessionMap = new Map((sessions ?? []).map(s => [s.id, s.name]));
 
+  const controlled = onSortChange !== undefined;
+  const sortKey  = controlled ? (extSortKey  ?? null)  : internalSortKey;
+  const sortDir  = controlled ? (extSortDir  ?? 'asc') : internalSortDir;
+
   function handleSort(col: SortKey) {
+    let newKey: SortKey | null;
+    let newDir: 'asc' | 'desc';
     if (sortKey === col) {
-      if (sortDir === 'asc') setSortDir('desc');
-      else { setSortKey(null); setSortDir('asc'); }
+      if (sortDir === 'asc') { newKey = col;  newDir = 'desc'; }
+      else                   { newKey = null; newDir = 'asc';  }
     } else {
-      setSortKey(col);
-      setSortDir('asc');
+      newKey = col; newDir = 'asc';
+    }
+    if (controlled) {
+      onSortChange(newKey, newDir);
+    } else {
+      setInternalSortKey(newKey);
+      setInternalSortDir(newDir);
     }
   }
 
@@ -122,7 +137,7 @@ export function RequestTable({ requests, sessions, onRowClick }: Props) {
     ? requests.filter(r => r.tokens_total_input > 0 || r.tokens_total_output > 0)
     : requests;
 
-  const visible = sortKey
+  const visible = (!controlled && sortKey)
     ? [...filtered].sort((a, b) => {
         let av: string | number | null | undefined;
         let bv: string | number | null | undefined;

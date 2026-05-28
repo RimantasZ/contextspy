@@ -129,6 +129,18 @@ def get_request(db: OrmSession, request_id: str) -> Request | None:
     return db.get(Request, request_id)
 
 
+_SORT_COLUMNS = {
+    'timestamp': Request.timestamp,
+    'tokens_total_input': Request.tokens_total_input,
+    'tokens_total_output': Request.tokens_total_output,
+    'duration_ms': Request.duration_ms,
+    'status_code': Request.status_code,
+    'provider': Request.provider,
+    'agent': Request.agent,
+    'model': Request.model,
+}
+
+
 def list_requests(
     db: OrmSession,
     session_id: str | None = None,
@@ -137,10 +149,14 @@ def list_requests(
     model: str | None = None,
     q: str | None = None,
     status_category: str | None = None,
+    sort_by: str = 'timestamp',
+    sort_dir: str = 'desc',
     limit: int = 50,
     offset: int = 0,
 ) -> list[Request]:
-    stmt = select(Request).order_by(Request.timestamp.desc())
+    stmt = select(Request)
+    if sort_by == 'session':
+        stmt = stmt.outerjoin(Session, Request.session_id == Session.id)
     if session_id is not None:
         stmt = stmt.where(Request.session_id == session_id)
     if provider:
@@ -165,6 +181,8 @@ def list_requests(
         stmt = stmt.where(
             or_(Request.status_code == None, Request.status_code >= 400)  # noqa: E711
         )
+    col = Session.name if sort_by == 'session' else _SORT_COLUMNS.get(sort_by, Request.timestamp)
+    stmt = stmt.order_by(col.asc() if sort_dir == 'asc' else col.desc())
     stmt = stmt.limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
 
