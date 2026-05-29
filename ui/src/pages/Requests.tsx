@@ -55,7 +55,7 @@ export default function Requests() {
 
   return (
     <div className="p-6 space-y-4">
-      <h1 className="text-2xl font-bold text-white">Requests</h1>
+      <h1 className="text-2xl font-bold text-white">All Requests</h1>
 
       {/* Filter bar */}
       <div className="flex gap-3 flex-wrap items-center">

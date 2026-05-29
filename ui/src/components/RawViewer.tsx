@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { ParsedViewer } from './ParsedViewer';
 import { tokenizeApi } from '../api/client';
 
@@ -226,9 +226,10 @@ interface Props {
 }
 
 export function RawViewer({ title, content, parsedBody, responseMode, totalInputTokens }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'parsed' | 'raw'>('parsed');
-  const [respTab, setRespTab] = useState<'json' | 'raw' | 'text'>('json');
+  const [respTab, setRespTab] = useState<'json' | 'raw' | 'text'>('text');
   const [search, setSearch] = useState('');
   const searchLower = search.toLowerCase();
 
@@ -271,20 +272,28 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
 
   const purged = content === null || content === undefined;
 
+  function handleToggle() {
+    const opening = !open;
+    setOpen(opening);
+    if (opening) {
+      setTimeout(() => {
+        containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 50);
+    }
+  }
+
   return (
-    <div className="border border-gray-700 rounded-lg overflow-hidden">
+    <div ref={containerRef} className="border border-gray-700 rounded-lg overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-gray-800">
         <button
-          onClick={() => setOpen(o => !o)}
+          onClick={handleToggle}
           className="flex items-center gap-2 text-sm text-gray-300 font-medium hover:text-white"
         >
           <span className="text-gray-500 text-xs">{open ? '▼' : '▶'}</span>
           {title}
-          {!purged && (
-            <span className="ml-2 text-xs text-gray-500">
-              {isSse ? 'SSE stream' : isJson ? 'JSON' : 'text'}
-            </span>
+          {!purged && totalInputTokens != null && (
+            <span className="ml-2 text-xs text-gray-500 font-mono">{totalInputTokens.toLocaleString()} tokens</span>
           )}
         </button>
         {open && !purged && (
@@ -310,9 +319,9 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
             <>
               <div className="flex border-b border-gray-800">
                 {([
+                  ['text', 'Text'],
                   ['json', 'JSON'],
                   ['raw',  'Raw'],
-                  ['text', 'Text'],
                 ] as const).map(([key, label]) => (
                   <button
                     key={key}
@@ -371,13 +380,7 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
                 }
                 return (
                   <>
-                    <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-800">
-                      {loadingText
-                        ? <span className="text-xs text-gray-500 italic">Tokenizing…</span>
-                        : respTokens !== null
-                          ? <span className="text-xs text-gray-500">{respTokens.length.toLocaleString()} tokens</span>
-                          : <span className="text-xs text-gray-500" />
-                      }
+                    <div className="flex items-center justify-end px-3 py-1.5 border-b border-gray-800">
                       <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
                         <input
                           type="checkbox"

@@ -13,7 +13,7 @@
 // limitations under the License.
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
-import Dashboard from './pages/Dashboard'
+import Overview from './pages/Dashboard'
 import Requests from './pages/Requests'
 import RequestDetail from './pages/RequestDetail'
 import Sessions from './pages/Sessions'
@@ -24,7 +24,7 @@ export default function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<Overview />} />
         <Route path="/requests" element={<Requests />} />
         <Route path="/requests/:id" element={<RequestDetail />} />
         <Route path="/sessions" element={<Sessions />} />

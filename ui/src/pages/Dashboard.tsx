@@ -236,7 +236,7 @@ function LatencyPanel({ latency, byStatus }: { latency: LatencyStats | undefined
   );
 }
 
-export default function Dashboard() {
+export default function Overview() {
   const navigate = useNavigate();
 
   const stats = useStatsOverview();
@@ -250,7 +250,7 @@ export default function Dashboard() {
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-white">Overview</h1>
         <SessionControls />
       </div>
 
