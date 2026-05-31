@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useRequest, useRequestToolStats } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
@@ -67,6 +68,69 @@ export default function RequestDetail() {
   const catData = categoryDataFromRequest(req);
   const total = req.tokens_total_input;
 
+  function pctDiff(reported: number, estimated: number): string {
+    if (estimated === 0) return '';
+    const diff = ((reported - estimated) / estimated) * 100;
+    const sign = diff >= 0 ? '+' : '';
+    return ` (${sign}${diff.toFixed(1)}%)`;
+  }
+
+  const cacheHasData = req.cache_read_tokens != null || req.cache_creation_tokens != null;
+  const cacheReadVal = req.cache_read_tokens ?? 0;
+  const cacheWriteVal = req.cache_creation_tokens ?? 0;
+
+  const metaFields: Array<{ label: string; value: React.ReactNode }> = [
+    { label: 'Provider', value: req.provider },
+    { label: 'Agent', value: req.agent ?? '—' },
+    { label: 'Model', value: req.model ?? '—' },
+    { label: 'Status', value: req.status_code ?? '—' },
+    { label: 'Time', value: new Date(req.timestamp).toLocaleString() },
+    { label: 'Duration', value: req.duration_ms != null ? `${req.duration_ms}ms` : '—' },
+    {
+      label: 'Cache',
+      value: !cacheHasData ? (
+        <span className="text-gray-500">N/A</span>
+      ) : cacheReadVal === 0 && cacheWriteVal === 0 ? (
+        <span className="text-gray-500">none</span>
+      ) : (
+        <span className="space-x-2">
+          {cacheReadVal > 0 && (
+            <span className="text-teal-400">↓ {cacheReadVal.toLocaleString()} read</span>
+          )}
+          {cacheWriteVal > 0 && (
+            <span className="text-amber-400">↑ {cacheWriteVal.toLocaleString()} write</span>
+          )}
+        </span>
+      ),
+    },
+    {
+      label: 'API input tokens',
+      value: req.provider_input_tokens != null ? (
+        <span>
+          {req.provider_input_tokens.toLocaleString()}
+          <span className="text-gray-400 text-xs ml-1">
+            {pctDiff(req.provider_input_tokens, req.tokens_total_input)}
+          </span>
+        </span>
+      ) : (
+        <span className="text-gray-500">N/A</span>
+      ),
+    },
+    {
+      label: 'API output tokens',
+      value: req.provider_output_tokens != null ? (
+        <span>
+          {req.provider_output_tokens.toLocaleString()}
+          <span className="text-gray-400 text-xs ml-1">
+            {pctDiff(req.provider_output_tokens, req.tokens_total_output)}
+          </span>
+        </span>
+      ) : (
+        <span className="text-gray-500">N/A</span>
+      ),
+    },
+  ];
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -79,23 +143,28 @@ export default function RequestDetail() {
         <h1 className="text-xl font-bold text-white">Request detail</h1>
       </div>
 
-      {/* Metadata */}
-      <div className="bg-gray-800 rounded-lg p-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-        {[
-          ['Provider', req.provider],
-          ['Agent', req.agent ?? '—'],
-          ['Model', req.model ?? '—'],
-          ['Status', req.status_code ?? '—'],
-          ['Time', new Date(req.timestamp).toLocaleString()],
-          ['Duration', req.duration_ms != null ? `${req.duration_ms}ms` : '—'],
-          ['Context tokens', req.tokens_total_input.toLocaleString()],
-          ['Generated tokens', req.tokens_total_output.toLocaleString()],
-        ].map(([k, v]) => (
-          <div key={String(k)}>
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">{k}</p>
-            <p className="text-white font-medium">{v}</p>
+      {/* Metadata: token stat panels left | fields right */}
+      <div className="flex gap-4">
+        {/* Left: stacked stat panels (~25%) */}
+        <div className="flex flex-col gap-4 w-1/4 shrink-0">
+          <div className="bg-gray-800 rounded-lg p-4">
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Context tokens</p>
+            <p className="text-2xl font-semibold text-white">{req.tokens_total_input.toLocaleString()}</p>
           </div>
-        ))}
+          <div className="bg-gray-800 rounded-lg p-4">
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Generated tokens</p>
+            <p className="text-2xl font-semibold text-white">{req.tokens_total_output.toLocaleString()}</p>
+          </div>
+        </div>
+        {/* Right: metadata grid (~75%) */}
+        <div className="flex-1 bg-gray-800 rounded-lg p-4 grid grid-cols-3 gap-x-6 gap-y-4 text-sm">
+          {metaFields.map(({ label, value }) => (
+            <div key={label}>
+              <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">{label}</p>
+              <p className="text-white font-medium">{value}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Charts + breakdown */}
@@ -130,37 +199,7 @@ export default function RequestDetail() {
             </tbody>
           </table>
 
-          {(req.provider_input_tokens != null || req.provider_output_tokens != null) && (
-            <div className="mt-4 pt-4 border-t border-gray-700 text-xs text-gray-400">
-              <p className="font-medium text-gray-300 mb-1">Provider-reported vs estimated</p>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span>Input: </span>
-                  <span className="text-white">{req.provider_input_tokens?.toLocaleString() ?? '—'}</span>
-                  <span className="ml-1">(est. {req.tokens_total_input.toLocaleString()})</span>
-                  {(req.cache_read_tokens != null || req.cache_creation_tokens != null) && (
-                    <div className="mt-0.5 pl-0 space-y-0.5">
-                      {(req.cache_read_tokens ?? 0) > 0 && (
-                        <div className="text-teal-400">
-                          ↳ {req.cache_read_tokens!.toLocaleString()} read from cache
-                        </div>
-                      )}
-                      {(req.cache_creation_tokens ?? 0) > 0 && (
-                        <div className="text-amber-400">
-                          ↳ {req.cache_creation_tokens!.toLocaleString()} written to cache
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <span>Output: </span>
-                  <span className="text-white">{req.provider_output_tokens?.toLocaleString() ?? '—'}</span>
-                  <span className="ml-1">(est. {req.tokens_total_output.toLocaleString()})</span>
-                </div>
-              </div>
-            </div>
-          )}
+
         </div>
       </div>
 
