@@ -18,8 +18,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from contextspy.api.websocket import ConnectionManager
@@ -89,12 +88,6 @@ def create_app(settings=None) -> FastAPI:
     if ui_dist.exists():
         app.mount("/", StaticFiles(directory=str(ui_dist), html=True), name="ui")
 
-        @app.exception_handler(404)
-        async def spa_fallback(request: Request, exc: Exception) -> FileResponse | JSONResponse:
-            if not request.url.path.startswith("/api"):
-                return FileResponse(str(ui_dist / "index.html"))
-            return JSONResponse({"detail": "Not found"}, status_code=404)
-
     return app
 
 
@@ -151,11 +144,5 @@ def create_app_local(settings=None) -> FastAPI:
     ui_dist = Path(__file__).parent.parent.parent / "_web"
     if ui_dist.exists():
         app.mount("/", StaticFiles(directory=str(ui_dist), html=True), name="ui")
-
-        @app.exception_handler(404)
-        async def spa_fallback(request: Request, exc: Exception) -> FileResponse | JSONResponse:
-            if not request.url.path.startswith("/api"):
-                return FileResponse(str(ui_dist / "index.html"))
-            return JSONResponse({"detail": "Not found"}, status_code=404)
 
     return app

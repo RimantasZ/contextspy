@@ -223,9 +223,11 @@ interface Props {
   /** When true shows 3-tab output view: JSON tree / Raw text / Response text */
   responseMode?: boolean;
   totalInputTokens?: number | null;
+  /** When flipped to true, programmatically opens the panel and scrolls to it */
+  forceOpen?: boolean;
 }
 
-export function RawViewer({ title, content, parsedBody, responseMode, totalInputTokens }: Props) {
+export function RawViewer({ title, content, parsedBody, responseMode, totalInputTokens, forceOpen }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'parsed' | 'raw'>('parsed');
@@ -257,6 +259,17 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
 
   // Reset tokens when content changes
   useEffect(() => { setRespTokens(null); }, [content]);
+
+  // Respond to external open requests (forceOpen prop)
+  useEffect(() => {
+    if (forceOpen && !open) {
+      setOpen(true);
+      setTimeout(() => {
+        containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 50);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forceOpen]);
 
   // Fetch tokens for response "Text" tab
   useEffect(() => {
