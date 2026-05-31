@@ -47,7 +47,7 @@ def start(
     """Start the proxy and web server in cloud/forward mode (Ctrl+C to stop)."""
     import uvicorn
     from contextspy.config import Settings
-    from contextspy.proxy.cert import cert_exists, install_cert
+    from contextspy.proxy.cert import cert_exists, generate_cert, install_cert
 
     settings = Settings.load()
     settings.proxy.port = proxy_port
@@ -55,14 +55,20 @@ def start(
     settings.ensure_dirs()
     settings.write_defaults()
 
-    # Cert check
+    # Cert check: generate if missing, then install
     if not cert_exists():
-        console.print("[yellow]mitmproxy CA certificate not found. Generating and installing...[/yellow]")
-        console.print("[dim]You may need to run the proxy once first for mitmproxy to generate the cert.[/dim]")
+        console.print("[yellow]mitmproxy CA certificate not found. Generating...[/yellow]")
+        ok, msg = generate_cert()
+        if ok:
+            console.print(f"[green]{msg}[/green]")
+        else:
+            console.print(f"[red]Could not generate CA certificate: {msg}[/red]")
+
+    ok, msg = install_cert()
+    if ok:
+        console.print(f"[green]CA cert installed.[/green]")
     else:
-        ok, msg = install_cert()
-        if not ok:
-            console.print(f"[yellow]CA cert install warning:[/yellow] {msg}")
+        console.print(f"[yellow]CA cert not installed:[/yellow] {msg}")
 
     url = f"http://{settings.web.bind_addr}:{settings.web.port}"
     console.print(f"[bold green]ContextSpy[/bold green] starting at {url}")
@@ -212,8 +218,18 @@ def status() -> None:
 
 @app.command("install-cert")
 def install_cert_cmd() -> None:
-    """Install the mitmproxy CA certificate into the system trust store."""
-    from contextspy.proxy.cert import install_cert
+    """Generate (if needed) and install the mitmproxy CA certificate into the system trust store."""
+    from contextspy.proxy.cert import cert_exists, generate_cert, install_cert
+
+    if not cert_exists():
+        console.print("[yellow]CA certificate not found. Generating...[/yellow]")
+        ok, msg = generate_cert()
+        if ok:
+            console.print(f"[green]{msg}[/green]")
+        else:
+            console.print(f"[red]{msg}[/red]")
+            raise typer.Exit(1)
+
     ok, msg = install_cert()
     if ok:
         console.print(f"[green]{msg}[/green]")

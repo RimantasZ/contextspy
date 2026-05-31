@@ -18,22 +18,76 @@ import subprocess
 import sys
 from pathlib import Path
 
-_MITMPROXY_CA = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+_MITMPROXY_DIR = Path.home() / ".mitmproxy"
+_MITMPROXY_CA = _MITMPROXY_DIR / "mitmproxy-ca-cert.pem"
 
 
 def cert_exists() -> bool:
     return _MITMPROXY_CA.exists()
 
 
+def generate_cert() -> tuple[bool, str]:
+    """Generate the mitmproxy CA certificate without starting the proxy.
+
+    Returns (success, message).  If the cert already exists this is a no-op.
+    """
+    if cert_exists():
+        return True, "CA certificate already exists."
+    try:
+        from mitmproxy.certs import CertStore
+        CertStore.create_store(_MITMPROXY_DIR, "mitmproxy", key_size=2048)
+        return True, f"CA certificate generated at {_MITMPROXY_CA}"
+    except Exception as exc:
+        return False, f"Failed to generate CA certificate: {exc}"
+
+
+def _has_privileges(system: str) -> bool:
+    """Return True if the current process has the privileges needed to install a system cert."""
+    if system == "Windows":
+        try:
+            import ctypes
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+    else:
+        import os
+        return os.geteuid() == 0
+
+
+def _insufficient_privileges_message(system: str) -> str:
+    if system == "Windows":
+        rerun_hint = (
+            "To install automatically, re-run from an elevated Command Prompt:\n"
+            "  contextspy install-cert"
+        )
+    else:
+        rerun_hint = (
+            "To install automatically, re-run as:\n"
+            "  sudo contextspy install-cert"
+        )
+    return (
+        "Insufficient privileges to install the CA certificate.\n"
+        + rerun_hint
+        + "\n\n"
+        + _manual_instructions(system)
+    )
+
+
 def install_cert() -> tuple[bool, str]:
-    """Attempt OS-specific system trust-store installation.
+    """Generate (if needed) and install the mitmproxy CA into the system trust store.
 
     Returns (success, message).
     """
     if not cert_exists():
-        return False, "CA certificate not found at ~/.mitmproxy/mitmproxy-ca-cert.pem. Run the proxy once to generate it."
+        ok, msg = generate_cert()
+        if not ok:
+            return False, msg
 
     system = platform.system()
+
+    if not _has_privileges(system):
+        return False, _insufficient_privileges_message(system)
+
     try:
         if system == "Windows":
             result = subprocess.run(
@@ -84,7 +138,9 @@ def install_cert() -> tuple[bool, str]:
         else:
             return False, _manual_instructions(system)
 
-    except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as exc:
+    except PermissionError:
+        return False, _insufficient_privileges_message(system)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
         return False, _manual_instructions(system) + f"\n\nException: {exc}"
 
 
