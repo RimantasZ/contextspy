@@ -107,7 +107,7 @@ export default function RequestDetail() {
       ),
     },
     {
-      label: 'API input tokens',
+      label: 'API reported context tokens',
       value: req.provider_input_tokens != null ? (
         <span>
           {req.provider_input_tokens.toLocaleString()}
@@ -120,7 +120,7 @@ export default function RequestDetail() {
       ),
     },
     {
-      label: 'API output tokens',
+      label: 'API reported output tokens',
       value: req.provider_output_tokens != null ? (
         <span>
           {req.provider_output_tokens.toLocaleString()}
