@@ -148,7 +148,7 @@ def create_app_local(settings=None) -> FastAPI:
         except WebSocketDisconnect:
             _ws_manager.disconnect(websocket)
 
-    ui_dist = Path(__file__).parent.parent.parent / "_web"
+    ui_dist = Path(__file__).parent.parent / "_web"
     if ui_dist.exists():
         app.mount("/", StaticFiles(directory=str(ui_dist), html=True), name="ui")
 
