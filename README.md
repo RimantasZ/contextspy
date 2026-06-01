@@ -1,3 +1,7 @@
+<div align="center" id="contextspytop">
+<img src="docs/_static/logo_black_label.png" alt="logo" width="400" margin="10px"></img>
+</div>
+
 # ContextSpy
 
 ContextSpy is a local proxy that sits between your coding agent and the LLM API,
@@ -25,6 +29,8 @@ every token category for every request, across sessions, over time.
 ## Quick start
 
 ```bash
+
+
 # Install
 pip install contextspy
 # or: uv tool install contextspy
