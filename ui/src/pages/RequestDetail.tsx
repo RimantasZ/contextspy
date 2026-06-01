@@ -57,8 +57,8 @@ export default function RequestDetail() {
   const { data, isLoading, error } = useRequest(id ?? '');
   const toolStats = useRequestToolStats(id ?? '');
 
-  const [openRequest, setOpenRequest] = useState(false);
-  const [openResponse, setOpenResponse] = useState(false);
+  const [requestToggle, setRequestToggle] = useState(0);
+  const [responseToggle, setResponseToggle] = useState(0);
 
   if (isLoading) {
     return <div className="p-6 text-gray-400">Loading\u2026</div>;
@@ -151,7 +151,7 @@ export default function RequestDetail() {
         {/* Left: stacked stat panels (~25%) */}
         <div className="flex flex-col gap-4 w-1/4 shrink-0">
           <button
-            onClick={() => setOpenRequest(v => !v)}
+            onClick={() => setRequestToggle(v => v + 1)}
             className="bg-gray-800 rounded-lg p-4 text-left hover:bg-gray-750 hover:ring-1 hover:ring-indigo-500 transition-all cursor-pointer"
           >
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Context tokens</p>
@@ -159,7 +159,7 @@ export default function RequestDetail() {
             <p className="text-xs text-gray-500 mt-1">click to view request ↓</p>
           </button>
           <button
-            onClick={() => setOpenResponse(v => !v)}
+            onClick={() => setResponseToggle(v => v + 1)}
             className="bg-gray-800 rounded-lg p-4 text-left hover:bg-gray-750 hover:ring-1 hover:ring-indigo-500 transition-all cursor-pointer"
           >
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Generated tokens</p>
@@ -224,8 +224,8 @@ export default function RequestDetail() {
 
       {/* Raw bodies */}
       <div className="space-y-3">
-        <RawViewer title="Request" content={req.raw_request_body} parsedBody={req.raw_request_body} totalInputTokens={req.tokens_total_input} forceOpen={openRequest} />
-        <RawViewer title="Response" content={req.raw_response_body} responseMode totalInputTokens={req.tokens_total_output} forceOpen={openResponse} />
+        <RawViewer title="Request" content={req.raw_request_body} parsedBody={req.raw_request_body} totalInputTokens={req.tokens_total_input} expandToggle={requestToggle} />
+        <RawViewer title="Response" content={req.raw_response_body} responseMode totalInputTokens={req.tokens_total_output} expandToggle={responseToggle} />
       </div>
     </div>
   );
