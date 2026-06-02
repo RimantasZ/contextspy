@@ -4,9 +4,6 @@ class Contextspy < Formula
   version "0.1.0"
   license "Apache-2.0"
 
-  # Pre-built binary — no compilation step, no bottles needed.
-  bottle :unneeded
-
   on_macos do
     on_arm do
       url "https://github.com/RimantasZ/contextspy/releases/download/v#{version}/contextspy-macos-arm64.tar.gz"
