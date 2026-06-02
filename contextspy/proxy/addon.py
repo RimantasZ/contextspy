@@ -45,6 +45,10 @@ _HOST_PROVIDER: list[tuple[str, str]] = [
     # (*.githubcopilot.com catches api.githubcopilot.com, telemetry.githubcopilot.com, etc.)
     ("copilot-proxy.githubusercontent.com", "copilot"),
     ("githubcopilot.com", "copilot"),
+    # opencode's "zen" gateway relays to upstream models (e.g. Claude) over the
+    # Anthropic/OpenAI wire format. Dispatch is endpoint-based, so the gateway path
+    # (/zen/v1/messages, /zen/v1/chat/completions) is parsed by the right parser.
+    ("opencode.ai", "opencode_zen"),
 ]
 _OLLAMA_PORTS = {11434}
 
@@ -242,7 +246,7 @@ class ContextSpyAddon:
         # Skip non-LLM endpoints (telemetry, auth, health checks, etc.)
         # Only persist requests that we could actually parse OR that look like
         # known LLM API paths so telemetry traffic is not stored as empty rows.
-        _LLM_PATHS = ("/chat/completions", "/completions", "/messages",
+        _LLM_PATHS = ("/chat/completions", "/completions", "/messages", "/responses",
                       "/api/chat", "/api/generate")
         if parsed is None and not any(p in endpoint for p in _LLM_PATHS):
             logger.debug("Skipping non-LLM endpoint: %s %s", provider, endpoint)

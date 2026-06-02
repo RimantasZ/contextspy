@@ -266,6 +266,97 @@ def parse_ollama(req_body: dict, resp_body: dict) -> ParsedRequest:
 
 
 # ---------------------------------------------------------------------------
+# OpenAI Responses API parser  (/v1/responses)
+# ---------------------------------------------------------------------------
+
+def parse_openai_responses(req_body: dict, resp_body: dict) -> ParsedRequest:
+    """Parse the OpenAI Responses API wire format.
+
+    Key differences from Chat Completions:
+      - input  (not messages), instructions (not system in messages)
+      - function_call / function_call_output items alongside role-based messages
+      - output  (not choices), output_text content parts
+      - usage.input_tokens / output_tokens  (not prompt_tokens / completion_tokens)
+    """
+    model = req_body.get("model")
+    tools = req_body.get("tools") or []
+    tool_defs_text = json.dumps(tools) if tools else ""
+
+    messages: list[ParsedMessage] = []
+    tool_call_map: dict[str, str] = {}
+
+    # Top-level system prompt
+    instructions = req_body.get("instructions", "")
+    if instructions:
+        messages.append(ParsedMessage(role="system", content=instructions))
+
+    for item in req_body.get("input", []):
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type", "")
+        role = item.get("role", "")
+
+        if item_type == "function_call_output":
+            call_id = item.get("call_id")
+            output = _content_to_str(item.get("output", ""))
+            messages.append(ParsedMessage(
+                role="tool",
+                content=output,
+                tool_call_id=call_id,
+                is_tool_result=True,
+            ))
+        elif item_type == "function_call":
+            call_id = item.get("call_id") or item.get("id")
+            name = item.get("name", "")
+            args = item.get("arguments", "")
+            if call_id and name:
+                tool_call_map[call_id] = name
+            content = json.dumps({"name": name, "arguments": args}) if name else args
+            messages.append(ParsedMessage(role="assistant", content=content))
+        elif role in ("user", "assistant", "system"):
+            content_raw = item.get("content", "")
+            messages.append(ParsedMessage(
+                role=role,
+                content=_content_to_str(content_raw),
+            ))
+
+    # Usage
+    usage = resp_body.get("usage", {})
+    provider_input = usage.get("input_tokens")
+    provider_output = usage.get("output_tokens")
+
+    # Response text from output items
+    response_parts: list[str] = []
+    for item in resp_body.get("output", []):
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "message":
+            for part in item.get("content", []):
+                if isinstance(part, dict):
+                    if part.get("type") == "output_text":
+                        response_parts.append(part.get("text", ""))
+                    elif part.get("type") == "refusal":
+                        response_parts.append(part.get("refusal", ""))
+        elif item.get("type") == "function_call":
+            call_id = item.get("call_id") or item.get("id")
+            name = item.get("name", "")
+            args = item.get("arguments", "")
+            if call_id and name:
+                tool_call_map[call_id] = name
+            response_parts.append(json.dumps({"name": name, "arguments": args}))
+
+    return ParsedRequest(
+        model=model,
+        messages=messages,
+        tool_definitions_text=tool_defs_text,
+        provider_input_tokens=provider_input,
+        provider_output_tokens=provider_output,
+        response_text="\n".join(response_parts),
+        tool_call_map=tool_call_map,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -407,6 +498,84 @@ def _sse_to_openai_resp(raw: bytes) -> dict:
     return resp
 
 
+def _sse_to_openai_responses_resp(raw: bytes) -> dict:
+    """Convert OpenAI Responses API SSE stream to a dict for parse_openai_responses.
+
+    Uses named events — type field is in the data payload, not the event: line.
+    Usage comes from the response.completed event.
+    """
+    text = raw.decode("utf-8", errors="replace")
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    model: str | None = None
+    # output_index → accumulated text fragments
+    text_by_index: dict[int, list[str]] = {}
+    # output_index → {name, call_id, args: list[str]}
+    fc_by_index: dict[int, dict] = {}
+
+    for line in text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+        etype = event.get("type", "")
+
+        if etype == "response.output_text.delta":
+            idx = event.get("output_index", 0)
+            text_by_index.setdefault(idx, []).append(event.get("delta", ""))
+
+        elif etype == "response.function_call_arguments.delta":
+            idx = event.get("output_index", 0)
+            fc_by_index.setdefault(idx, {"name": "", "call_id": "", "args": []})
+            fc_by_index[idx]["args"].append(event.get("delta", ""))
+
+        elif etype == "response.output_item.added":
+            item = event.get("item", {})
+            if item.get("type") == "function_call":
+                idx = event.get("output_index", 0)
+                fc_by_index.setdefault(idx, {"name": "", "call_id": "", "args": []})
+                fc_by_index[idx]["name"] = item.get("name", "")
+                fc_by_index[idx]["call_id"] = item.get("call_id") or item.get("id", "")
+
+        elif etype == "response.completed":
+            resp_obj = event.get("response", {})
+            model = model or resp_obj.get("model")
+            usage = resp_obj.get("usage", {})
+            if input_tokens is None:
+                input_tokens = usage.get("input_tokens")
+            if output_tokens is None:
+                output_tokens = usage.get("output_tokens")
+
+    output: list[dict] = []
+    for idx in sorted(text_by_index):
+        output.append({
+            "type": "message",
+            "content": [{"type": "output_text", "text": "".join(text_by_index[idx])}],
+        })
+    for idx in sorted(fc_by_index):
+        fc = fc_by_index[idx]
+        output.append({
+            "type": "function_call",
+            "call_id": fc["call_id"],
+            "name": fc["name"],
+            "arguments": "".join(fc["args"]),
+        })
+
+    resp: dict = {"model": model, "output": output}
+    if input_tokens is not None or output_tokens is not None:
+        resp["usage"] = {
+            "input_tokens": input_tokens or 0,
+            "output_tokens": output_tokens or 0,
+        }
+    return resp
+
+
 def _wire_format(endpoint: str) -> str | None:
     """Detect the API wire format from the request path.
 
@@ -418,6 +587,8 @@ def _wire_format(endpoint: str) -> str | None:
         return "anthropic"
     if "/chat/completions" in endpoint or "/completions" in endpoint:
         return "openai"
+    if "/responses" in endpoint:
+        return "openai_responses"
     if "/api/chat" in endpoint or "/api/generate" in endpoint:
         return "ollama_native"
     return None
@@ -439,6 +610,9 @@ def parse_sse_request(
         elif fmt == "openai":
             resp_body = _sse_to_openai_resp(raw_sse)
             return parse_openai(req_body, resp_body)
+        elif fmt == "openai_responses":
+            resp_body = _sse_to_openai_responses_resp(raw_sse)
+            return parse_openai_responses(req_body, resp_body)
         # ollama_native streams NDJSON (not SSE) — handled by the non-SSE path
         return None
     except Exception:
@@ -459,6 +633,8 @@ def parse_request(
             return parse_anthropic(req_body, resp_body)
         elif fmt == "openai":
             return parse_openai(req_body, resp_body)
+        elif fmt == "openai_responses":
+            return parse_openai_responses(req_body, resp_body)
         elif fmt == "ollama_native":
             return parse_ollama(req_body, resp_body)
         return None
