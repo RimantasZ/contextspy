@@ -1,14 +1,74 @@
 # Installation
 
-## Requirements
+There are several options to install and run ContextSpy profiler:
+- install prebuild buinary 
+- install python package through PyPI
+- build and run from source
 
-- Python 3.11+
-- Administrator / sudo access (for CA certificate installation, cloud mode only)
-- Node.js 18+ and npm — only needed if you want to modify the frontend
+## Installing binary release
 
----
+Easiest and least complicated approach for general use
 
-## From PyPI
+### MacOS - Homebrew
+
+Easiest way to install on Mac is using Homebrew. This supports Apple Silicon only - for older models it's recomended to use PyPI or build from source.
+
+Add contextspy tap and install using:
+
+```bash
+brew tap RimantasZ/contextspy
+brew install contextspy
+contextspy help
+```
+Next steps: install CA certificate, setup coding agent
+
+### Linux (Ubuntu / Debian)
+
+Download `contextspy_VERSION_amd64.deb` from the [latest release](https://github.com/RimantasZ/contextspy/releases/latest), then:
+
+```bash
+sudo dpkg -i contextspy_*_amd64.deb
+contextpy help
+```
+Installs to `/usr/bin/contextspy`. Remove with `apt remove contextspy`.
+
+Next steps: install CA certificate, setup coding agent
+
+### Windows (x86_64)
+
+No scpecific installer. Download a binary release from the section below, unzip executable and run it locally. Add to PATH in enviroment variables manually, if needed.
+
+```powershell
+.\contextspy help
+```
+Next steps: install CA certificate, setup coding agent
+
+### Download binary archive
+
+Pre-built single-file executables are attached to each [GitHub release](https://github.com/RimantasZ/contextspy/releases).
+Download and extract the archive for your platform, then run `./contextspy`.
+
+| Platform | File |
+|----------|------|
+| macOS (Apple Silicon) | `contextspy-macos-arm64.tar.gz` |
+| Linux x86_64 | `contextspy-linux-x86_64.tar.gz` |
+| Windows  | `contextspy-windows-x86_64.zip` |
+
+> **macOS Gatekeeper warning** — binaries downloaded directly from the internet are
+> quarantined by MacOS. Remove the quarantine flag after extracting:
+>
+> ```bash
+> xattr -d com.apple.quarantine ./contextspy
+> ```
+>
+> Or right-click the binary in Finder → **Open** → **Open**. One-time step.
+> To avoid this entirely, install via Homebrew instead.
+
+
+
+## Install from PyPI 
+
+Requires Python 3.11+ and pip
 
 ```bash
 pip install contextspy
@@ -18,54 +78,25 @@ uv tool install contextspy
 
 After install, `contextspy` is available on your `PATH`.
 
----
-
-## Via Homebrew (macOS)
-
-```bash
-brew install rimantas/contextspy/contextspy
+On externally managed python installations (e.g. if python installed throuhg Homebrew on MacOS, or Linux distrubutions), you may get a following error:
 ```
-
-Homebrew removes the macOS quarantine flag automatically — no Gatekeeper warning.
-
----
-
-## Via `.deb` package (Ubuntu / Debian)
-
-Download `contextspy_VERSION_amd64.deb` from the [latest release](https://github.com/RimantasZ/contextspy/releases/latest), then:
-
-```bash
-sudo dpkg -i contextspy_*_amd64.deb
+error: externally-managed-environment
 ```
-
-Installs to `/usr/bin/contextspy`. Remove with `apt remove contextspy`.
-
----
-
-## Binary releases (all platforms)
-
-Pre-built single-file executables are attached to each [GitHub release](https://github.com/RimantasZ/contextspy/releases).
-Download and extract the archive for your platform, then run `./contextspy`.
-
-| Platform | File |
-|----------|------|
-| macOS (Apple Silicon) | `contextspy-macos-arm64.tar.gz` |
-| Linux x86_64 | `contextspy-linux-x86_64.tar.gz` |
-| Windows x86_64 | `contextspy-windows-x86_64.zip` |
-
-> **macOS Gatekeeper warning** — binaries downloaded directly from the internet are
-> quarantined by macOS. Remove the quarantine flag after extracting:
->
-> ```bash
-> xattr -d com.apple.quarantine ./contextspy
-> ```
->
-> Or right-click the binary in Finder → **Open** → **Open**. One-time step.
-> To avoid this entirely, install via Homebrew instead.
-
----
+This means it blocks `pip` installs to protect system stability. In this case you will need to create virtual environment, and run ContextSpy from it:
+```
+python3 -m venv .venv
+source .venv/bin/activate (.venv\Scripts\activate on Windows powershell)
+pip install contextspy
+contextspy help
+```
 
 ## From source
+
+Requirements
+- Python 3.11+
+- Administrator / sudo access (for CA certificate installation, cloud mode only)
+- Node.js 18+ and npm — only needed if you want to modify the frontend
+
 
 ```bash
 git clone https://github.com/RimantasZ/contextspy.git
@@ -98,6 +129,7 @@ sudo security add-trusted-cert -d -r trustRoot \
   -k /Library/Keychains/System.keychain \
   ~/.mitmproxy/mitmproxy-ca-cert.pem
 ```
+
 
 *Ubuntu / Linux:*
 ```bash
