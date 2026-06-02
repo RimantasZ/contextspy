@@ -2,8 +2,6 @@
 <img src="docs/_static/logo_black_label.png" alt="logo" width="400" margin="10px"></img>
 </div>
 
-# ContextSpy
-
 ContextSpy is a local proxy that sits between your coding agent and the LLM API,
 recording every request and breaking down exactly how your context window is being used.
 
