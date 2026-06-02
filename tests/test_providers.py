@@ -27,12 +27,20 @@ from contextspy.analysis.providers import (
     ParsedRequest,
     _sse_to_anthropic_resp,
     _sse_to_openai_resp,
+    _sse_to_openai_responses_resp,
     _wire_format,
     parse_anthropic,
     parse_openai,
+    parse_openai_responses,
     parse_request,
     parse_sse_request,
 )
+
+try:
+    from contextspy.proxy.addon import _detect_agent, _detect_provider
+    _HAS_ADDON = True
+except ImportError:
+    _HAS_ADDON = False
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +102,28 @@ OLLAMA_RESP: dict = {
     "done": True,
     "prompt_eval_count": 20,
     "eval_count": 42,
+}
+
+OPENAI_RESPONSES_REQ: dict = {
+    "model": "gpt-4o",
+    "instructions": "You are helpful.",
+    "input": [
+        {"role": "user", "content": "Say hello"},
+    ],
+}
+
+OPENAI_RESPONSES_RESP: dict = {
+    "id": "resp_01",
+    "object": "response",
+    "model": "gpt-4o-2024-11-20",
+    "output": [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Hello world"}],
+        }
+    ],
+    "usage": {"input_tokens": 20, "output_tokens": 42},
 }
 
 
@@ -272,6 +302,36 @@ def _make_openai_sse(
     return "\n".join(chunks).encode()
 
 
+def _make_openai_responses_sse(
+    text: str = "Hello world",
+    input_tokens: int = 20,
+    output_tokens: int = 42,
+) -> bytes:
+    """Build a minimal OpenAI Responses API SSE stream."""
+    events = [
+        {"type": "response.created", "response": {"model": "gpt-4o"}},
+        {"type": "response.output_item.added", "output_index": 0,
+         "item": {"type": "message", "role": "assistant"}},
+    ]
+    for word in text.split():
+        events.append({
+            "type": "response.output_text.delta",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": word + " ",
+        })
+    events.append({
+        "type": "response.completed",
+        "response": {
+            "model": "gpt-4o",
+            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        },
+    })
+    lines = ["data: " + json.dumps(e, separators=(",", ":")) for e in events]
+    lines.append("data: [DONE]")
+    return "\n".join(lines).encode()
+
+
 # ---------------------------------------------------------------------------
 # _wire_format
 # ---------------------------------------------------------------------------
@@ -298,6 +358,26 @@ class TestWireFormat:
         assert _wire_format("/health") is None
         assert _wire_format("/") is None
         assert _wire_format("") is None
+
+    def test_openai_responses_api(self):
+        assert _wire_format("/v1/responses") == "openai_responses"
+        assert _wire_format("/responses") == "openai_responses"
+
+    def test_opencode_zen_anthropic_path(self):
+        """opencode zen → Claude uses /zen/v1/messages — must route to anthropic, not responses."""
+        assert _wire_format("/zen/v1/messages") == "anthropic"
+
+    def test_opencode_zen_openai_path(self):
+        """opencode zen → OpenAI uses /zen/v1/chat/completions — must route to openai."""
+        assert _wire_format("/zen/v1/chat/completions") == "openai"
+
+    def test_messages_checked_before_responses(self):
+        """/messages takes priority so a hypothetical /responses/messages routes to anthropic."""
+        assert _wire_format("/responses/messages") == "anthropic"
+
+    def test_chat_completions_checked_before_responses(self):
+        """/chat/completions takes priority over any /responses suffix."""
+        assert _wire_format("/v1/chat/completions/responses") == "openai"
 
 
 # ---------------------------------------------------------------------------
@@ -499,3 +579,204 @@ class TestMessageParsing:
         assert result is not None
         assert result.cache_read_tokens == 40876
         assert result.cache_creation_tokens == 3926
+
+
+# ---------------------------------------------------------------------------
+# OpenAI Responses API  (/v1/responses)
+# ---------------------------------------------------------------------------
+
+class TestOpenAIResponsesApi:
+    """Parser tests for the OpenAI Responses API wire format."""
+
+    # --- Non-streaming ---
+
+    def test_parse_basic(self):
+        result = parse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, OPENAI_RESPONSES_RESP)
+        assert result is not None
+        assert result.response_text == "Hello world"
+        assert result.provider_input_tokens == 20
+        assert result.provider_output_tokens == 42
+
+    def test_parse_instructions_become_system_message(self):
+        result = parse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, OPENAI_RESPONSES_RESP)
+        assert result is not None
+        system_msgs = [m for m in result.messages if m.role == "system"]
+        assert system_msgs, "instructions field must produce a system message"
+        assert system_msgs[0].content == "You are helpful."
+
+    def test_parse_user_message_in_input(self):
+        result = parse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, OPENAI_RESPONSES_RESP)
+        assert result is not None
+        assert any(m.role == "user" and "hello" in m.content.lower() for m in result.messages)
+
+    def test_parse_tool_definitions(self):
+        req = {**OPENAI_RESPONSES_REQ, "tools": [{"type": "function", "function": {"name": "search"}}]}
+        result = parse_request("openai", "/v1/responses", req, OPENAI_RESPONSES_RESP)
+        assert result is not None
+        assert "search" in result.tool_definitions_text
+
+    def test_parse_function_call_in_output(self):
+        resp = {
+            "model": "gpt-4o",
+            "output": [
+                {"type": "function_call", "call_id": "c1", "name": "search", "arguments": '{"q":"test"}'},
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        result = parse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, resp)
+        assert result is not None
+        assert result.tool_call_map == {"c1": "search"}
+        assert "search" in result.response_text
+
+    def test_parse_function_call_in_input(self):
+        """function_call + function_call_output items in input (multi-turn history)."""
+        req = {
+            "model": "gpt-4o",
+            "input": [
+                {"role": "user", "content": "What's the weather?"},
+                {"type": "function_call", "call_id": "c1", "name": "get_weather",
+                 "arguments": '{"city":"NYC"}'},
+                {"type": "function_call_output", "call_id": "c1", "output": "Sunny, 72F"},
+            ],
+        }
+        result = parse_request("openai", "/v1/responses", req, OPENAI_RESPONSES_RESP)
+        assert result is not None
+        assert result.tool_call_map == {"c1": "get_weather"}
+        tool_result = next((m for m in result.messages if m.is_tool_result), None)
+        assert tool_result is not None
+        assert tool_result.content == "Sunny, 72F"
+
+    def test_parse_no_usage(self):
+        resp = {"model": "gpt-4o", "output": [], "usage": {}}
+        result = parse_openai_responses(OPENAI_RESPONSES_REQ, resp)
+        assert result.provider_input_tokens is None
+        assert result.provider_output_tokens is None
+
+    def test_parse_empty_input(self):
+        result = parse_openai_responses({"model": "gpt-4o", "input": []}, {})
+        assert result is not None
+        assert result.messages == []
+
+    # --- SSE ---
+
+    def test_sse_accumulates_text(self):
+        raw = _make_openai_responses_sse(text="Hello world", input_tokens=20, output_tokens=42)
+        resp = _sse_to_openai_responses_resp(raw)
+        assert resp["usage"]["input_tokens"] == 20
+        assert resp["usage"]["output_tokens"] == 42
+        text_item = next(o for o in resp["output"] if o["type"] == "message")
+        assert "Hello" in text_item["content"][0]["text"]
+
+    def test_sse_accumulates_function_call(self):
+        events = [
+            {"type": "response.output_item.added", "output_index": 0,
+             "item": {"type": "function_call", "call_id": "fc1", "name": "search"}},
+            {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": '{"q":'},
+            {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": '"test"}'},
+            {"type": "response.completed",
+             "response": {"model": "gpt-4o", "usage": {"input_tokens": 10, "output_tokens": 5}}},
+        ]
+        raw = b"\n".join(b"data: " + json.dumps(e).encode() for e in events)
+        resp = _sse_to_openai_responses_resp(raw)
+        fc = next(o for o in resp["output"] if o["type"] == "function_call")
+        assert fc["name"] == "search"
+        assert fc["call_id"] == "fc1"
+        assert fc["arguments"] == '{"q":"test"}'
+
+    def test_sse_empty_stream(self):
+        resp = _sse_to_openai_responses_resp(b"")
+        assert resp["output"] == []
+        assert "usage" not in resp
+
+    def test_parse_sse_request_routing(self):
+        raw = _make_openai_responses_sse(text="Hi", input_tokens=10, output_tokens=3)
+        result = parse_sse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, raw)
+        assert result is not None
+        assert "Hi" in result.response_text
+        assert result.provider_input_tokens == 10
+        assert result.provider_output_tokens == 3
+
+    def test_opencode_zen_responses_path(self):
+        """opencode routing an OpenAI model via zen gateway: /zen/v1/responses still parsed."""
+        raw = _make_openai_responses_sse(text="Hi", input_tokens=10, output_tokens=3)
+        result = parse_sse_request("opencode_zen", "/zen/v1/responses", OPENAI_RESPONSES_REQ, raw)
+        assert result is not None
+        assert result.provider_output_tokens == 3
+
+
+# ---------------------------------------------------------------------------
+# Provider and agent detection  (addon routing)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not _HAS_ADDON, reason="mitmproxy not installed")
+class TestProviderDetection:
+    """Guards against accidentally breaking host→provider routing when adding new entries.
+
+    Each test documents one live integration and the provider label it must produce.
+    """
+
+    def test_claude_code(self):
+        """Claude Code talks directly to api.anthropic.com."""
+        assert _detect_provider("api.anthropic.com", 443) == "anthropic"
+
+    def test_anthropic_subdomain(self):
+        assert _detect_provider("bedrock.api.anthropic.com", 443) == "anthropic"
+
+    def test_openai_direct(self):
+        assert _detect_provider("api.openai.com", 443) == "openai"
+
+    def test_azure_openai(self):
+        assert _detect_provider("myinstance.openai.azure.com", 443) == "openai_azure"
+
+    def test_copilot_legacy_proxy(self):
+        assert _detect_provider("copilot-proxy.githubusercontent.com", 443) == "copilot"
+
+    def test_copilot_api_subdomain(self):
+        """api.githubcopilot.com must match via endswith(.githubcopilot.com)."""
+        assert _detect_provider("api.githubcopilot.com", 443) == "copilot"
+
+    def test_opencode_zen_gateway(self):
+        """opencode.ai zen gateway — added to support opencode cloud model routing."""
+        assert _detect_provider("opencode.ai", 443) == "opencode_zen"
+
+    def test_opencode_zen_subdomain(self):
+        assert _detect_provider("api.opencode.ai", 443) == "opencode_zen"
+
+    def test_ollama_port(self):
+        """Ollama is detected by port (11434), not host — works for any bind address."""
+        assert _detect_provider("localhost", 11434) == "ollama"
+        assert _detect_provider("127.0.0.1", 11434) == "ollama"
+
+    def test_unknown_host_returns_none(self):
+        """Unrecognised hosts must return None so the addon skips them."""
+        assert _detect_provider("example.com", 443) is None
+
+    def test_telemetry_hosts_return_none(self):
+        """Hosts seen in real traffic that must NOT be treated as LLM providers."""
+        assert _detect_provider("eu-central-1-1.aws.cloud2.influxdata.com", 443) is None
+        assert _detect_provider("models.dev", 443) is None
+
+
+@pytest.mark.skipif(not _HAS_ADDON, reason="mitmproxy not installed")
+class TestAgentDetection:
+    """Guards against breaking User-Agent → agent label mapping."""
+
+    def test_claude_code_sdk(self):
+        assert _detect_agent("anthropic-python/0.50.0 Python/3.12") == "claude_sdk"
+
+    def test_github_copilot(self):
+        assert _detect_agent("GitHubCopilot/1.0 vscode/1.89") == "github_copilot"
+        assert _detect_agent("github-copilot-chat/0.14") == "github_copilot"
+
+    def test_openai_sdk(self):
+        assert _detect_agent("openai-python/1.30.0 Python/3.11") == "openai_sdk"
+
+    def test_opencode(self):
+        assert _detect_agent("opencode/0.1.100") == "opencode"
+
+    def test_cursor(self):
+        assert _detect_agent("cursor/0.42.0") == "cursor"
+
+    def test_unknown(self):
+        assert _detect_agent("curl/7.88.1") == "unknown"
+        assert _detect_agent("") == "unknown"
