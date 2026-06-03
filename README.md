@@ -2,14 +2,66 @@
 <img src="docs/_static/logo_black_label.png" alt="logo" width="400" margin="10px"></img>
 </div>
 
-ContextSpy is a local proxy that sits between your coding agent and the LLM API,
-recording every request and breaking down exactly how your context window is being used.
+
+ContextSpy is a context window profiler for large language models and common agentic AI coding tools.
+It is used to intercerpt requests to LLM API, analyze and visualize prompt composition, and track context 
+changes between multiple requests in same session - giving the user some insights on how context window is
+used. 
+
+Think of your favorite CPU or memory profiler, just applied to contents of the context of AI agent. 
 
 Modern AI coding agents (GitHub Copilot, Claude Code, opencode, Cursor) pack a lot into
 each LLM request: system prompts, tool definitions, tool results, file contents,
 conversation history. It's often unclear why a session is slow, expensive, or hitting
 the context limit. ContextSpy makes the invisible visible — you see a live breakdown of
 every token category for every request, across sessions, over time.
+
+## Why should I care?
+
+**Tokens costs are rising.** With AI agents embracing more and more complex workflows and usecases, token consumption and subsequent 
+cloud API bills are growing larger and larger. This is also applicable for AI coding agents and tools,
+where providers are gradually switching from subsidized subscription mode and are either reducing token
+limits or switching to token usage based billing (e.g. GitHub Copilot)
+
+**Input tokens are major part**. When discussing AI model pricing, most people bring up token generation cost - that's where the numbers look 
+most dramatic ($25 per million tokens for Opus 4.8 output vs $0.40 for gpt-5-nano). But in agentic 
+workloads, input tokens outnumber output by 20-50x, or even more. So the most of your API bill is influenced
+by input context, not the output the model generates.
+
+**AI coding agents = lots of input**. The expensive part is quick accumulation of context - with every turn it fills up with additional tokens - system prompt, skills, tool definitions, tool results, file contents, conversation history.
+You start with 5000 - 10000 tokens in fresh session, but by turn 25 it might be 30 to 50 thousand, spend some more time it might be hitting context window limit and compacting. Every API call to the model sends the full context 
+as part of prompt - and here is were the token consumption and costs skyrocket quickly.
+
+## Why large context is bad
+
+We all have been told that the more information we will give to the model, the more capable it will be. And there are models with 1M token (or even bigger) context windows.
+
+There are three ways you pay for extra (and sometime unnecessary) infomration in your context:
+
+1. **API Costs** - even with near perfect cache hits, input token costs outweigh output, often by order of magnitude or more.
+2. **Compute and latency** - larger contexts take considerably longer to process - especially in local hosted models
+3. **Context rot** - with larger contexts, LLMs start to lose precision rapidly, with [100k being the limit](https://www.trychroma.com/research/context-rot) where rapid degradation starts. So you are paying for more expensive model, but getting performance of cheaper one - or even worse. 
+
+
+## How does it work
+
+ContextSpy starts a HTTPS proxy (or reverse proxy for locally hosted models) which itercepts every request to LLMs, analyzes it and stores to local SQLite db. A webserver is also started on localhost, and serves dashboard to visualise all captured data.
+
+| Dashboard view ||
+|:---:|:---:|
+|![Dashboard view](docs/_static/dashboard.png)
+
+| Request view ||
+|:---:|:---:|
+|![Dashboard view](docs/_static/request.png)
+
+| Context breakdown ||
+|:---:|:---:|
+|![Dashboard view](docs/_static/request2.png)
+
+| Session view ||
+|:---:|:---:|
+|![Dashboard view](docs/_static/session.png)
 
 ## Features
 
@@ -26,26 +78,27 @@ every token category for every request, across sessions, over time.
 
 ## Quick start
 
+More details in [install guide](docs/install.md).
+
 ```bash
+# Install on mac (check install guide for other OS options)
+brew tap RimantaZ/contextspy
+brew install context spy
 
-
-# Install
-pip install contextspy
-# or: uv tool install contextspy
-# or: brew install rimantas/contextspy/contextspy
 
 # Install the CA certificate (cloud mode only, one-time)
-contextspy start --no-browser   # generates cert, then Ctrl+C
-contextspy install-cert
+sudo contextspy install-cert
+# or run contextspy install-cert and then 
+# printed install cert command with sudo
 
 # Start
 contextspy start
 ```
 
-Then configure your agent to route through `http://127.0.0.1:8888` and open
+Then [configure your agent](docs/cloud-mode.md) to route through `http://127.0.0.1:8888` and open
 http://127.0.0.1:5173 in your browser.
 
-## Documentation
+## Documentation links
 
 - [Installation](docs/install.md) — PyPI, Homebrew, .deb, binary, CA certificate setup
 - [Cloud API mode](docs/cloud-mode.md) — intercept OpenAI, Anthropic, Copilot, etc.
