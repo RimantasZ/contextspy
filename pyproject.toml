@@ -1,6 +1,6 @@
 [project]
 name = "contextspy"
-version = "0.1.6"
+version = "0.1.7"
 description = "LLM proxy that analyses token usage in context windows"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -8,7 +8,7 @@ license = {file = "LICENSE"}
 authors = [
     { name = "Rimantas Zukaitis", email = "rimasz@gmail.com" },
 ]
-keywords = ["llm", "proxy", "tokens", "observability", "mitmproxy", "context-window"]
+keywords = ["llm", "proxy", "tokens", "context-engineering", "agents", "context-window"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
