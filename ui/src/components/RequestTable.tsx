@@ -89,7 +89,11 @@ function formatDuration(ms: number | null): string {
 }
 
 function formatTime(ts: string): string {
-  return new Date(ts).toLocaleTimeString([], {
+  // Backend emits UTC without 'Z'; append it so JS parses as UTC, then displays in local timezone.
+  const s = ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z';
+  return new Date(s).toLocaleString(undefined, {
+    month: 'numeric',
+    day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -185,7 +189,7 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortK
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-gray-400 border-b border-gray-700">
-            <SortHeader label="Time" col="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Time" col="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-36" />
             <SortHeader label="Tokens (in)" col="tokens_total_input" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
             <SortHeader label="Tokens (out)" col="tokens_total_output" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
             <th className="pb-2 pr-3 font-medium whitespace-nowrap" style={{ minWidth: 256 }}>Context</th>
