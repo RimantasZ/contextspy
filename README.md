@@ -1,5 +1,13 @@
 <div align="center" id="contextspytop">
 <img src="docs/_static/logo_black_label.png" alt="logo" width="400" margin="10px"></img>
+
+[![PyPI](https://img.shields.io/pypi/v/contextspy)](https://pypi.org/project/cpntextspy)
+![PyPI - Downloads](https://static.pepy.tech/badge/contextspy?period=month)
+[![license](https://img.shields.io/github/license/RimantasZ/contextspy.svg)](https://github.com/RimantasZ/contextspy/tree/main/LICENSE)
+[![issue resolution](https://img.shields.io/github/issues-closed-raw/RimantasZ/contextspy)](https://github.com/RimantasZ/contextspy/issues)
+[![open issues](https://img.shields.io/github/issues-raw/RimantasZ/contextspy)](https://github.com/RimantasZ/contextspy/issues)
+
+
 </div>
 
 
