@@ -38,55 +38,14 @@ function ProxyTab() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-gray-800 rounded-lg p-5 space-y-4">
-        <h2 className="text-white font-medium">Proxy status</h2>
-        {isLoading ? (
-          <p className="text-gray-400 text-sm">Loading\u2026</p>
-        ) : (
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    status?.running ? 'bg-green-400' : 'bg-gray-500'
-                  }`}
-                />
-                <span className="text-white text-sm">
-                  {status?.running ? `Running on port ${status.port}` : 'Stopped'}
-                </span>
-              </div>
-              <p className="text-xs text-gray-400">
-                CA cert: {status?.cert_installed ? '\u2714 installed' : '\u26A0 not installed'}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              {status?.running ? (
-                <button
-                  onClick={() => stopProxy.mutate()}
-                  disabled={stopProxy.isPending}
-                  className="px-3 py-1 text-sm bg-red-700 hover:bg-red-600 text-white rounded disabled:opacity-50"
-                >
-                  Stop proxy
-                </button>
-              ) : (
-                <button
-                  onClick={() => startProxy.mutate()}
-                  disabled={startProxy.isPending}
-                  className="px-3 py-1 text-sm bg-green-700 hover:bg-green-600 text-white rounded disabled:opacity-50"
-                >
-                  Start proxy
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
       <div className="bg-gray-800 rounded-lg p-5 space-y-3">
         <h2 className="text-white font-medium">CA certificate</h2>
         <p className="text-sm text-gray-400">
           ContextSpy uses mitmproxy to intercept HTTPS traffic. Install the CA certificate
           to avoid SSL errors.
+        </p>
+        <p className="text-xs text-gray-400">
+                CA cert: {status?.cert_installed ? '\u2714 installed' : '\u26A0 not installed'}
         </p>
         <button
           onClick={() =>
