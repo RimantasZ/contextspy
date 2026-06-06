@@ -1,4 +1,4 @@
-# Installation
+# Install guide
 
 There are several options to install and run ContextSpy profiler:
 - install prebuild buinary 
