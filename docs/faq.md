@@ -45,6 +45,10 @@ The most common cause is a missing or untrusted CA certificate. Check:
 
    Run `contextspy setup-claude` (or `setup-copilot`, `setup-opencode`) for the exact snippet.
 
+### ContextSpy starts but I see fewer requests than I expected
+
+Some agents batch or internally deduplicate requests before sending them to the API, so you may see fewer requests in the dashboard than the number of agent turns you observed. Streaming requests are captured as a single entry once the response completes. If a request is missing entirely, check the connectivity steps in "My agent can't connect" above.
+
 ### ContextSpy starts but I see no requests in the dashboard
 
 - Confirm the agent is actually routing through the proxy. Check that `HTTPS_PROXY` is set in the same shell/process where the agent runs.
@@ -125,7 +129,7 @@ Raw request and response bodies are automatically purged 7 days after capture (o
 contextspy reset-db
 ```
 
-Or delete `~/.contextspy/contextspy.db` manually while ContextSpy is not running.
+Or delete `~/.contextspy/contextspy.db` manually — make sure ContextSpy is not running first to avoid a locked database.
 
 ---
 
