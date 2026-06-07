@@ -10,17 +10,7 @@ intercept this. Instead, ContextSpy acts as a **reverse proxy**: the client conn
 ContextSpy's listen port, and ContextSpy forwards to the real server. No TLS or
 certificate installation needed.
 
-```
-Client (opencode / script)
-  base_url = http://127.0.0.1:8889/v1   ← ContextSpy listen port
-      │
-      ▼
-ContextSpy reverse proxy (port 8889)
-      │  plain HTTP forward
-      ▼
-llama-server / Ollama / vLLM            ← actual server
-  127.0.0.1:8080
-```
+![](_static/local-proxy.svg)
 
 ---
 

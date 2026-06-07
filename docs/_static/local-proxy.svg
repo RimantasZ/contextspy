@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="350" viewBox="0 0 500 350" font-family="system-ui,-apple-system,sans-serif">
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <!-- Client -->
+  <rect x="100" y="20" width="300" height="70" rx="6" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="250" y="44" text-anchor="middle" font-size="13" font-weight="600" fill="#1d4ed8">Client</text>
+  <text x="250" y="61" text-anchor="middle" font-size="10" fill="#3b82f6">opencode · Python script · any OpenAI-compatible client</text>
+  <text x="250" y="78" text-anchor="middle" font-size="10" font-family="monospace" fill="#2563eb">base_url=http://127.0.0.1:8889/v1</text>
+
+  <!-- Arrow 1 with label -->
+  <line x1="250" y1="90" x2="250" y2="140" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah)"/>
+  <text x="258" y="119" font-size="10" font-family="monospace" fill="#475569">HTTP</text>
+
+  <!-- ContextSpy reverse proxy -->
+  <rect x="70" y="142" width="360" height="78" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <text x="250" y="166" text-anchor="middle" font-size="13" font-weight="600" fill="#15803d">ContextSpy  ·  mitmproxy</text>
+  <text x="250" y="183" text-anchor="middle" font-size="11" font-family="monospace" fill="#16a34a">reverse proxy · port 8889</text>
+  <text x="250" y="200" text-anchor="middle" font-size="10" fill="#166534">inspect · classify · forward (plain HTTP)</text>
+  <text x="250" y="213" text-anchor="middle" font-size="10" fill="#166534">dashboard → http://127.0.0.1:5173</text>
+
+  <!-- Arrow 2 with label -->
+  <line x1="250" y1="220" x2="250" y2="270" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah)"/>
+  <text x="258" y="249" font-size="10" font-family="monospace" fill="#475569">plain HTTP</text>
+
+  <!-- Local LLM Server -->
+  <rect x="70" y="272" width="360" height="65" rx="6" fill="#fdf4ff" stroke="#d8b4fe" stroke-width="1.5"/>
+  <text x="250" y="296" text-anchor="middle" font-size="13" font-weight="600" fill="#7e22ce">Local LLM Server</text>
+  <text x="250" y="313" text-anchor="middle" font-size="11" fill="#9333ea">llama-server · Ollama · vLLM</text>
+  <text x="250" y="328" text-anchor="middle" font-size="10" font-family="monospace" fill="#a855f7">127.0.0.1:8080 (or configured port)</text>
+</svg>

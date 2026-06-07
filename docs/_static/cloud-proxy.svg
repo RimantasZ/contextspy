@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="330" viewBox="0 0 500 330" font-family="system-ui,-apple-system,sans-serif">
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <!-- Coding Agent -->
+  <rect x="150" y="20" width="200" height="52" rx="6" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="250" y="44" text-anchor="middle" font-size="13" font-weight="600" fill="#1d4ed8">Coding Agent</text>
+  <text x="250" y="61" text-anchor="middle" font-size="10" font-family="monospace" fill="#3b82f6">Claude Code · Copilot · opencode</text>
+
+  <!-- Arrow 1 with label -->
+  <line x1="250" y1="72" x2="250" y2="128" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah)"/>
+  <text x="258" y="101" font-size="10" font-family="monospace" fill="#475569">HTTPS_PROXY=http://127.0.0.1:8888</text>
+
+  <!-- ContextSpy -->
+  <rect x="70" y="130" width="360" height="78" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <text x="250" y="154" text-anchor="middle" font-size="13" font-weight="600" fill="#15803d">ContextSpy  ·  mitmproxy</text>
+  <text x="250" y="171" text-anchor="middle" font-size="11" font-family="monospace" fill="#16a34a">forward proxy · port 8888</text>
+  <text x="250" y="188" text-anchor="middle" font-size="10" fill="#166534">TLS terminate · inspect · classify · re-encrypt · forward</text>
+  <text x="250" y="201" text-anchor="middle" font-size="10" fill="#166534">dashboard → http://127.0.0.1:5173</text>
+
+  <!-- Arrow 2 with label -->
+  <line x1="250" y1="208" x2="250" y2="262" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah)"/>
+  <text x="258" y="239" font-size="10" font-family="monospace" fill="#475569">HTTPS</text>
+
+  <!-- Cloud LLM API -->
+  <rect x="100" y="264" width="300" height="52" rx="6" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5"/>
+  <text x="250" y="287" text-anchor="middle" font-size="13" font-weight="600" fill="#92400e">Cloud LLM API</text>
+  <text x="250" y="304" text-anchor="middle" font-size="10" font-family="monospace" fill="#b45309">api.openai.com · api.anthropic.com · …</text>
+</svg>

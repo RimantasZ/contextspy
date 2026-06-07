@@ -6,15 +6,7 @@ Anthropic (Claude), GitHub Copilot, or Azure OpenAI.
 ContextSpy acts as an HTTPS man-in-the-middle proxy. It terminates TLS, inspects the
 request, logs and analyses it, then re-encrypts and forwards it to the provider.
 
-```
-coding agent
-    │  HTTPS_PROXY=http://127.0.0.1:8888
-    ▼
-ContextSpy (mitmproxy, port 8888)
-    │  TLS terminate → inspect → re-encrypt → forward
-    ▼
-cloud LLM API (api.openai.com, api.anthropic.com, …)
-```
+![](_static/cloud-proxy.svg)
 
 ---
 
