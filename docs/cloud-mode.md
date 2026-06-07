@@ -134,11 +134,27 @@ $env:HTTPS_PROXY = "http://127.0.0.1:8888"
 python your_script.py
 ```
 
+### Cursor
+
+Cursor respects VS Code's proxy settings. Add to your Cursor `settings.json` (`Ctrl+Shift+P` → "Open User Settings JSON"):
+
+```json
+{
+  "http.proxy": "http://127.0.0.1:8888",
+  "http.proxyStrictSSL": false
+}
+```
+
 ### Generic (curl, httpx CLI, etc.)
 
 ```bash
+# macOS / Linux
 export HTTPS_PROXY=http://127.0.0.1:8888
 export HTTP_PROXY=http://127.0.0.1:8888
+
+# PowerShell
+$env:HTTPS_PROXY = "http://127.0.0.1:8888"
+$env:HTTP_PROXY  = "http://127.0.0.1:8888"
 ```
 
 ---

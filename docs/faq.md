@@ -142,6 +142,7 @@ ContextSpy has tested setup helpers for:
 - Claude CLI / Claude Code (`contextspy setup-claude`)
 - GitHub Copilot in VS Code (`contextspy setup-copilot`)
 - opencode (`contextspy setup-opencode`)
+- llama-server / llama.cpp (`contextspy setup-llamaserver`)
 - Ollama (`contextspy setup-ollama`)
 - vLLM (`contextspy setup-vllm`)
 

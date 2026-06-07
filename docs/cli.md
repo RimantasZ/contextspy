@@ -1,5 +1,12 @@
 # CLI Reference
 
+```
+contextspy help
+```
+List all available commands with a short description.
+
+---
+
 ## Proxy commands
 
 ```
@@ -70,7 +77,7 @@ contextspy session list           List all sessions with request counts
 These commands work offline — no proxy or dashboard needs to be running.
 
 ```
-contextspy status          Show proxy running state, active session, DB path
+contextspy status          Show proxy running state, active session, DB path, and port bindings
 contextspy db-stats        Print database row counts
 contextspy report          Print aggregate token stats and category breakdown table
 contextspy reset-db        Delete ALL requests and sessions (prompts for confirmation)

@@ -1,7 +1,7 @@
 # Install guide
 
 There are several options to install and run ContextSpy profiler:
-- install prebuild buinary 
+- install prebuilt binary
 - install python package through PyPI
 - build and run from source
 
@@ -11,7 +11,7 @@ Easiest and least complicated approach for general use
 
 ### MacOS - Homebrew
 
-Easiest way to install on Mac is using Homebrew. This supports Apple Silicon only - for older models it's recomended to use PyPI or build from source.
+Easiest way to install on Mac is using Homebrew. This supports Apple Silicon only — for older models it is recommended to use PyPI or build from source.
 
 Add contextspy tap and install using:
 
@@ -28,7 +28,7 @@ Download `contextspy_VERSION_amd64.deb` from the [latest release](https://github
 
 ```bash
 sudo dpkg -i contextspy_*_amd64.deb
-contextpy help
+contextspy help
 ```
 Installs to `/usr/bin/contextspy`. Remove with `apt remove contextspy`.
 
@@ -36,7 +36,7 @@ Next steps: install CA certificate, setup coding agent
 
 ### Windows (x86_64)
 
-No scpecific installer. Download a binary release from the section below, unzip executable and run it locally. Add to PATH in enviroment variables manually, if needed.
+No specific installer. Download a binary release from the section below, unzip the executable and run it locally. Add to PATH in environment variables manually, if needed.
 
 ```powershell
 .\contextspy help
@@ -78,14 +78,17 @@ uv tool install contextspy
 
 After install, `contextspy` is available on your `PATH`.
 
-On externally managed python installations (e.g. if python installed throuhg Homebrew on MacOS, or Linux distrubutions), you may get a following error:
+On externally managed python installations (e.g. if python installed through Homebrew on MacOS, or Linux distributions), you may get a following error:
 ```
 error: externally-managed-environment
 ```
 This means it blocks `pip` installs to protect system stability. In this case you will need to create virtual environment, and run ContextSpy from it:
 ```
 python3 -m venv .venv
-source .venv/bin/activate (.venv\Scripts\activate on Windows powershell)
+# macOS / Linux:
+source .venv/bin/activate
+# Windows PowerShell:
+# .venv\Scripts\activate
 pip install contextspy
 contextspy help
 ```

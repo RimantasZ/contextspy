@@ -10,6 +10,18 @@ uv pip install -e ".[dev]"
 uvicorn contextspy.api.main:create_app --factory --reload --port 5173
 ```
 
+## Tests
+
+Tests live in `tests/test_providers.py` and cover provider request-parsing. Run them with:
+
+```bash
+pytest
+# or a single test:
+pytest tests/test_providers.py::test_name
+```
+
+When you modify `analysis/providers.py` or `analysis/classifier.py`, always run pytest before committing.
+
 ## Frontend
 
 ```bash
@@ -33,14 +45,14 @@ cd ui && npm run build   # outputs to contextspy/_web/
 
 ```
 coding agent → HTTPS_PROXY → mitmproxy (port 8888)
-                                  │ TLS terminate + forward
-                              cloud LLM API
                                   │
-                            ContextSpyAddon
+                            ContextSpyAddon (intercepts here)
                               → parse request body
                               → classify tokens into 8 categories
                               → write to SQLite
                               → broadcast via WebSocket
+                                  │ TLS terminate + forward
+                              cloud LLM API
 ```
 
 ### Local mode
@@ -86,3 +98,14 @@ Token counts are **estimates** using tiktoken `cl100k_base` encoding.
 
 When the provider reports exact token counts in the API response, those are stored
 alongside the estimate and shown on the request detail page for comparison.
+
+---
+
+## Contributing
+
+1. Fork the repo and create a branch.
+2. For backend changes to `analysis/providers.py` or `analysis/classifier.py`, add or update tests in `tests/test_providers.py` and confirm `pytest` passes.
+3. For frontend changes, rebuild the UI (`make ui`) and verify in the browser with `contextspy start`.
+4. Open a pull request against `main` with a description of what changed and why.
+
+Bug reports and feature requests are tracked in [GitHub Issues](https://github.com/RimantasZ/contextspy/issues).
