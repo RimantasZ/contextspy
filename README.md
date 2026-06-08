@@ -11,12 +11,12 @@
 
 --------------------------------------------------------------------------------
 <p align="center">
-<a href="https://lmsys.org/blog/"><b>Blog</b></a> |
-<a href="https://docs.sglang.io/"><b>Documentation</b></a> |
-<a href="https://roadmap.sglang.io/"><b>Roadmap</b></a> |
-<a href="https://slack.sglang.io/"><b>Join Slack</b></a> |
-<a href="https://meet.sglang.io/"><b>Weekly Dev Meeting</b></a> |
-<a href="https://github.com/sgl-project/sgl-learning-materials?tab=readme-ov-file#slides"><b>Slides</b></a>
+<a href="#why-should-i-care"><b>Motivation</b></a> |
+<a href="#quick-start"><b>Quick start</b></a> |
+<a href="docs/install.md"><b>Install guide</b></a> |
+<a href="docs/cloud-mode.md"><b>Coding agent setup</b></a> |
+<a href="docs/faq.md"><b>FAQ</b></a> |
+<a href="docs/confirmed.md"><b>Supported agents</b></a> 
 </p>
 
 ContextSpy is a context window profiler for large language models and common agentic AI coding tools.
