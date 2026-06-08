@@ -333,7 +333,7 @@ def run_cmd(
 
     cmd = [tool, *tool_args]
     console.print(f"[dim]contextspy run: {' '.join(cmd)}  HTTPS_PROXY={env['HTTPS_PROXY']}[/dim]")
-    result = subprocess.run(cmd, env=env)
+    result = subprocess.run(cmd, env=env, shell=(os.name == "nt"))
     raise typer.Exit(result.returncode)
 
 
