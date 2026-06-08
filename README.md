@@ -25,6 +25,7 @@ changes between multiple requests in same session. Modern AI coding agents (GitH
 the context limit. ContextSpy makes the invisible visible — you see a live breakdown of
 every token category for every request, across sessions, over time.
 
+<p align="center"><strong>Dashboard view</strong><br><img src="docs/_static/dashboard.png" alt="Dashboard view"></p>
 
 Think of your favorite CPU or memory profiler, just applied to contents of the context of AI agent. While you can optimize pefromance just by reviewing code, having a profiler to capture and visualise shapshot data helps alot. Same with LLM context optmisation.
 
@@ -60,8 +61,6 @@ ContextSpy makes these costs visible so you can act on them.
 ## How does it work
 
 ContextSpy starts a HTTPS proxy (or reverse proxy for locally hosted models) which intercepts every request to LLMs, analyzes it and stores to local SQLite db. A webserver is also started on localhost, and serves dashboard to visualise all captured data.
-
-<p align="center"><strong>Dashboard view</strong><br><img src="docs/_static/dashboard.png" alt="Dashboard view"></p>
 
 <p align="center"><strong>Request view</strong><br><img src="docs/_static/request.png" alt="Request view"></p>
 
