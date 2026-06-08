@@ -13,7 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import PlainTextResponse
 
 from contextspy.proxy import runner
 from contextspy.proxy.cert import cert_exists, install_cert
@@ -59,3 +60,22 @@ def proxy_stop():
 def proxy_install_cert():
     success, message = install_cert()
     return {"success": success, "message": message}
+
+
+@router.get("/proxy.pac", response_class=PlainTextResponse)
+def proxy_pac(request: Request) -> PlainTextResponse:
+    from contextspy.proxy.addon import _HOST_PROVIDER
+
+    settings = request.app.state.settings
+    proxy_host_port = f"127.0.0.1:{settings.proxy.port}"
+
+    lines = [
+        f'    if (shExpMatch(host, "{host}") || shExpMatch(host, "*.{host}")) '
+        f'return "PROXY {proxy_host_port}";'
+        for host, _ in _HOST_PROVIDER
+    ]
+    body = "\n".join(lines)
+    content = (
+        f'function FindProxyForURL(url, host) {{\n{body}\n    return "DIRECT";\n}}\n'
+    )
+    return PlainTextResponse(content, media_type="application/x-ns-proxy-autoconfig")

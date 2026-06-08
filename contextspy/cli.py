@@ -48,6 +48,8 @@ def _cert_path() -> pathlib.Path:
 def _base_proxy_env(proxy_port: int) -> dict[str, str]:
     env = os.environ.copy()
     url = f"http://127.0.0.1:{proxy_port}"
+    env["HTTP_PROXY"] = url
+    env["http_proxy"] = url
     env["HTTPS_PROXY"] = url
     env["https_proxy"] = url
     env["NO_PROXY"] = "github.com,localhost,127.0.0.1,::1"
@@ -65,6 +67,7 @@ def _inject_go_cert(env: dict[str, str], cert: pathlib.Path) -> None:
         env["SSL_CERT_FILE"] = cert.as_posix()
 
 
+
 # Registry: tool name → injectors applied on top of base proxy env.
 # Add new tools here; unknown tools fall back to base proxy env only.
 _TOOL_INJECTORS: dict[str, list[Callable[[dict[str, str], pathlib.Path], None]]] = {
@@ -73,6 +76,11 @@ _TOOL_INJECTORS: dict[str, list[Callable[[dict[str, str], pathlib.Path], None]]]
     "claude":   [_inject_node_cert],                    # Claude Code (Electron/Node)
     "opencode": [_inject_node_cert, _inject_go_cert],   # opencode (Node + Go TLS)
 }
+
+# Electron-based tools: on Windows env-var proxy doesn't reach the Node.js
+# extension host; a PAC file via --proxy-pac-url routes only LLM API domains
+# through mitmproxy and sends everything else DIRECT (avoids auth breakage).
+_ELECTRON_TOOLS: frozenset[str] = frozenset({"code", "cursor"})
 
 
 @app.command()
@@ -331,7 +339,22 @@ def run_cmd(
             "Run [bold]contextspy install-cert[/bold] first."
         )
 
-    cmd = [tool, *tool_args]
+    extra_args: list[str] = []
+    if tool in _ELECTRON_TOOLS and os.name == "nt":
+        pac_url = f"http://127.0.0.1:{settings.web.port}/api/proxy.pac"
+        extra_args = [f"--proxy-pac-url={pac_url}"]
+        # Extension host Node.js ignores NODE_EXTRA_CA_CERTS on Windows;
+        # --use-system-ca makes it trust the Windows Root store where
+        # contextspy install-cert already placed the mitmproxy CA.
+        node_opts = env.get("NODE_OPTIONS", "")
+        if "--use-system-ca" not in node_opts:
+            env["NODE_OPTIONS"] = (node_opts + " --use-system-ca").strip()
+        console.print(
+            "[dim]Note (Windows): close any existing VS Code/Cursor window before "
+            "running this — a reused process won't pick up the PAC proxy.[/dim]"
+        )
+
+    cmd = [tool, *extra_args, *tool_args]
     console.print(f"[dim]contextspy run: {' '.join(cmd)}  HTTPS_PROXY={env['HTTPS_PROXY']}[/dim]")
     result = subprocess.run(cmd, env=env, shell=(os.name == "nt"))
     raise typer.Exit(result.returncode)
