@@ -4,7 +4,7 @@
 
 ### What is ContextSpy?
 
-ContextSpy is a local proxy that sits between your coding agent and the LLM API. It records every request and breaks down where the input tokens are going — system prompt, tool definitions, file contents, conversation history, and so on — so you can see how the context window is actually being used.
+ContextSpy is porfiler tool for analysing context usage of LLM applications. It is implemented as local proxy that sits between your coding agent and the LLM API. It records every request and breaks down where the input tokens are going — system prompt, tool definitions, file contents, conversation history, and so on — so you can see how the context window is actually being used.
 
 ### Does ContextSpy send my data anywhere?
 

@@ -7,22 +7,27 @@
 [![issue resolution](https://img.shields.io/github/issues-closed-raw/RimantasZ/contextspy)](https://github.com/RimantasZ/contextspy/issues)
 [![open issues](https://img.shields.io/github/issues-raw/RimantasZ/contextspy)](https://github.com/RimantasZ/contextspy/issues)
 
-
 </div>
 
+--------------------------------------------------------------------------------
+<p align="center">
+<a href="https://lmsys.org/blog/"><b>Blog</b></a> |
+<a href="https://docs.sglang.io/"><b>Documentation</b></a> |
+<a href="https://roadmap.sglang.io/"><b>Roadmap</b></a> |
+<a href="https://slack.sglang.io/"><b>Join Slack</b></a> |
+<a href="https://meet.sglang.io/"><b>Weekly Dev Meeting</b></a> |
+<a href="https://github.com/sgl-project/sgl-learning-materials?tab=readme-ov-file#slides"><b>Slides</b></a>
+</p>
 
 ContextSpy is a context window profiler for large language models and common agentic AI coding tools.
 It is used to intercept requests to LLM API, analyze and visualize prompt composition, and track context 
-changes between multiple requests in same session - giving the user some insights on how context window is
-used. 
-
-Think of your favorite CPU or memory profiler, just applied to contents of the context of AI agent. 
-
-Modern AI coding agents (GitHub Copilot, Claude Code, opencode, Cursor) pack a lot into
-each LLM request: system prompts, tool definitions, tool results, file contents,
-conversation history. It's often unclear why a session is slow, expensive, or hitting
+changes between multiple requests in same session. Modern AI coding agents (GitHub Copilot, Claude Code, opencode, Cursor) pack a lot into each LLM request: system prompts, tool definitions and results, file contents, conversation history. It's often unclear why a session is slow, expensive, or hitting
 the context limit. ContextSpy makes the invisible visible — you see a live breakdown of
 every token category for every request, across sessions, over time.
+
+
+Think of your favorite CPU or memory profiler, just applied to contents of the context of AI agent. While you can optimize pefromance just by reviewing code, having a profiler to capture and visualise shapshot data helps alot. Same with LLM context optmisation.
+
 
 ## Why should I care?
 
