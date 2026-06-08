@@ -14,8 +14,11 @@
 """Typer CLI entry point for ContextSpy."""
 from __future__ import annotations
 
+import os
+import pathlib
+import subprocess
 import webbrowser
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 import typer
@@ -36,6 +39,40 @@ def _api(port: int, path: str) -> str:
 def _web_port() -> int:
     from contextspy.config import Settings
     return Settings.load().web.port
+
+
+def _cert_path() -> pathlib.Path:
+    return pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+
+
+def _base_proxy_env(proxy_port: int) -> dict[str, str]:
+    env = os.environ.copy()
+    url = f"http://127.0.0.1:{proxy_port}"
+    env["HTTPS_PROXY"] = url
+    env["https_proxy"] = url
+    env["NO_PROXY"] = "github.com,localhost,127.0.0.1,::1"
+    env["no_proxy"] = env["NO_PROXY"]
+    return env
+
+
+def _inject_node_cert(env: dict[str, str], cert: pathlib.Path) -> None:
+    if cert.exists():
+        env["NODE_EXTRA_CA_CERTS"] = cert.as_posix()
+
+
+def _inject_go_cert(env: dict[str, str], cert: pathlib.Path) -> None:
+    if cert.exists():
+        env["SSL_CERT_FILE"] = cert.as_posix()
+
+
+# Registry: tool name → injectors applied on top of base proxy env.
+# Add new tools here; unknown tools fall back to base proxy env only.
+_TOOL_INJECTORS: dict[str, list[Callable[[dict[str, str], pathlib.Path], None]]] = {
+    "code":     [_inject_node_cert],                    # VS Code
+    "cursor":   [_inject_node_cert],                    # Cursor
+    "claude":   [_inject_node_cert],                    # Claude Code (Electron/Node)
+    "opencode": [_inject_node_cert, _inject_go_cert],   # opencode (Node + Go TLS)
+}
 
 
 @app.command()
@@ -238,6 +275,69 @@ def install_cert_cmd() -> None:
 
 
 # ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+
+@app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def run_cmd(
+    ctx: typer.Context,
+    proxy_port: Optional[int] = typer.Option(None, "--proxy-port",
+                                              help="Proxy port (default: from config)"),
+) -> None:
+    """Run a command with HTTPS_PROXY and cert env vars pre-set.
+
+    Known tools (code, cursor, claude, opencode) get tool-specific cert vars injected.
+    Any other command gets base proxy vars (HTTPS_PROXY, NO_PROXY) only.
+
+    Contextspy options must come before the tool name:
+      contextspy run --proxy-port 9000 code .
+      contextspy run claude --dangerously-skip-permissions .
+    """
+    from contextspy.config import Settings
+
+    args = ctx.args
+    if not args:
+        console.print("[bold]Usage:[/bold] contextspy run [dim][--proxy-port N][/dim] <tool> [args...]\n")
+        console.print("  contextspy run code .")
+        console.print("  contextspy run claude .")
+        console.print("  contextspy run opencode .")
+        console.print("  contextspy run cursor /path/to/project")
+        console.print("  contextspy run <any-command> [args...]")
+        raise typer.Exit(1)
+
+    tool, tool_args = args[0], args[1:]
+
+    settings = Settings.load()
+    port = proxy_port if proxy_port is not None else settings.proxy.port
+    cert = _cert_path()
+
+    try:
+        httpx.get(f"http://127.0.0.1:{settings.web.port}/api/stats", timeout=1.0)
+    except Exception:
+        console.print(
+            "[red]Error:[/red] ContextSpy is not running. "
+            "Start it first with [bold]contextspy start[/bold]."
+        )
+        raise typer.Exit(1)
+
+    env = _base_proxy_env(port)
+    injectors = _TOOL_INJECTORS.get(tool, [])
+    for inject in injectors:
+        inject(env, cert)
+
+    if injectors and not cert.exists():
+        console.print(
+            f"[yellow]Warning:[/yellow] cert not found at {cert}. "
+            "Run [bold]contextspy install-cert[/bold] first."
+        )
+
+    cmd = [tool, *tool_args]
+    console.print(f"[dim]contextspy run: {' '.join(cmd)}  HTTPS_PROXY={env['HTTPS_PROXY']}[/dim]")
+    result = subprocess.run(cmd, env=env)
+    raise typer.Exit(result.returncode)
+
+
+# ---------------------------------------------------------------------------
 # Session sub-commands
 # ---------------------------------------------------------------------------
 
@@ -317,6 +417,7 @@ def help_cmd() -> None:
         ("start-local",     "Start reverse proxies for local LLM servers (no cert needed)"),
         ("status",          "Show proxy status and active session"),
         ("install-cert",    "Install the mitmproxy CA cert into the system trust store"),
+        ("run <tool>",      "Run a tool with proxy env vars injected (code/cursor/claude/opencode + fallback)"),
         ("reset-db",        "Delete all requests and sessions from the local database"),
         ("db-stats",        "Print row counts for each database table"),
         ("report",          "Print aggregate stats: requests, tokens, category breakdown"),
@@ -514,8 +615,6 @@ def setup_claude() -> None:
     settings = Settings.load()
     port = settings.proxy.port
     cert = str(settings.storage.db_path).replace("contextspy.db", "").rstrip("/\\")
-    # mitmproxy stores certs in ~/.mitmproxy
-    import pathlib
     cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
 
     console.print("\n[bold cyan]Claude Code — proxy setup[/bold cyan]\n")
@@ -546,7 +645,6 @@ def setup_copilot() -> None:
     from contextspy.config import Settings
     settings = Settings.load()
     port = settings.proxy.port
-    import pathlib
     cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
 
     console.print("\n[bold cyan]GitHub Copilot — proxy setup[/bold cyan]\n")
@@ -640,16 +738,12 @@ def setup_vllm() -> None:
     console.print("[dim]If vLLM uses a different port, update target_url and listen_port accordingly.[/dim]\n")
 
 
-if __name__ == "__main__":
-    app()
-
 @app.command("setup-opencode")
 def setup_opencode() -> None:
     """Print commands to route opencode through the ContextSpy proxy."""
     from contextspy.config import Settings
     settings = Settings.load()
     port = settings.proxy.port
-    import pathlib
     cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
 
     console.print("\n[bold cyan]opencode — proxy setup[/bold cyan]\n")
