@@ -11,8 +11,9 @@
 
 --------------------------------------------------------------------------------
 <p align="center">
-<a href="#why-should-i-care"><b>Motivation</b></a> |
 <a href="#quick-start"><b>Quick start</b></a> |
+<a href="#why-should-i-care"><b>Motivation</b></a> |
+<a href="docs/changelog.md"><b>What's new</b></a> |
 <a href="docs/install.md"><b>Install guide</b></a> |
 <a href="docs/cloud-mode.md"><b>Coding agent setup</b></a> |
 <a href="docs/faq.md"><b>FAQ</b></a> |
