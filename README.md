@@ -96,12 +96,19 @@ sudo contextspy install-cert
 # or run contextspy install-cert and then 
 # printed install cert command with sudo
 
-# Start
+# Start the proxy
 contextspy start
-```
 
-Then [configure your agent](docs/cloud-mode.md) to route through `http://127.0.0.1:8888` and open
-http://127.0.0.1:5173 in your browser.
+# Start your coding agent from separate terminal 
+#  This will setup all unnecessary environment variables to route llm through the proxy
+contextspy run claude <path to your project>
+# contextspy run opencode <path to your project>
+# contextspy run code <path to your project>
+```
+Open http://127.0.0.1:5173 in your browser for ContextSpy dashboard.
+
+Alternatively, refer to [configure your agent](docs/cloud-mode.md) on how to route LLM traffic through proxy at `http://127.0.0.1:8888`
+
 
 ## Documentation links
 
@@ -115,4 +122,3 @@ http://127.0.0.1:5173 in your browser.
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
