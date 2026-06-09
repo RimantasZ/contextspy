@@ -73,6 +73,30 @@ def _insufficient_privileges_message(system: str) -> str:
     )
 
 
+def _install_cert_windows() -> tuple[bool, str]:
+    # Try CurrentUser\Root first — no elevation needed; works for both
+    # Chromium (VS Code main process) and Node.js with --use-system-ca.
+    result = subprocess.run(
+        ["certutil", "-user", "-addstore", "-f", "Root", str(_MITMPROXY_CA)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode == 0:
+        return True, "Certificate installed in Windows current-user Root store."
+    # Fall back to machine-wide store if we have admin privileges.
+    if _has_privileges("Windows"):
+        result = subprocess.run(
+            ["certutil", "-addstore", "-f", "Root", str(_MITMPROXY_CA)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return True, "Certificate installed in Windows system Root store."
+    return False, _manual_instructions("Windows") + f"\n\nError: {result.stderr.strip()}"
+
+
 def install_cert() -> tuple[bool, str]:
     """Generate (if needed) and install the mitmproxy CA into the system trust store.
 
@@ -85,22 +109,18 @@ def install_cert() -> tuple[bool, str]:
 
     system = platform.system()
 
+    # Windows uses a two-step approach (user store first, no elevation needed).
+    if system == "Windows":
+        try:
+            return _install_cert_windows()
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as exc:
+            return False, _manual_instructions(system) + f"\n\nException: {exc}"
+
     if not _has_privileges(system):
         return False, _insufficient_privileges_message(system)
 
     try:
-        if system == "Windows":
-            result = subprocess.run(
-                ["certutil", "-addstore", "-f", "Root", str(_MITMPROXY_CA)],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode == 0:
-                return True, "Certificate installed in Windows Root store."
-            return False, _manual_instructions(system) + f"\n\nError: {result.stderr.strip()}"
-
-        elif system == "Darwin":
+        if system == "Darwin":
             result = subprocess.run(
                 [
                     "security",
