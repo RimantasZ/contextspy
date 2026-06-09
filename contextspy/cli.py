@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Typer CLI entry point for ContextSpy."""
+
 from __future__ import annotations
 
+import importlib.metadata
 import os
 import pathlib
 import subprocess
@@ -25,7 +27,34 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-app = typer.Typer(name="contextspy", help="LLM context window analyser and proxy.", no_args_is_help=True)
+
+def _version_callback(value: bool) -> None:
+    if value:
+        version = importlib.metadata.version("contextspy")
+        typer.echo(version)
+        raise typer.Exit()
+
+
+app = typer.Typer(
+    name="contextspy",
+    help="LLM context window analyser and proxy.",
+    no_args_is_help=True,
+)
+
+
+@app.callback()
+def _main(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    pass
+
+
 session_app = typer.Typer(help="Manage named sessions.")
 app.add_typer(session_app, name="session")
 
@@ -38,6 +67,7 @@ def _api(port: int, path: str) -> str:
 
 def _web_port() -> int:
     from contextspy.config import Settings
+
     return Settings.load().web.port
 
 
@@ -67,14 +97,13 @@ def _inject_go_cert(env: dict[str, str], cert: pathlib.Path) -> None:
         env["SSL_CERT_FILE"] = cert.as_posix()
 
 
-
 # Registry: tool name → injectors applied on top of base proxy env.
 # Add new tools here; unknown tools fall back to base proxy env only.
 _TOOL_INJECTORS: dict[str, list[Callable[[dict[str, str], pathlib.Path], None]]] = {
-    "code":     [_inject_node_cert],                    # VS Code
-    "cursor":   [_inject_node_cert],                    # Cursor
-    "claude":   [_inject_node_cert],                    # Claude Code (Electron/Node)
-    "opencode": [_inject_node_cert, _inject_go_cert],   # opencode (Node + Go TLS)
+    "code": [_inject_node_cert],  # VS Code
+    "cursor": [_inject_node_cert],  # Cursor
+    "claude": [_inject_node_cert],  # Claude Code (Electron/Node)
+    "opencode": [_inject_node_cert, _inject_go_cert],  # opencode (Node + Go TLS)
 }
 
 # Electron-based tools: on Windows env-var proxy doesn't reach the Node.js
@@ -91,6 +120,7 @@ def start(
 ) -> None:
     """Start the proxy and web server in cloud/forward mode (Ctrl+C to stop)."""
     import uvicorn
+
     from contextspy.config import Settings
     from contextspy.proxy.cert import cert_exists, generate_cert, install_cert
 
@@ -102,7 +132,9 @@ def start(
 
     # Cert check: generate if missing, then install
     if not cert_exists():
-        console.print("[yellow]mitmproxy CA certificate not found. Generating...[/yellow]")
+        console.print(
+            "[yellow]mitmproxy CA certificate not found. Generating...[/yellow]"
+        )
         ok, msg = generate_cert()
         if ok:
             console.print(f"[green]{msg}[/green]")
@@ -123,12 +155,17 @@ def start(
 
     if not no_browser:
         import threading
+
         def _open():
-            import time; time.sleep(1.5)
+            import time
+
+            time.sleep(1.5)
             webbrowser.open(url)
+
         threading.Thread(target=_open, daemon=True).start()
 
     from contextspy.api.main import create_app
+
     application = create_app(settings)
 
     uvicorn.run(
@@ -140,16 +177,35 @@ def start(
             "version": 1,
             "disable_existing_loggers": False,
             "formatters": {
-                "default": {"format": "%(asctime)s %(levelname)-8s %(name)s: %(message)s", "datefmt": "%H:%M:%S"},
+                "default": {
+                    "format": "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+                    "datefmt": "%H:%M:%S",
+                },
             },
             "handlers": {
                 "default": {"class": "logging.StreamHandler", "formatter": "default"},
             },
             "loggers": {
-                "contextspy": {"handlers": ["default"], "level": "DEBUG", "propagate": False},
-                "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
-                "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
-                "uvicorn.access": {"handlers": ["default"], "level": "WARNING", "propagate": False},
+                "contextspy": {
+                    "handlers": ["default"],
+                    "level": "DEBUG",
+                    "propagate": False,
+                },
+                "uvicorn": {
+                    "handlers": ["default"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
+                "uvicorn.error": {
+                    "handlers": ["default"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
+                "uvicorn.access": {
+                    "handlers": ["default"],
+                    "level": "WARNING",
+                    "propagate": False,
+                },
             },
         },
     )
@@ -158,6 +214,7 @@ def start(
 # ---------------------------------------------------------------------------
 # start-local
 # ---------------------------------------------------------------------------
+
 
 @app.command("start-local")
 def start_local(
@@ -175,6 +232,7 @@ def start_local(
     run both modes simultaneously.
     """
     import uvicorn
+
     from contextspy.config import Settings
 
     settings = Settings.load()
@@ -197,18 +255,25 @@ def start_local(
     url = f"http://{settings.web.bind_addr}:{settings.web.port}"
     console.print(f"[bold green]ContextSpy[/bold green] (local mode) starting at {url}")
     for t in settings.reverse_targets:
-        console.print(f"  [{t.name}]  localhost:{t.listen_port} → {t.target_url}  (provider={t.provider})")
+        console.print(
+            f"  [{t.name}]  localhost:{t.listen_port} → {t.target_url}  (provider={t.provider})"
+        )
     console.print(f"  DB:  {settings.storage.db_path}")
     console.print("Press [bold]Ctrl+C[/bold] to stop.\n")
 
     if not no_browser:
         import threading
+
         def _open():
-            import time; time.sleep(1.5)
+            import time
+
+            time.sleep(1.5)
             webbrowser.open(url)
+
         threading.Thread(target=_open, daemon=True).start()
 
     from contextspy.api.main import create_app_local
+
     application = create_app_local(settings)
 
     uvicorn.run(
@@ -220,16 +285,35 @@ def start_local(
             "version": 1,
             "disable_existing_loggers": False,
             "formatters": {
-                "default": {"format": "%(asctime)s %(levelname)-8s %(name)s: %(message)s", "datefmt": "%H:%M:%S"},
+                "default": {
+                    "format": "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+                    "datefmt": "%H:%M:%S",
+                },
             },
             "handlers": {
                 "default": {"class": "logging.StreamHandler", "formatter": "default"},
             },
             "loggers": {
-                "contextspy": {"handlers": ["default"], "level": "DEBUG", "propagate": False},
-                "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
-                "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
-                "uvicorn.access": {"handlers": ["default"], "level": "WARNING", "propagate": False},
+                "contextspy": {
+                    "handlers": ["default"],
+                    "level": "DEBUG",
+                    "propagate": False,
+                },
+                "uvicorn": {
+                    "handlers": ["default"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
+                "uvicorn.error": {
+                    "handlers": ["default"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
+                "uvicorn.access": {
+                    "handlers": ["default"],
+                    "level": "WARNING",
+                    "propagate": False,
+                },
             },
         },
     )
@@ -242,7 +326,9 @@ def status() -> None:
     try:
         resp = httpx.get(_api(port, "/proxy/status"), timeout=3)
         data = resp.json()
-        console.print(f"Proxy running:   [bold]{'yes' if data['running'] else 'no'}[/bold]")
+        console.print(
+            f"Proxy running:   [bold]{'yes' if data['running'] else 'no'}[/bold]"
+        )
         console.print(f"Proxy port:      {data['port']}")
         console.print(f"Cert installed:  {'yes' if data['cert_installed'] else 'no'}")
     except Exception:
@@ -254,7 +340,9 @@ def status() -> None:
         sessions = resp2.json().get("sessions", [])
         active = next((s for s in sessions if s["is_active"]), None)
         if active:
-            console.print(f"Active session:  [bold green]{active['name']}[/bold green] (id: {active['id'][:8]}…)")
+            console.print(
+                f"Active session:  [bold green]{active['name']}[/bold green] (id: {active['id'][:8]}…)"
+            )
         else:
             console.print("Active session:  [dim]none[/dim]")
     except Exception:
@@ -286,11 +374,15 @@ def install_cert_cmd() -> None:
 # run
 # ---------------------------------------------------------------------------
 
-@app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+
+@app.command(
+    "run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
 def run_cmd(
     ctx: typer.Context,
-    proxy_port: Optional[int] = typer.Option(None, "--proxy-port",
-                                              help="Proxy port (default: from config)"),
+    proxy_port: Optional[int] = typer.Option(
+        None, "--proxy-port", help="Proxy port (default: from config)"
+    ),
 ) -> None:
     """Run a command with HTTPS_PROXY and cert env vars pre-set.
 
@@ -305,7 +397,9 @@ def run_cmd(
 
     args = ctx.args
     if not args:
-        console.print("[bold]Usage:[/bold] contextspy run [dim][--proxy-port N][/dim] <tool> [args...]\n")
+        console.print(
+            "[bold]Usage:[/bold] contextspy run [dim][--proxy-port N][/dim] <tool> [args...]\n"
+        )
         console.print("  contextspy run code .")
         console.print("  contextspy run claude .")
         console.print("  contextspy run opencode .")
@@ -355,7 +449,9 @@ def run_cmd(
         )
 
     cmd = [tool, *extra_args, *tool_args]
-    console.print(f"[dim]contextspy run: {' '.join(cmd)}  HTTPS_PROXY={env['HTTPS_PROXY']}[/dim]")
+    console.print(
+        f"[dim]contextspy run: {' '.join(cmd)}  HTTPS_PROXY={env['HTTPS_PROXY']}[/dim]"
+    )
     result = subprocess.run(cmd, env=env, shell=(os.name == "nt"))
     raise typer.Exit(result.returncode)
 
@@ -363,6 +459,7 @@ def run_cmd(
 # ---------------------------------------------------------------------------
 # Session sub-commands
 # ---------------------------------------------------------------------------
+
 
 @session_app.command("start")
 def session_start(name: str = typer.Argument(..., help="Session name")) -> None:
@@ -374,7 +471,9 @@ def session_start(name: str = typer.Argument(..., help="Session name")) -> None:
         data = resp.json()
         if data.get("warning"):
             console.print(f"[yellow]{data['warning']}[/yellow]")
-        console.print(f"[green]Session started:[/green] {data['session']['name']} ({data['session']['id'][:8]}…)")
+        console.print(
+            f"[green]Session started:[/green] {data['session']['name']} ({data['session']['id'][:8]}…)"
+        )
     except Exception as exc:
         console.print(f"[red]Error: {exc}. Is contextspy running?[/red]")
         raise typer.Exit(1)
@@ -431,28 +530,43 @@ def session_list() -> None:
 # help
 # ---------------------------------------------------------------------------
 
+
 @app.command("help")
 def help_cmd() -> None:
     """List all available commands."""
-    console.print("\n[bold cyan]ContextSpy[/bold cyan] — LLM context window analyser and proxy\n")
+    console.print(
+        "\n[bold cyan]ContextSpy[/bold cyan] — LLM context window analyser and proxy\n"
+    )
     rows = [
-        ("start",           "Start the proxy and web dashboard (cloud APIs, forward mode)"),
-        ("start-local",     "Start reverse proxies for local LLM servers (no cert needed)"),
-        ("status",          "Show proxy status and active session"),
-        ("install-cert",    "Install the mitmproxy CA cert into the system trust store"),
-        ("run <tool>",      "Run a tool with proxy env vars injected (code/cursor/claude/opencode + fallback)"),
-        ("reset-db",        "Delete all requests and sessions from the local database"),
-        ("db-stats",        "Print row counts for each database table"),
-        ("report",          "Print aggregate stats: requests, tokens, category breakdown"),
-        ("setup-claude",    "Print env-var commands to route Claude Code through the proxy"),
-        ("setup-copilot",   "Print env-var commands to route GitHub Copilot through the proxy"),
-        ("setup-opencode",  "Print env-var commands to route opencode through the proxy"),
+        ("start", "Start the proxy and web dashboard (cloud APIs, forward mode)"),
+        ("start-local", "Start reverse proxies for local LLM servers (no cert needed)"),
+        ("status", "Show proxy status and active session"),
+        ("install-cert", "Install the mitmproxy CA cert into the system trust store"),
+        (
+            "run <tool>",
+            "Run a tool with proxy env vars injected (code/cursor/claude/opencode + fallback)",
+        ),
+        ("reset-db", "Delete all requests and sessions from the local database"),
+        ("db-stats", "Print row counts for each database table"),
+        ("report", "Print aggregate stats: requests, tokens, category breakdown"),
+        (
+            "setup-claude",
+            "Print env-var commands to route Claude Code through the proxy",
+        ),
+        (
+            "setup-copilot",
+            "Print env-var commands to route GitHub Copilot through the proxy",
+        ),
+        (
+            "setup-opencode",
+            "Print env-var commands to route opencode through the proxy",
+        ),
         ("setup-llamaserver", "Print setup instructions for llama.cpp/llama-server"),
-        ("setup-ollama",    "Print setup instructions for Ollama"),
-        ("setup-vllm",      "Print setup instructions for vLLM"),
-        ("session start",   "Start a named session"),
-        ("session end",     "End the current active session"),
-        ("session list",    "List all sessions"),
+        ("setup-ollama", "Print setup instructions for Ollama"),
+        ("setup-vllm", "Print setup instructions for vLLM"),
+        ("session start", "Start a named session"),
+        ("session end", "End the current active session"),
+        ("session list", "List all sessions"),
     ]
     table = Table(show_header=True, header_style="bold")
     table.add_column("Command", style="bold green", min_width=18)
@@ -460,12 +574,15 @@ def help_cmd() -> None:
     for cmd, desc in rows:
         table.add_row(cmd, desc)
     console.print(table)
-    console.print("\nRun [bold]contextspy <command> --help[/bold] for details on any command.\n")
+    console.print(
+        "\nRun [bold]contextspy <command> --help[/bold] for details on any command.\n"
+    )
 
 
 # ---------------------------------------------------------------------------
 # reset-db
 # ---------------------------------------------------------------------------
+
 
 @app.command("reset-db")
 def reset_db(
@@ -473,9 +590,14 @@ def reset_db(
 ) -> None:
     """Delete all requests and sessions from the local database."""
     if not yes:
-        typer.confirm("This will permanently delete ALL requests and sessions. Continue?", abort=True)
+        typer.confirm(
+            "This will permanently delete ALL requests and sessions. Continue?",
+            abort=True,
+        )
     import sqlite3
+
     from contextspy.config import Settings
+
     db_path = Settings.load().storage.db_path
     con = sqlite3.connect(db_path)
     cur = con.cursor()
@@ -492,11 +614,14 @@ def reset_db(
 # db-stats
 # ---------------------------------------------------------------------------
 
+
 @app.command("db-stats")
 def db_stats() -> None:
     """Print row counts for each database table."""
     import sqlite3
+
     from contextspy.config import Settings
+
     db_path = Settings.load().storage.db_path
     con = sqlite3.connect(db_path)
     cur = con.cursor()
@@ -517,11 +642,14 @@ def db_stats() -> None:
 # report
 # ---------------------------------------------------------------------------
 
+
 @app.command("report")
 def report() -> None:
     """Print aggregate stats: requests, tokens in/out, context category breakdown."""
     import sqlite3
+
     from contextspy.config import Settings
+
     db_path = Settings.load().storage.db_path
     con = sqlite3.connect(db_path)
     cur = con.cursor()
@@ -546,8 +674,20 @@ def report() -> None:
         FROM requests
     """)
     row = cur.fetchone()
-    (total_in, total_out, prov_in, prov_out,
-     sys_p, tool_def, tool_res, file_c, conv_hist, cur_msg, prefill, uncat) = row
+    (
+        total_in,
+        total_out,
+        prov_in,
+        prov_out,
+        sys_p,
+        tool_def,
+        tool_res,
+        file_c,
+        conv_hist,
+        cur_msg,
+        prefill,
+        uncat,
+    ) = row
 
     # Per-tool breakdown (only if tool_stats table exists)
     tool_rows: list[tuple] = []
@@ -581,14 +721,14 @@ def report() -> None:
 
     # Category breakdown
     categories = [
-        ("System prompt",           sys_p),
-        ("Tool definitions",        tool_def),
-        ("Tool results",            tool_res),
-        ("File contents",           file_c),
-        ("Conversation history",    conv_hist),
-        ("Current user message",    cur_msg),
-        ("Assistant prefill",       prefill),
-        ("Uncategorized",           uncat),
+        ("System prompt", sys_p),
+        ("Tool definitions", tool_def),
+        ("Tool results", tool_res),
+        ("File contents", file_c),
+        ("Conversation history", conv_hist),
+        ("Current user message", cur_msg),
+        ("Assistant prefill", prefill),
+        ("Uncategorized", uncat),
     ]
     total_cat = sum(v for _, v in categories) or 1
 
@@ -608,7 +748,9 @@ def report() -> None:
         total_res = sum(r[2] for r in tool_rows) or 1
         has_results = any(r[2] > 0 for r in tool_rows)
 
-        tools_table = Table(title="Tool definition tokens (top 30)", header_style="bold")
+        tools_table = Table(
+            title="Tool definition tokens (top 30)", header_style="bold"
+        )
         tools_table.add_column("Tool name", style="bold")
         tools_table.add_column("Def tokens", justify="right")
         tools_table.add_column("Def %", justify="right")
@@ -631,66 +773,88 @@ def report() -> None:
 # setup-claude
 # ---------------------------------------------------------------------------
 
+
 @app.command("setup-claude")
 def setup_claude() -> None:
     """Print commands to route Claude Code through the ContextSpy proxy."""
     from contextspy.config import Settings
+
     settings = Settings.load()
     port = settings.proxy.port
     cert = str(settings.storage.db_path).replace("contextspy.db", "").rstrip("/\\")
     cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
 
     console.print("\n[bold cyan]Claude Code — proxy setup[/bold cyan]\n")
-    console.print("Run the following in the terminal where you launch [bold]claude[/bold]:\n")
+    console.print(
+        "Run the following in the terminal where you launch [bold]claude[/bold]:\n"
+    )
     console.print("[bold yellow]PowerShell:[/bold yellow]")
     console.print(f'  $env:HTTPS_PROXY = "http://127.0.0.1:{port}"')
     console.print(f'  $env:NODE_EXTRA_CA_CERTS = "{cert_path}"')
-    console.print( '  $env:NO_PROXY = "github.com,localhost,127.0.0.1,::1"')
+    console.print('  $env:NO_PROXY = "github.com,localhost,127.0.0.1,::1"')
     console.print()
     console.print("[bold yellow]Bash / Zsh:[/bold yellow]")
-    console.print(f'  export HTTPS_PROXY=http://127.0.0.1:{port}')
+    console.print(f"  export HTTPS_PROXY=http://127.0.0.1:{port}")
     console.print(f'  export NODE_EXTRA_CA_CERTS="{cert_path}"')
-    console.print( '  export NO_PROXY="github.com,localhost,127.0.0.1,::1"')
-    console.print( '  export no_proxy="github.com,localhost,127.0.0.1,::1"')
+    console.print('  export NO_PROXY="github.com,localhost,127.0.0.1,::1"')
+    console.print('  export no_proxy="github.com,localhost,127.0.0.1,::1"')
     console.print()
-    console.print("[dim]NO_PROXY prevents git and other tools from routing through the proxy.[/dim]")
-    console.print("[dim]Tip: add these to your shell profile to make them permanent.[/dim]")
-    console.print("[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n")
+    console.print(
+        "[dim]NO_PROXY prevents git and other tools from routing through the proxy.[/dim]"
+    )
+    console.print(
+        "[dim]Tip: add these to your shell profile to make them permanent.[/dim]"
+    )
+    console.print(
+        "[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n"
+    )
 
 
 # ---------------------------------------------------------------------------
 # setup-copilot
 # ---------------------------------------------------------------------------
 
+
 @app.command("setup-copilot")
 def setup_copilot() -> None:
     """Print commands to route GitHub Copilot through the ContextSpy proxy."""
     from contextspy.config import Settings
+
     settings = Settings.load()
     port = settings.proxy.port
     cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
 
     console.print("\n[bold cyan]GitHub Copilot — proxy setup[/bold cyan]\n")
-    console.print("Run the following in the terminal where VS Code / the Copilot extension runs:\n")
+    console.print(
+        "Run the following in the terminal where VS Code / the Copilot extension runs:\n"
+    )
     console.print("[bold yellow]PowerShell:[/bold yellow]")
     console.print(f'  $env:HTTPS_PROXY = "http://127.0.0.1:{port}"')
     console.print(f'  $env:NODE_EXTRA_CA_CERTS = "{cert_path}"')
-    console.print( '  $env:NO_PROXY = "github.com,localhost,127.0.0.1,::1"')
+    console.print('  $env:NO_PROXY = "github.com,localhost,127.0.0.1,::1"')
     console.print()
     console.print("[bold yellow]Bash / Zsh:[/bold yellow]")
-    console.print(f'  export HTTPS_PROXY=http://127.0.0.1:{port}')
+    console.print(f"  export HTTPS_PROXY=http://127.0.0.1:{port}")
     console.print(f'  export NODE_EXTRA_CA_CERTS="{cert_path}"')
-    console.print( '  export NO_PROXY="github.com,localhost,127.0.0.1,::1"')
-    console.print( '  export no_proxy="github.com,localhost,127.0.0.1,::1"')
+    console.print('  export NO_PROXY="github.com,localhost,127.0.0.1,::1"')
+    console.print('  export no_proxy="github.com,localhost,127.0.0.1,::1"')
     console.print()
-    console.print("[bold]VS Code settings.json[/bold] (alternative — applies to all extensions):")
+    console.print(
+        "[bold]VS Code settings.json[/bold] (alternative — applies to all extensions):"
+    )
     console.print(f'  "http.proxy": "http://127.0.0.1:{port}",')
-    console.print( '  "http.proxyStrictSSL": false,')
-    console.print( '  "http.noProxy": ["github.com", "localhost", "127.0.0.1"]')
+    console.print('  "http.proxyStrictSSL": false,')
+    console.print('  "http.noProxy": ["github.com", "localhost", "127.0.0.1"]')
     console.print()
-    console.print("[dim]NO_PROXY prevents git and other tools from routing through the proxy.[/dim]")
-    console.print("[dim]Copilot uses copilot-proxy.githubusercontent.com — already in the provider list.[/dim]")
-    console.print("[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n")
+    console.print(
+        "[dim]NO_PROXY prevents git and other tools from routing through the proxy.[/dim]"
+    )
+    console.print(
+        "[dim]Copilot uses copilot-proxy.githubusercontent.com — already in the provider list.[/dim]"
+    )
+    console.print(
+        "[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -698,21 +862,31 @@ def setup_copilot() -> None:
 # setup-llamaserver
 # ---------------------------------------------------------------------------
 
-def _print_local_setup_header(server_name: str, default_server_port: int, default_listen_port: int) -> tuple[int, int]:
+
+def _print_local_setup_header(
+    server_name: str, default_server_port: int, default_listen_port: int
+) -> tuple[int, int]:
     """Print the common config.toml block and return (server_port, listen_port)."""
     from contextspy.config import Settings
+
     settings = Settings.load()
-    console.print(f"\n[bold cyan]{server_name} — ContextSpy local reverse-proxy setup[/bold cyan]\n")
+    console.print(
+        f"\n[bold cyan]{server_name} — ContextSpy local reverse-proxy setup[/bold cyan]\n"
+    )
     console.print(
         f"In this mode contextspy acts as a reverse proxy in front of {server_name}.\n"
         "No CA certificate is needed — traffic stays on localhost and is plain HTTP.\n"
     )
     console.print("[bold]1. Add to ~/.contextspy/config.toml:[/bold]")
     console.print(f"\n  [[reverse_targets]]", markup=False)
-    console.print(f'  name        = "{server_name.lower().replace(" ", "-")}"', markup=False)
-    console.print(f'  listen_port = {default_listen_port}   # contextspy listens here')
-    console.print(f'  target_url  = "http://127.0.0.1:{default_server_port}"  # your {server_name} port')
-    console.print( '  provider    = "openai"   # OpenAI-compatible API')
+    console.print(
+        f'  name        = "{server_name.lower().replace(" ", "-")}"', markup=False
+    )
+    console.print(f"  listen_port = {default_listen_port}   # contextspy listens here")
+    console.print(
+        f'  target_url  = "http://127.0.0.1:{default_server_port}"  # your {server_name} port'
+    )
+    console.print('  provider    = "openai"   # OpenAI-compatible API')
     console.print()
     console.print("[bold]2. Start contextspy in local mode:[/bold]")
     console.print("  uv run contextspy start-local\n")
@@ -723,75 +897,106 @@ def _print_local_setup_header(server_name: str, default_server_port: int, defaul
 def setup_llamaserver() -> None:
     """Print setup instructions for llama.cpp / llama-server."""
     server_port, listen_port = _print_local_setup_header("llama-server", 8080, 8889)
-    console.print("[bold]3. Point your client at ContextSpy instead of llama-server directly:[/bold]")
+    console.print(
+        "[bold]3. Point your client at ContextSpy instead of llama-server directly:[/bold]"
+    )
     console.print(f"  Change base URL from  http://127.0.0.1:{server_port}/v1")
     console.print(f"                    to  http://127.0.0.1:{listen_port}/v1\n")
     console.print("[bold]4. Launch llama-server as normal:[/bold]")
     console.print(f"  llama-server -m your-model.gguf --port {server_port}\n")
-    console.print("[dim]Tip: llama-server exposes the OpenAI-compatible /v1/chat/completions endpoint.[/dim]")
-    console.print("[dim]The 'openai' provider parser handles it with full token breakdown.[/dim]\n")
+    console.print(
+        "[dim]Tip: llama-server exposes the OpenAI-compatible /v1/chat/completions endpoint.[/dim]"
+    )
+    console.print(
+        "[dim]The 'openai' provider parser handles it with full token breakdown.[/dim]\n"
+    )
 
 
 @app.command("setup-ollama")
 def setup_ollama() -> None:
     """Print setup instructions for Ollama."""
     server_port, listen_port = _print_local_setup_header("Ollama", 11434, 8890)
-    console.print("[bold]3. Point your client at ContextSpy instead of Ollama directly:[/bold]")
+    console.print(
+        "[bold]3. Point your client at ContextSpy instead of Ollama directly:[/bold]"
+    )
     console.print(f"  Change base URL from  http://127.0.0.1:{server_port}/v1")
     console.print(f"                    to  http://127.0.0.1:{listen_port}/v1\n")
-    console.print("[bold]4. Ollama runs as a background service — no extra step needed.[/bold]\n")
-    console.print("[bold]Alternatively[/bold] — use contextspy's built-in Ollama forward-proxy support:")
+    console.print(
+        "[bold]4. Ollama runs as a background service — no extra step needed.[/bold]\n"
+    )
+    console.print(
+        "[bold]Alternatively[/bold] — use contextspy's built-in Ollama forward-proxy support:"
+    )
     console.print("  Run [bold]contextspy start[/bold] (normal cloud mode).")
     console.print(f"  Ollama on port 11434 is auto-detected by the forward proxy.")
     console.print("  Set HTTPS_PROXY=http://127.0.0.1:8888 in your client.\n")
-    console.print("[dim]Ollama /v1/chat/completions is OpenAI-compatible (Ollama >= 0.1.24).[/dim]")
-    console.print("[dim]The raw /api/generate and /api/chat endpoints are not yet parsed.[/dim]\n")
+    console.print(
+        "[dim]Ollama /v1/chat/completions is OpenAI-compatible (Ollama >= 0.1.24).[/dim]"
+    )
+    console.print(
+        "[dim]The raw /api/generate and /api/chat endpoints are not yet parsed.[/dim]\n"
+    )
 
 
 @app.command("setup-vllm")
 def setup_vllm() -> None:
     """Print setup instructions for vLLM."""
     server_port, listen_port = _print_local_setup_header("vLLM", 8000, 8891)
-    console.print("[bold]3. Point your client at ContextSpy instead of vLLM directly:[/bold]")
+    console.print(
+        "[bold]3. Point your client at ContextSpy instead of vLLM directly:[/bold]"
+    )
     console.print(f"  Change base URL from  http://127.0.0.1:{server_port}/v1")
     console.print(f"                    to  http://127.0.0.1:{listen_port}/v1\n")
     console.print("[bold]4. Launch vLLM as normal:[/bold]")
     console.print(f"  vllm serve your-model --port {server_port}\n")
-    console.print("[dim]vLLM exposes a fully OpenAI-compatible API; use provider = \"openai\" in config.[/dim]")
-    console.print("[dim]If vLLM uses a different port, update target_url and listen_port accordingly.[/dim]\n")
+    console.print(
+        '[dim]vLLM exposes a fully OpenAI-compatible API; use provider = "openai" in config.[/dim]'
+    )
+    console.print(
+        "[dim]If vLLM uses a different port, update target_url and listen_port accordingly.[/dim]\n"
+    )
 
 
 @app.command("setup-opencode")
 def setup_opencode() -> None:
     """Print commands to route opencode through the ContextSpy proxy."""
     from contextspy.config import Settings
+
     settings = Settings.load()
     port = settings.proxy.port
     cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
 
     console.print("\n[bold cyan]opencode — proxy setup[/bold cyan]\n")
-    console.print("Run the following in the terminal where you launch [bold]opencode[/bold]:\n")
+    console.print(
+        "Run the following in the terminal where you launch [bold]opencode[/bold]:\n"
+    )
     console.print("[bold yellow]PowerShell:[/bold yellow]")
     console.print(f'  $env:HTTPS_PROXY = "http://127.0.0.1:{port}"')
     console.print(f'  $env:SSL_CERT_FILE = "{cert_path}"')
     console.print(f'  $env:NODE_EXTRA_CA_CERTS = "{cert_path}"')
-    console.print( '  $env:NO_PROXY = "github.com,localhost,127.0.0.1,::1"')
+    console.print('  $env:NO_PROXY = "github.com,localhost,127.0.0.1,::1"')
     console.print()
     console.print("[bold yellow]Bash / Zsh:[/bold yellow]")
-    console.print(f'  export HTTPS_PROXY=http://127.0.0.1:{port}')
+    console.print(f"  export HTTPS_PROXY=http://127.0.0.1:{port}")
     console.print(f'  export SSL_CERT_FILE="{cert_path}"')
     console.print(f'  export NODE_EXTRA_CA_CERTS="{cert_path}"')
-    console.print( '  export NO_PROXY="github.com,localhost,127.0.0.1,::1"')
-    console.print( '  export no_proxy="github.com,localhost,127.0.0.1,::1"')
+    console.print('  export NO_PROXY="github.com,localhost,127.0.0.1,::1"')
+    console.print('  export no_proxy="github.com,localhost,127.0.0.1,::1"')
     console.print()
     console.print("[bold]opencode config (~/.config/opencode/config.json):[/bold]")
-    console.print('  {')
+    console.print("  {")
     console.print(f'    "proxy": "http://127.0.0.1:{port}"')
-    console.print('  }')
+    console.print("  }")
     console.print()
-    console.print("[dim]NO_PROXY prevents git and other tools from routing through the proxy.[/dim]")
-    console.print("[dim]Tip: add the env vars to your shell profile to make them permanent.[/dim]")
-    console.print("[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n")
+    console.print(
+        "[dim]NO_PROXY prevents git and other tools from routing through the proxy.[/dim]"
+    )
+    console.print(
+        "[dim]Tip: add the env vars to your shell profile to make them permanent.[/dim]"
+    )
+    console.print(
+        "[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n"
+    )
 
 
 if __name__ == "__main__":
