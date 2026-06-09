@@ -29,6 +29,33 @@ every token category for every request, across sessions, over time.
 
 Think of your favorite CPU or memory profiler, just applied to contents of the context of AI agent. While you can optimize pefromance just by reviewing code, having a profiler to capture and visualise shapshot data helps alot. Same with LLM context optmisation.
 
+## Quick start
+
+More details in [install guide](docs/install.md).
+
+```bash
+# macOS (Apple Silicon) — see install guide for Linux, Windows, and PyPI options
+brew tap RimantasZ/contextspy
+brew install contextspy
+
+
+# Install the CA certificate (cloud mode only, one-time)
+sudo contextspy install-cert
+# or run contextspy install-cert and then 
+# printed install cert command with sudo
+
+# Start the proxy
+contextspy start
+
+# Start your coding agent from separate terminal 
+#  This will setup all unnecessary environment variables to route llm through the proxy
+contextspy run claude <path to your project>
+# contextspy run opencode <path to your project>
+# contextspy run code <path to your project>
+```
+Open http://127.0.0.1:5173 in your browser for ContextSpy dashboard.
+
+Alternatively, refer to [configure your agent](docs/cloud-mode.md) on how to route LLM traffic through proxy at `http://127.0.0.1:8888`
 
 ## Why should I care?
 
@@ -80,35 +107,6 @@ ContextSpy starts a HTTPS proxy (or reverse proxy for locally hosted models) whi
 - **Session tracking** — name and group requests by task to compare usage across runs
 - **SQLite storage** — all data stored locally in `~/.contextspy/`; no data leaves your machine
 - **Agent detection** — Copilot, Claude Desktop/Code, opencode, Cursor, and generic clients
-
-## Quick start
-
-More details in [install guide](docs/install.md).
-
-```bash
-# macOS (Apple Silicon) — see install guide for Linux, Windows, and PyPI options
-brew tap RimantasZ/contextspy
-brew install contextspy
-
-
-# Install the CA certificate (cloud mode only, one-time)
-sudo contextspy install-cert
-# or run contextspy install-cert and then 
-# printed install cert command with sudo
-
-# Start the proxy
-contextspy start
-
-# Start your coding agent from separate terminal 
-#  This will setup all unnecessary environment variables to route llm through the proxy
-contextspy run claude <path to your project>
-# contextspy run opencode <path to your project>
-# contextspy run code <path to your project>
-```
-Open http://127.0.0.1:5173 in your browser for ContextSpy dashboard.
-
-Alternatively, refer to [configure your agent](docs/cloud-mode.md) on how to route LLM traffic through proxy at `http://127.0.0.1:8888`
-
 
 ## Documentation links
 

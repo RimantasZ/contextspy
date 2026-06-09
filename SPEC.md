@@ -423,7 +423,7 @@ Stats response shape (shared by overview and per-session):
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/proxy/status` | `{ "running": bool, "port": 8080, "cert_installed": bool }` |
+| `GET` | `/api/proxy/status` | `{ "running": bool, "port": 8888, "cert_installed": bool }` |
 | `POST` | `/api/proxy/start` | Start the proxy (no-op if already running). |
 | `POST` | `/api/proxy/stop` | Stop the proxy. |
 
