@@ -130,11 +130,19 @@ def start(
     settings.ensure_dirs()
     settings.write_defaults()
 
-    # Cert check: generate if missing, then install
+    # Cert check: generate if missing or incomplete (cert without key = silent TLS failure)
     if not cert_exists():
-        console.print(
-            "[yellow]mitmproxy CA certificate not found. Generating...[/yellow]"
-        )
+        from contextspy.proxy.cert import _MITMPROXY_CA, _MITMPROXY_KEY
+        if _MITMPROXY_CA.exists() and not _MITMPROXY_KEY.exists():
+            console.print(
+                "[red]mitmproxy CA private key missing "
+                f"({_MITMPROXY_KEY}) — the proxy will silently drop TLS connections.\n"
+                "  Fix: rm -rf ~/.mitmproxy/ then re-run contextspy start[/red]"
+            )
+        else:
+            console.print(
+                "[yellow]mitmproxy CA certificate not found. Generating...[/yellow]"
+            )
         ok, msg = generate_cert()
         if ok:
             console.print(f"[green]{msg}[/green]")

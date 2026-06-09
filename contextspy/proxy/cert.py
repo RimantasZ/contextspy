@@ -20,10 +20,12 @@ from pathlib import Path
 
 _MITMPROXY_DIR = Path.home() / ".mitmproxy"
 _MITMPROXY_CA = _MITMPROXY_DIR / "mitmproxy-ca-cert.pem"
+_MITMPROXY_KEY = _MITMPROXY_DIR / "mitmproxy-ca.pem"
 
 
 def cert_exists() -> bool:
-    return _MITMPROXY_CA.exists()
+    """Return True only when both the CA cert and its private key are present."""
+    return _MITMPROXY_CA.exists() and _MITMPROXY_KEY.exists()
 
 
 def generate_cert() -> tuple[bool, str]:
@@ -33,6 +35,10 @@ def generate_cert() -> tuple[bool, str]:
     """
     if cert_exists():
         return True, "CA certificate already exists."
+    # If the public cert exists but the private key is gone, CertStore.create_store
+    # may refuse to overwrite. Remove the orphaned cert so it can regenerate cleanly.
+    if _MITMPROXY_CA.exists() and not _MITMPROXY_KEY.exists():
+        _MITMPROXY_CA.unlink()
     try:
         from mitmproxy.certs import CertStore
         CertStore.create_store(_MITMPROXY_DIR, "mitmproxy", key_size=2048)
