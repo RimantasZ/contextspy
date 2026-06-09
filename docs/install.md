@@ -20,7 +20,7 @@ brew tap RimantasZ/contextspy
 brew install contextspy
 contextspy help
 ```
-Next steps: install CA certificate, setup coding agent
+Next steps: [install CA certificate](#ca-certificate-setup-cloudforward-proxy-mode-only), [setup coding agent](cloud-mode.md)
 
 ### Linux (Ubuntu / Debian)
 
@@ -32,7 +32,7 @@ contextspy help
 ```
 Installs to `/usr/bin/contextspy`. Remove with `apt remove contextspy`.
 
-Next steps: install CA certificate, setup coding agent
+Next steps: [install CA certificate](#ca-certificate-setup-cloudforward-proxy-mode-only), [setup coding agent](cloud-mode.md)
 
 ### Windows (x86_64)
 
@@ -41,7 +41,9 @@ No specific installer. Download a binary release from the section below, unzip t
 ```powershell
 .\contextspy help
 ```
-Next steps: install CA certificate, setup coding agent
+In some cases, Windows Defender or antivirus software might flag release binary as a threat - as they dont like that it bundles mitmproxy library for creating proxy connections. If you can not make an exception, the only other option is installing as [PyPi package](#install-from-pypi)
+
+Next steps: [install CA certificate](#ca-certificate-setup-cloudforward-proxy-mode-only), [setup coding agent](cloud-mode.md)
 
 ### Download binary archive
 
