@@ -1,5 +1,54 @@
 # What's New
 
+## v0.1.11
+
+### Fixes & improvements
+- **Certificate handling — no more silent failures** — `contextspy start` now validates the CA
+  key on every launch and exits with a clear error if it is missing or corrupted, rather than
+  starting the proxy and silently dropping TLS connections.
+- **`contextspy run` aborts early** — if the CA cert file is missing when launching a tool,
+  the command now exits with an actionable error instead of a yellow warning.
+- **Auto-fix sudo ownership** — when `contextspy install-cert` is run with `sudo`, the cert
+  files in `~/.mitmproxy/` are automatically chowned back to the real user so that subsequent
+  non-root runs can read them.
+- **Install guide rewritten** — clearer step-by-step flow and a new
+  [Troubleshooting](install.md#troubleshooting) section covering the most common cert and proxy
+  startup errors.
+
+---
+
+## v0.1.10
+
+### Fixes
+- **Certificate key validation** — `generate_cert()` now reads and parses the existing private
+  key on startup; a corrupted or unreadable key triggers automatic regeneration instead of being
+  silently ignored.
+- **Root-owned file detection** — if cert files are owned by root (from a previous `sudo` run),
+  the error message now includes the exact `chown` command to fix ownership.
+
+---
+
+## v0.1.9
+
+### Fixes
+- **mitmproxy error logging** — internal mitmproxy log messages are now forwarded to
+  ContextSpy's own logger, making TLS and connection errors visible in the terminal output
+  instead of disappearing silently.
+
+---
+
+## v0.1.8
+
+### Fixes
+- **Silent TLS drop fixed** — `cert_exists()` now checks for both the CA certificate *and* its
+  private key. Previously, if the key was missing while the cert file was present, the proxy
+  would start but silently fail all HTTPS interceptions.
+- **Windows Defender notice** — install guide now documents that Windows Defender or antivirus
+  software may flag the release binary (because it bundles mitmproxy), with a link to the PyPI
+  install as an alternative.
+
+---
+
 ## v0.1.7
 
 ### New features
