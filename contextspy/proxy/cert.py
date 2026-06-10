@@ -32,20 +32,32 @@ def generate_cert() -> tuple[bool, str]:
     """Generate the mitmproxy CA certificate without starting the proxy.
 
     Returns (success, message).  If the cert already exists and is valid, no-op.
-    If the files exist but are corrupted or unreadable, they are removed and regenerated.
+    If the files exist but are corrupted, they are removed and regenerated.
     """
     if cert_exists():
         try:
             from cryptography.hazmat.primitives.serialization import load_pem_private_key
             load_pem_private_key(_MITMPROXY_KEY.read_bytes(), password=None)
             return True, "CA certificate already exists."
+        except PermissionError:
+            return False, (
+                f"CA key is not readable ({_MITMPROXY_KEY}).\n"
+                f"Files are likely owned by root from a previous sudo run.\n"
+                f"Fix with:  sudo chown -R $USER ~/.mitmproxy/"
+            )
         except Exception:
-            # Key is corrupted or unreadable — fall through to regenerate
-            pass
+            pass  # corrupted key — fall through to regenerate
+
     # Remove any partial or corrupted files before regenerating
     for f in (_MITMPROXY_CA, _MITMPROXY_KEY):
         if f.exists():
-            f.unlink()
+            try:
+                f.unlink()
+            except PermissionError:
+                return False, (
+                    f"Cannot remove CA files ({_MITMPROXY_DIR}) — owned by root.\n"
+                    f"Fix with:  sudo rm -rf ~/.mitmproxy/"
+                )
     try:
         from mitmproxy.certs import CertStore
         CertStore.create_store(_MITMPROXY_DIR, "mitmproxy", key_size=2048)
