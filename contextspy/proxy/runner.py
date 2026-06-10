@@ -132,8 +132,19 @@ def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = N
                         settings.proxy.port,
                     )
 
+        class _MitmForwarder(_logging.Handler):
+            def emit(self, record: _logging.LogRecord) -> None:
+                msg = record.getMessage()
+                if record.levelno >= _logging.WARNING or any(
+                    k in msg.lower() for k in ("tls", "ssl", "cert", "error", "connect")
+                ):
+                    logger.debug("mitmproxy[%s]: %s", record.levelname, msg)
+
         watcher = _BindWatcher()
-        _logging.getLogger("mitmproxy").addHandler(watcher)
+        mitm_logger = _logging.getLogger("mitmproxy")
+        mitm_logger.addHandler(watcher)
+        mitm_logger.addHandler(_MitmForwarder())
+        mitm_logger.setLevel(_logging.DEBUG)
         master.addons.add(_addon)
         _master = master
         try:
