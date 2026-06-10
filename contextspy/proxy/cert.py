@@ -31,14 +31,21 @@ def cert_exists() -> bool:
 def generate_cert() -> tuple[bool, str]:
     """Generate the mitmproxy CA certificate without starting the proxy.
 
-    Returns (success, message).  If the cert already exists this is a no-op.
+    Returns (success, message).  If the cert already exists and is valid, no-op.
+    If the files exist but are corrupted or unreadable, they are removed and regenerated.
     """
     if cert_exists():
-        return True, "CA certificate already exists."
-    # If the public cert exists but the private key is gone, CertStore.create_store
-    # may refuse to overwrite. Remove the orphaned cert so it can regenerate cleanly.
-    if _MITMPROXY_CA.exists() and not _MITMPROXY_KEY.exists():
-        _MITMPROXY_CA.unlink()
+        try:
+            from cryptography.hazmat.primitives.serialization import load_pem_private_key
+            load_pem_private_key(_MITMPROXY_KEY.read_bytes(), password=None)
+            return True, "CA certificate already exists."
+        except Exception:
+            # Key is corrupted or unreadable — fall through to regenerate
+            pass
+    # Remove any partial or corrupted files before regenerating
+    for f in (_MITMPROXY_CA, _MITMPROXY_KEY):
+        if f.exists():
+            f.unlink()
     try:
         from mitmproxy.certs import CertStore
         CertStore.create_store(_MITMPROXY_DIR, "mitmproxy", key_size=2048)
