@@ -61,9 +61,32 @@ def generate_cert() -> tuple[bool, str]:
     try:
         from mitmproxy.certs import CertStore
         CertStore.create_store(_MITMPROXY_DIR, "mitmproxy", key_size=2048)
+        _fix_sudo_ownership()
         return True, f"CA certificate generated at {_MITMPROXY_CA}"
     except Exception as exc:
         return False, f"Failed to generate CA certificate: {exc}"
+
+
+def _fix_sudo_ownership() -> None:
+    """If running as root via sudo, chown ~/.mitmproxy back to the real user.
+
+    Prevents cert files from being owned by root when the user runs
+    `sudo contextspy install-cert`, which would make subsequent non-sudo
+    runs unable to read the key.
+    """
+    import os
+    if os.geteuid() != 0:
+        return
+    sudo_user = os.environ.get("SUDO_USER")
+    if not sudo_user:
+        return
+    try:
+        import pwd
+        pw = pwd.getpwnam(sudo_user)
+        for path in [_MITMPROXY_DIR, *_MITMPROXY_DIR.iterdir()]:
+            os.chown(path, pw.pw_uid, pw.pw_gid)
+    except Exception:
+        pass  # best-effort; failure leaves files root-owned but doesn't break the install
 
 
 def _has_privileges(system: str) -> bool:

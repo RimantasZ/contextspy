@@ -1,6 +1,6 @@
 [project]
 name = "contextspy"
-version = "0.1.10"
+version = "0.1.11"
 description = "LLM proxy that analyses token usage in context windows"
 readme = "README.md"
 requires-python = ">=3.11"

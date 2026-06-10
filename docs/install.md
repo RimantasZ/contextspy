@@ -117,55 +117,137 @@ uv pip install -e .
 Cloud mode intercepts HTTPS traffic, which requires installing a local CA certificate
 into your OS trust store once. This is not needed for local LLM mode.
 
-**Step 1 — Generate the certificate** (mitmproxy creates it on first run):
+### Install the certificate
 
+Run this command once after installation:
+
+*macOS / Linux:*
 ```bash
-contextspy start --no-browser
-# wait a few seconds, then Ctrl+C
-```
-
-**Step 2 — Install into OS trust store:**
-
-*macOS:*
-```bash
-contextspy install-cert
-# or manually:
-sudo security add-trusted-cert -d -r trustRoot \
-  -k /Library/Keychains/System.keychain \
-  ~/.mitmproxy/mitmproxy-ca-cert.pem
-```
-
-
-*Ubuntu / Linux:*
-```bash
-contextspy install-cert
-# or manually:
-sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy-ca.crt
-sudo update-ca-certificates
+sudo contextspy install-cert
 ```
 
 *Windows (elevated PowerShell):*
 ```powershell
 contextspy install-cert
-# or manually:
-certutil -addstore -f Root "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
 ```
+
+This generates the CA key and certificate in `~/.mitmproxy/` and installs them into
+the system trust store. Files are always owned by your user account, even when run
+with `sudo`.
+
+> **No sudo / no admin rights?** Run `contextspy install-cert` without elevated privileges.
+> The cert will be generated but not installed into the system trust store — you'll see
+> the manual command to run. For `contextspy run` (the recommended way to launch tools),
+> `NODE_EXTRA_CA_CERTS` is set automatically so most setups work without the system install.
+
+> **One-time operation.** The certificate persists across restarts. Re-run only if you
+> delete `~/.mitmproxy/` or need to reset the trust store.
 
 You can also install from the dashboard → **Settings** → **CA Certificate** tab.
 
-> **One-time operation.** The certificate persists across restarts. Re-run only if you
-> delete `~/.mitmproxy/` or reinstall the OS.
+### Start the proxy
 
-**Step 3 — Node.js-based tools** (VS Code / Copilot, Claude CLI, opencode) have their
-own bundled certificate store and ignore the OS trust store. Set this before launching:
+```bash
+contextspy start
+```
+
+The proxy listens on port 8888 and the dashboard on port 5173 by default.
+
+### Launch your coding agent
+
+Use `contextspy run` to launch your tool — it automatically sets `HTTPS_PROXY` and
+`NODE_EXTRA_CA_CERTS` for you:
+
+```bash
+contextspy run claude <path to your project>
+contextspy run code <path to your project>
+contextspy run opencode <path to your project>
+```
+
+If you prefer to launch your tool manually, set these environment variables first:
 
 ```bash
 # macOS / Linux
+export HTTPS_PROXY=http://127.0.0.1:8888
 export NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca-cert.pem
 
 # PowerShell
+$env:HTTPS_PROXY = "http://127.0.0.1:8888"
 $env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
 ```
 
 The `contextspy setup-copilot`, `setup-claude`, and `setup-opencode` commands print the
 exact snippet for your shell.
+
+---
+
+## Troubleshooting
+
+### `contextspy start` prints "CA cert not installed" in yellow
+
+The cert was just generated but could not be installed into the system trust store
+(sudo required on macOS/Linux). Run the install command to complete setup:
+
+```bash
+sudo contextspy install-cert   # macOS / Linux
+```
+
+If you only use `contextspy run` to launch your tools, this step is optional —
+`contextspy run` sets `NODE_EXTRA_CA_CERTS` automatically.
+
+### `contextspy start` prints "CA certificate error" in red and exits
+
+The CA key cannot be read or is corrupted. The most common cause is a previous
+`sudo` run that left root-owned files in `~/.mitmproxy/`. Fix:
+
+```bash
+sudo chown -R $USER ~/.mitmproxy/
+contextspy start
+```
+
+If chown does not help (files are corrupted rather than just mis-owned):
+
+```bash
+sudo rm -rf ~/.mitmproxy/
+contextspy install-cert
+sudo contextspy install-cert   # to reinstall into system trust store
+```
+
+### `contextspy run` prints "Error: CA cert not found"
+
+The cert file is missing. Regenerate it:
+
+```bash
+contextspy install-cert
+sudo contextspy install-cert   # to also install into system trust store
+```
+
+### `contextspy run` prints "Error: ContextSpy is not running"
+
+The proxy must be started before launching a tool. Open a separate terminal and run:
+
+```bash
+contextspy start
+```
+
+Then retry `contextspy run` in your original terminal.
+
+### TLS errors in VS Code / Copilot when setting env vars manually
+
+If VS Code was already open when you set `HTTPS_PROXY`, it reuses the existing process
+and the new env vars never reach the extension host. Quit VS Code completely
+(Cmd+Q on macOS, not just closing the window), then use `contextspy run code .` to
+launch it fresh with the correct environment.
+
+### All HTTPS requests fail with `SSL_ERROR_SYSCALL` through the proxy
+
+The proxy is running but mitmproxy cannot complete TLS interception. Check:
+
+```bash
+ls -la ~/.mitmproxy/
+```
+
+- If `mitmproxy-ca.pem` is missing → run `contextspy install-cert` to regenerate
+- If files are owned by `root` → run `sudo chown -R $USER ~/.mitmproxy/`
+- If both files exist and are readable → check contextspy's terminal output for a
+  more specific error from mitmproxy

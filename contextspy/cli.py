@@ -122,7 +122,7 @@ def start(
     import uvicorn
 
     from contextspy.config import Settings
-    from contextspy.proxy.cert import cert_exists, generate_cert, install_cert
+    from contextspy.proxy.cert import generate_cert, install_cert
 
     settings = Settings.load()
     settings.proxy.port = proxy_port
@@ -130,20 +130,21 @@ def start(
     settings.ensure_dirs()
     settings.write_defaults()
 
-    # Always run generate_cert: it validates the existing key and only regenerates
-    # if files are missing or the key is corrupted (silent TLS failure otherwise).
+    # Validate cert (regenerates if missing or corrupted). Abort on failure —
+    # a broken cert causes silent TLS drops, which is worse than not starting.
     ok, msg = generate_cert()
-    if ok:
-        if "already exists" not in msg:
-            console.print(f"[green]{msg}[/green]")
-    else:
-        console.print(f"[red]Could not generate CA certificate: {msg}[/red]")
-
-    ok, msg = install_cert()
-    if ok:
-        console.print(f"[green]CA cert installed.[/green]")
-    else:
-        console.print(f"[yellow]CA cert not installed:[/yellow] {msg}")
+    if not ok:
+        console.print(f"[red]Cannot start — CA certificate error:[/red] {msg}")
+        raise typer.Exit(1)
+    newly_generated = "already exists" not in msg
+    if newly_generated:
+        console.print(f"[green]{msg}[/green]")
+        # Only attempt system-wide install when a new cert was just created.
+        ok2, msg2 = install_cert()
+        if ok2:
+            console.print(f"[green]CA cert installed.[/green]")
+        else:
+            console.print(f"[yellow]CA cert not installed:[/yellow] {msg2}")
 
     url = f"http://{settings.web.bind_addr}:{settings.web.port}"
     console.print(f"[bold green]ContextSpy[/bold green] starting at {url}")
@@ -350,16 +351,14 @@ def status() -> None:
 @app.command("install-cert")
 def install_cert_cmd() -> None:
     """Generate (if needed) and install the mitmproxy CA certificate into the system trust store."""
-    from contextspy.proxy.cert import cert_exists, generate_cert, install_cert
+    from contextspy.proxy.cert import generate_cert, install_cert
 
-    if not cert_exists():
-        console.print("[yellow]CA certificate not found. Generating...[/yellow]")
-        ok, msg = generate_cert()
-        if ok:
-            console.print(f"[green]{msg}[/green]")
-        else:
-            console.print(f"[red]{msg}[/red]")
-            raise typer.Exit(1)
+    ok, msg = generate_cert()
+    if not ok:
+        console.print(f"[red]{msg}[/red]")
+        raise typer.Exit(1)
+    if "already exists" not in msg:
+        console.print(f"[green]{msg}[/green]")
 
     ok, msg = install_cert()
     if ok:
@@ -427,9 +426,11 @@ def run_cmd(
 
     if injectors and not cert.exists():
         console.print(
-            f"[yellow]Warning:[/yellow] cert not found at {cert}. "
-            "Run [bold]contextspy install-cert[/bold] first."
+            f"[red]Error:[/red] CA cert not found at {cert}.\n"
+            "Run [bold]contextspy install-cert[/bold] first, "
+            "then [bold]contextspy start[/bold]."
         )
+        raise typer.Exit(1)
 
     extra_args: list[str] = []
     if tool in _ELECTRON_TOOLS and os.name == "nt":

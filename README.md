@@ -39,22 +39,21 @@ More details in [install guide](docs/install.md).
 brew tap RimantasZ/contextspy
 brew install contextspy
 
-
-# Install the CA certificate (cloud mode only, one-time)
+# Install CA certificate into system trust store (one-time, cloud mode only)
 sudo contextspy install-cert
-# or run contextspy install-cert and then 
-# printed install cert command with sudo
 
-# Start the proxy
+# Start the proxy (keep this terminal open)
 contextspy start
 
-# Start your coding agent from separate terminal 
-#  This will setup all unnecessary environment variables to route llm through the proxy
+# In a new terminal: launch your coding agent through the proxy
+# contextspy run sets HTTPS_PROXY and NODE_EXTRA_CA_CERTS automatically, so LLM requests are routed though the proxy
 contextspy run claude <path to your project>
 # contextspy run opencode <path to your project>
 # contextspy run code <path to your project>
 ```
-Open http://127.0.0.1:5173 in your browser for ContextSpy dashboard.
+Open http://127.0.0.1:5173 in your browser for the ContextSpy dashboard.
+
+If something doesn't work, see the [troubleshooting section](docs/install.md#troubleshooting) in the install guide.
 
 Alternatively, refer to [configure your agent](docs/cloud-mode.md) on how to route LLM traffic through proxy at `http://127.0.0.1:8888`
 
