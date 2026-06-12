@@ -115,7 +115,9 @@ In practice, it is recommended to do it from time to time.
 The new version can be installed with homebrew:
 
 ```bash
-brew tap RimantasZ/contextspy ## sometimes brew "forgets" custom tap, add it again if just update fails
+## optional - sometimes brew "forgets" custom tap, add it again if just update fails
+brew tap RimantasZ/contextspy 
+## update homebrew and upgrade contextspy
 brew update
 brew upgrade contextspy
 ```
@@ -124,6 +126,8 @@ At this stage, the database schema is subject to change, so it is advisable to p
 
 ## Tech stack
 
+| Layer | Technology |
+|---|---|
 | Backend | Python 3.11+, [FastAPI](https://fastapi.tiangolo.com/) + [uvicorn](https://www.uvicorn.org/), WebSocket for live push |
 | Frontend | [React](https://react.dev/) + [Vite](https://vitejs.dev/), [TanStack Query](https://tanstack.com/query), [Recharts](https://recharts.org/), [Tailwind CSS](https://tailwindcss.com/) |
 | CLI | [Typer](https://typer.tiangolo.com/) |
