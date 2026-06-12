@@ -1,7 +1,7 @@
 [project]
 name = "contextspy"
 version = "0.2.0"
-description = "LLM proxy that analyses token usage in context windows"
+description = "Context profiler for LLMs and AI agents - used to introspect context conents and reduce token costs"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
