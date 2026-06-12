@@ -6,6 +6,11 @@
 
 ContextSpy is porfiler tool for analysing context usage of LLM applications. It is implemented as local proxy that sits between your coding agent and the LLM API. It records every request and breaks down where the input tokens are going — system prompt, tool definitions, file contents, conversation history, and so on — so you can see how the context window is actually being used.
 
+### Something does not work, there is a bug!
+
+Yes, probably there are still many - it is stil in early development, and there will be bugs in accuracies. Please ping me on Twitter/X, LinkedIn, email if you have questions or need help.
+Or better else, open an issue on GitHub.
+
 ### Does ContextSpy send my data anywhere?
 
 No. Everything stays on your machine. The proxy intercepts traffic locally, writes to a SQLite database at `~/.contextspy/contextspy.db`, and serves the dashboard from the same process. No telemetry, no cloud sync.
