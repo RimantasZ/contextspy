@@ -48,7 +48,7 @@ Launch the agent using the `contextspy run <agent> <path>` command
 
 ```bash
 contextspy run claude <path to project>        # launches the claude agent, replace placeholder with your project path
-contextspy run code ~/code/my-secrect-project  # launches vscode with my-secrect-project open
+contextspy run code ~/code/my-secret-project  # launches vscode with my-secret-project open
 contextspy run opencode .                      # launches opencode with the current directory open 
 ```
 
@@ -61,7 +61,7 @@ For some node.js based apps (e.g. VS Code), you will need to close all instances
 Pick the agent you use and follow the instructions below.
 Run `contextspy setup-<agent>` for a printed reminder at any time.
 
-This will set up necessary enviroment variable s
+This will set up necessary environment variables
 
 
 ### Manual setup - agent specific

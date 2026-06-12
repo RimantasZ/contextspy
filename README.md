@@ -21,14 +21,14 @@
 </p>
 
 ContextSpy is a context window profiler for large language models and common agentic AI coding tools.
-It is used to intercept requests to LLM API, analyze and visualize prompt composition, and track context 
-changes between multiple requests in same session. Modern AI coding agents (GitHub Copilot, Claude Code, Opencode, etc.) pack a lot into each LLM request: system prompts, tool definitions and results, file contents, conversation history. It's often unclear why a session is slow, expensive, or hitting
+It is used to intercept requests to an LLM API, analyze and visualize prompt composition, and track context 
+changes between multiple requests in the same session. Modern AI coding agents (GitHub Copilot, Claude Code, opencode, etc.) pack a lot into each LLM request: system prompts, tool definitions and results, file contents, conversation history. It's often unclear why a session is slow, expensive, or hitting
 the context limit. ContextSpy makes the invisible visible - you see a live breakdown of
 every token category for every request, across sessions, over time.
 
 <p align="center"><strong>Example dashboard view</strong><br><img src="docs/_static/dashboard.png" alt="Dashboard view"></p>
 
-Think of your favorite CPU or memory profiler, just applied to contents of the context of AI agent. While you can optimize pefromance just by reviewing code, having a profiler to capture and visualise shapshot data helps alot. Same with LLM context optmisation.
+Think of your favorite CPU or memory profiler, just applied to the contents of the context of an AI agent. While you can optimize performance just by reviewing code, having a profiler to capture and visualise snapshot data helps a lot. Same with LLM context optimisation.
 
 ## Quick start
 
@@ -45,7 +45,7 @@ sudo contextspy install-cert
 contextspy start
 
 # In a new terminal: launch your coding agent through the proxy
-# contextspy run sets required environment variables, so LLM requests are routed though the proxy
+# contextspy run sets required environment variables, so LLM requests are routed through the proxy
 contextspy run claude <path to your project>
 # contextspy run opencode <path to your project>
 # contextspy run code <path to your project>
@@ -54,23 +54,23 @@ Open http://127.0.0.1:5173 in your browser for the ContextSpy dashboard.
 
 If something doesn't work, see the [troubleshooting section](docs/install.md#troubleshooting) in the install guide.
 
-Alternatively, refer to [configure your agent](docs/cloud-mode.md) on how to route LLM traffic through proxy at `http://127.0.0.1:8888`
+Alternatively, refer to [configure your agent](docs/cloud-mode.md) on how to route LLM traffic through the proxy at `http://127.0.0.1:8888`
 
 ## Context profiling? Why should I care?
 
-**Token costs are rising.** With AI agents embracing more and more complex workflows and usecases, token consumption and subsequent 
+**Token costs are rising.** With AI agents embracing more and more complex workflows and use cases, token consumption and subsequent 
 cloud API bills are growing larger and larger. This is also applicable for AI coding agents and tools,
 where providers are gradually switching from subsidized subscription mode and are either reducing token
-limits or switching to token usage based billing (e.g. GitHub Copilot)
+limits or switching to token usage based billing (e.g. GitHub Copilot).
 
 **Input tokens are major part**. When discussing AI model pricing, most people bring up token generation cost - that's where the numbers look 
 most dramatic ($25 per million tokens for Opus 4.8 output vs $0.40 for gpt-5-nano). But in agentic 
-workloads, input tokens outnumber output by 20-50x, or even more. So the most of your API bill is influenced
+workloads, input tokens outnumber output by 20-50x, or even more. So most of your API bill is influenced
 by input context, not the output the model generates.
 
-**AI coding agents = lots of input**. The expensive part is quick accumulation of context - with every turn it fills up with additional tokens - system prompt, skills, tool definitions, tool results, file contents, conversation history.
-You start with 5000 - 10000 tokens in fresh session, but by turn 25 it might be 30 to 50 thousand, spend some more time it might be hitting context window limit and compacting. Every API call to the model sends the full context 
-as part of prompt - and here is where the token consumption and costs skyrocket quickly.
+**AI coding agents = lots of input**. The expensive part is the quick accumulation of context - with every turn it fills up with additional tokens - system prompt, skills, tool definitions, tool results, file contents, conversation history.
+You start with 5000 - 10000 tokens in a fresh session, but by turn 25 it might be 30 to 50 thousand, spend some more time and it might be hitting the context window limit and compacting. Every API call to the model sends the full context 
+as part of the prompt - and here is where the token consumption and costs skyrocket quickly.
 
 ## Why large context is bad
 
@@ -79,14 +79,14 @@ We all have been told that the more information we will give to the model, the m
 There are three ways you pay for extra (and sometimes unnecessary) information in your context:
 
 1. **API Costs** - even with near perfect cache hits, input token costs outweigh output, often by order of magnitude or more.
-2. **Compute and latency** - larger contexts take considerably longer to process - especially in local hosted models
+2. **Compute and latency** - larger contexts take considerably longer to process - especially in locally hosted models
 3. **Context rot** - with larger contexts, LLMs start to lose precision rapidly, with [100k being the limit](https://www.trychroma.com/research/context-rot) where rapid degradation starts. So you are paying for more expensive model, but getting performance of cheaper one - or even worse.
 
 ContextSpy makes these costs visible so you can act on them.
 
 ## How does it work
 
-ContextSpy starts a HTTPS proxy (or reverse proxy for locally hosted models) which intercepts every request to LLMs, analyzes it and stores to local SQLite db. A webserver is also started on localhost, and serves dashboard to visualise all captured data.
+ContextSpy starts an HTTPS proxy (or reverse proxy for locally hosted models) which intercepts every request to LLMs, analyzes it and stores to local SQLite db. A webserver is also started on localhost, and serves dashboard to visualise all captured data.
 
 ## Some screenshots
 

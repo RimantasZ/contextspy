@@ -15,11 +15,11 @@ There are several options to install and run ContextSpy profiler:
 
 ## Installing binary release
 
-Easiest and least complicated approach for general use
+The easiest and least complicated approach for general use
 
-### MacOS - Homebrew
+### macOS - Homebrew
 
-Easiest way to install on Mac is using Homebrew. This supports Apple Silicon only — for older models it is recommended to use PyPI or build from source.
+The easiest way to install on Mac is using Homebrew. This supports Apple Silicon only — for older models it is recommended to use PyPI or build from source.
 
 Add contextspy tap and install using:
 
@@ -49,7 +49,7 @@ No specific installer. Download a binary release from the section below, unzip t
 ```powershell
 .\contextspy help
 ```
-In some cases, Windows Defender or antivirus software might flag release binary as a threat - as they dont like that it bundles mitmproxy library for creating proxy connections. If you can not make an exception, the only other option is installing as [PyPi package](#install-from-pypi)
+In some cases, Windows Defender or antivirus software might flag the release binary as a threat - as they don't like that it bundles mitmproxy library for creating proxy connections. If you cannot make an exception, the only other option is installing as a [PyPI package](#install-from-pypi)
 
 Next steps: [install CA certificate](#ca-certificate-setup-cloudforward-proxy-mode-only), [setup coding agent](cloud-mode.md)
 
@@ -65,7 +65,7 @@ Download and extract the archive for your platform, then run `./contextspy`.
 | Windows  | `contextspy-windows-x86_64.zip` |
 
 > **macOS Gatekeeper warning** — binaries downloaded directly from the internet are
-> quarantined by MacOS. Remove the quarantine flag after extracting:
+> quarantined by macOS. Remove the quarantine flag after extracting:
 >
 > ```bash
 > xattr -d com.apple.quarantine ./contextspy
@@ -88,7 +88,7 @@ uv tool install contextspy
 
 After install, `contextspy` is available on your `PATH`.
 
-On externally managed python installations (e.g. if python installed through Homebrew on MacOS, or Linux distributions), you may get a following error:
+On externally managed Python installations (e.g. if Python is installed through Homebrew on macOS, or Linux distributions), you may get the following error:
 ```
 error: externally-managed-environment
 ```

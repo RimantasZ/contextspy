@@ -4,12 +4,12 @@
 
 ### What is ContextSpy?
 
-ContextSpy is porfiler tool for analysing context usage of LLM applications. It is implemented as local proxy that sits between your coding agent and the LLM API. It records every request and breaks down where the input tokens are going — system prompt, tool definitions, file contents, conversation history, and so on — so you can see how the context window is actually being used.
+ContextSpy is a profiler tool for analysing context usage of LLM applications. It is implemented as a local proxy that sits between your coding agent and the LLM API. It records every request and breaks down where the input tokens are going — system prompt, tool definitions, file contents, conversation history, and so on — so you can see how the context window is actually being used.
 
 ### Something does not work, there is a bug!
 
-Yes, probably there are still many - it is stil in early development, and there will be bugs in accuracies. Please ping me on Twitter/X, LinkedIn, email if you have questions or need help.
-Or better else, open an issue on GitHub.
+Yes, probably there are still many - it is still in early development, and there will be bugs in accuracies. Please ping me on Twitter/X, LinkedIn, email if you have questions or need help.
+Or better yet, open an issue on GitHub.
 
 ### Does ContextSpy send my data anywhere?
 
@@ -23,8 +23,8 @@ For **local mode** (Ollama, llama-server, vLLM), traffic is plain HTTP — no ce
 
 ### Why does contextspy install-cert need a sudo/root access?
 
-To install the CA certificate into cert store, elevated privileges are required on all supported plaforms. On Windows, this requires running the command prompt as an administrator, and sudo on macOS/Linux. 
-If you dont feel comfortable running binaries as root, you can  run `contextspy install-cert` with normal user privileges and theninstall the certificate manually, using the command printed to console.
+To install the CA certificate into the cert store, elevated privileges are required on all supported platforms. On Windows, this requires running the command prompt as an administrator, and sudo on macOS/Linux. 
+If you don't feel comfortable running binaries as root, you can run `contextspy install-cert` with normal user privileges and then install the certificate manually, using the command printed to console.
 
 ### Cloud mode vs local mode — which should I use?
 
@@ -85,8 +85,8 @@ Yes, for the proxy itself. The only step that requires elevated privileges is in
 
 ### How accurate are the token counts?
 
-Token counts are estimates, not exact counts. The intention of ContexSpy is to provide rough estimates rather than exact counts.
-Is more aimed at cases where user needs ability to compare different configurations and their impact on token use, rather than precise token tracking and monitoring.
+Token counts are estimates, not exact counts. The intention of ContextSpy is to provide rough estimates rather than exact counts.
+It is more aimed at cases where the user needs the ability to compare different configurations and their impact on token use, rather than precise token tracking and monitoring.
 
 Counts are estimates using tiktoken `cl100k_base`. While its estimated accuracy depends on the provider:
 
@@ -96,8 +96,8 @@ Counts are estimates using tiktoken `cl100k_base`. While its estimated accuracy 
 | Anthropic (Claude) | ~5–15% |
 | Ollama / llama.cpp / vLLM | ~10–20% |
 
-In practice, error margins can be bigger - for example, for recent Opus models Anthropic increased token count by appox 30%.
-Again, the best use case is use these numbers as coparative metrics between "case A" and "case B" - rather than as an exact count.
+In practice, error margins can be bigger - for example, for recent Opus models Anthropic increased token count by approx 30%.
+Again, the best use case is to use these numbers as comparative metrics between "case A" and "case B" - rather than as an exact count.
 
 When the provider reports exact token counts in the API response (e.g. Anthropic's `usage` field), those are stored alongside the estimate and shown on the request detail page.
 
