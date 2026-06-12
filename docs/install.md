@@ -1,5 +1,11 @@
 # Install guide
 
+To start using ContextSpy, three steps are required:
+
+1. Install contextspy from the binary release, PyPI, or build from source
+2. [Install CA certificate](#ca-certificate-setup-cloudforward-proxy-mode-only), if you are planning to profile with AI cloud providers (not required for local models)
+3. Setup coding agent - for [cloud](cloud-mode.md) or [local](local-mode.md) llms
+
 There are several options to install and run ContextSpy profiler:
 - install prebuilt binary
 - install python package through PyPI
