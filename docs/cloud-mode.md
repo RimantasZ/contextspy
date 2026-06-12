@@ -38,6 +38,34 @@ Options:
 
 ## Step 2 — Configure your agent
 
+There are two options here:
+- use a ContextSpy runner - limited to agents you can launch from command line (simpler and preferred) 
+- setup environment variables and agent configuration manually
+
+### Using a ContextSpy runner
+
+Launch the agent using the `contextspy run <agent> <path>` command
+
+```bash
+contextspy run claude <path to project>        # launches the claude agent, replace placeholder with your project path
+contextspy run code ~/code/my-secrect-project  # launches vscode with my-secrect-project open
+contextspy run opencode .                      # launches opencode with the current directory open 
+```
+
+This will set up necessary environment variables and launch the agent - it will work with most IDEs and agents that can pick up HTTPS_PROXY environment variable, and route LLM requests through it.
+
+For some node.js based apps (e.g. VS Code), you will need to close all instances of the app before running this command - as if the process is already running, it will not honor proxy settings from the environment variables.
+
+### Manual setup - agent specific
+
+Pick the agent you use and follow the instructions below.
+Run `contextspy setup-<agent>` for a printed reminder at any time.
+
+This will set up necessary enviroment variable s
+
+
+### Manual setup - agent specific
+
 Pick the agent you use and follow the instructions below.
 Run `contextspy setup-<agent>` for a printed reminder at any time.
 
