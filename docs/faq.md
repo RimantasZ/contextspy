@@ -16,6 +16,11 @@ Only for **cloud mode** (intercepting traffic to OpenAI, Anthropic, etc.). Cloud
 
 For **local mode** (Ollama, llama-server, vLLM), traffic is plain HTTP — no certificate needed.
 
+### Why does contextspy install-cert need a sudo/root access?
+
+To install the CA certificate into cert store, elevated privileges are required on all supported plaforms. On Windows, this requires running the command prompt as an administrator, and sudo on macOS/Linux. 
+If you dont feel comfortable running binaries as root, you can  run `contextspy install-cert` with normal user privileges and theninstall the certificate manually, using the command printed to console.
+
 ### Cloud mode vs local mode — which should I use?
 
 | | Cloud mode | Local mode |
@@ -75,7 +80,10 @@ Yes, for the proxy itself. The only step that requires elevated privileges is in
 
 ### How accurate are the token counts?
 
-Counts are estimates using tiktoken `cl100k_base`. Exact accuracy depends on the provider:
+Token counts are estimates, not exact counts. The intention of ContexSpy is to provide rough estimates rather than exact counts.
+Is more aimed at cases where user needs ability to compare different configurations and their impact on token use, rather than precise token tracking and monitoring.
+
+Counts are estimates using tiktoken `cl100k_base`. While its estimated accuracy depends on the provider:
 
 | Provider | Expected error |
 |---|---|
@@ -83,24 +91,11 @@ Counts are estimates using tiktoken `cl100k_base`. Exact accuracy depends on the
 | Anthropic (Claude) | ~5–15% |
 | Ollama / llama.cpp / vLLM | ~10–20% |
 
+In practice, error margins can be bigger - for example, for recent Opus models Anthropic increased token count by appox 30%.
+Again, the best use case is use these numbers as coparative metrics between "case A" and "case B" - rather than as an exact count.
+
 When the provider reports exact token counts in the API response (e.g. Anthropic's `usage` field), those are stored alongside the estimate and shown on the request detail page.
 
-### What are the 8 token categories?
-
-Each input token is assigned to exactly one category:
-
-| Category | What it contains |
-|---|---|
-| `system_prompt` | The system message |
-| `tool_definitions` | Function/tool schemas passed to the model |
-| `tool_results` | Tool call results returned to the model |
-| `file_contents` | Messages detected as embedded file contents |
-| `conversation_history` | Prior turns of the conversation |
-| `current_message` | The latest user message |
-| `assistant_prefill` | Partial assistant message used as a prefill |
-| `uncategorized` | Anything that didn't match the above |
-
-Detection is heuristic-based. File content detection uses regex patterns; category assignment follows a fixed priority order.
 
 ### Why does the same request show different token counts between runs?
 

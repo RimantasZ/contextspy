@@ -22,20 +22,19 @@
 
 ContextSpy is a context window profiler for large language models and common agentic AI coding tools.
 It is used to intercept requests to LLM API, analyze and visualize prompt composition, and track context 
-changes between multiple requests in same session. Modern AI coding agents (GitHub Copilot, Claude Code, opencode, Cursor) pack a lot into each LLM request: system prompts, tool definitions and results, file contents, conversation history. It's often unclear why a session is slow, expensive, or hitting
-the context limit. ContextSpy makes the invisible visible — you see a live breakdown of
+changes between multiple requests in same session. Modern AI coding agents (GitHub Copilot, Claude Code, Opencode, etc.) pack a lot into each LLM request: system prompts, tool definitions and results, file contents, conversation history. It's often unclear why a session is slow, expensive, or hitting
+the context limit. ContextSpy makes the invisible visible - you see a live breakdown of
 every token category for every request, across sessions, over time.
 
-<p align="center"><strong>Dashboard view</strong><br><img src="docs/_static/dashboard.png" alt="Dashboard view"></p>
+<p align="center"><strong>Example dashboard view</strong><br><img src="docs/_static/dashboard.png" alt="Dashboard view"></p>
 
 Think of your favorite CPU or memory profiler, just applied to contents of the context of AI agent. While you can optimize pefromance just by reviewing code, having a profiler to capture and visualise shapshot data helps alot. Same with LLM context optmisation.
 
 ## Quick start
 
-More details in [install guide](docs/install.md).
-
+Quick setup for macOS (Apple Silicon) — see [install guide](docs/install.md) for Linux, Windows, and PyPI options:
 ```bash
-# macOS (Apple Silicon) — see install guide for Linux, Windows, and PyPI options
+# install latest binary release with Homebrew
 brew tap RimantasZ/contextspy
 brew install contextspy
 
@@ -46,7 +45,7 @@ sudo contextspy install-cert
 contextspy start
 
 # In a new terminal: launch your coding agent through the proxy
-# contextspy run sets HTTPS_PROXY and NODE_EXTRA_CA_CERTS automatically, so LLM requests are routed though the proxy
+# contextspy run sets required environment variables, so LLM requests are routed though the proxy
 contextspy run claude <path to your project>
 # contextspy run opencode <path to your project>
 # contextspy run code <path to your project>
@@ -57,7 +56,7 @@ If something doesn't work, see the [troubleshooting section](docs/install.md#tro
 
 Alternatively, refer to [configure your agent](docs/cloud-mode.md) on how to route LLM traffic through proxy at `http://127.0.0.1:8888`
 
-## Why should I care?
+## Context profiling? Why should I care?
 
 **Token costs are rising.** With AI agents embracing more and more complex workflows and usecases, token consumption and subsequent 
 cloud API bills are growing larger and larger. This is also applicable for AI coding agents and tools,
@@ -89,11 +88,49 @@ ContextSpy makes these costs visible so you can act on them.
 
 ContextSpy starts a HTTPS proxy (or reverse proxy for locally hosted models) which intercepts every request to LLMs, analyzes it and stores to local SQLite db. A webserver is also started on localhost, and serves dashboard to visualise all captured data.
 
+## Some screenshots
+
 <p align="center"><strong>Request view</strong><br><img src="docs/_static/request.png" alt="Request view"></p>
 
 <p align="center"><strong>Context breakdown</strong><br><img src="docs/_static/request2.png" alt="Context breakdown"></p>
 
 <p align="center"><strong>Session view</strong><br><img src="docs/_static/session.png" alt="Session view"></p>
+
+## Is it safe to use? Does it send my data to the cloud?
+
+No, it does not send any data to the cloud. All data is stored locally on your machine.
+
+But users must be aware, that it will be running proxy, and capturing all traffic from agent to LLM provider - and storing it locally to be displayed and analysed in the UI.
+The proxy and dashboard server are bound to localhost, and not exposed to external access, but still could be accessed locally.
+
+The intended use case is to run ContextSpy as a profiler tool on dedicated profiling and optimisation sessions, rather than keeping it permanently as a monitoring tool.
+
+The contents of requests are purged from the database after 7 days, and only statistics are retained.
+
+The contents of database can be cleared manually by running `contextspy reset-db`. 
+In practice, it is recommended to do it from time to time.
+
+## Upgrades and migration
+
+The new version can be installed with homebrew:
+
+```bash
+brew tap RimantasZ/contextspy ## sometimes brew "forgets" custom tap, add it again if just update fails
+brew update
+brew upgrade contextspy
+```
+
+At this stage, the database schema is subject to change, so it is advisable to purge db before upgrading.
+
+## Tech stack
+
+| Backend | Python 3.11+, [FastAPI](https://fastapi.tiangolo.com/) + [uvicorn](https://www.uvicorn.org/), WebSocket for live push |
+| Frontend | [React](https://react.dev/) + [Vite](https://vitejs.dev/), [TanStack Query](https://tanstack.com/query), [Recharts](https://recharts.org/), [Tailwind CSS](https://tailwindcss.com/) |
+| CLI | [Typer](https://typer.tiangolo.com/) |
+| Proxy | [mitmproxy](https://mitmproxy.org/) — TLS-terminating forward proxy (cloud) and reverse proxy (local) |
+| Storage | SQLite via [SQLAlchemy](https://www.sqlalchemy.org/) — all data local in `~/.contextspy/` |
+| Tokenizer | [tiktoken](https://github.com/openai/tiktoken) (`cl100k_base`) for token estimation |
+| Packaging | [uv](https://github.com/astral-sh/uv), Homebrew tap, `.deb`, standalone binary |
 
 ## Features
 
