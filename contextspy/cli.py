@@ -97,6 +97,15 @@ def _inject_go_cert(env: dict[str, str], cert: pathlib.Path) -> None:
         env["SSL_CERT_FILE"] = cert.as_posix()
 
 
+def _inject_python_cert(env: dict[str, str], cert: pathlib.Path) -> None:
+    # SSL_CERT_FILE: Python ssl module + Go; REQUESTS_CA_BUNDLE: requests library.
+    # httpx uses certifi and ignores both — see `contextspy setup-python` for httpx/openai-sdk.
+    if cert.exists():
+        cert_posix = cert.as_posix()
+        env["SSL_CERT_FILE"] = cert_posix
+        env["REQUESTS_CA_BUNDLE"] = cert_posix
+
+
 # Registry: tool name → injectors applied on top of base proxy env.
 # Add new tools here; unknown tools fall back to base proxy env only.
 _TOOL_INJECTORS: dict[str, list[Callable[[dict[str, str], pathlib.Path], None]]] = {
@@ -104,6 +113,10 @@ _TOOL_INJECTORS: dict[str, list[Callable[[dict[str, str], pathlib.Path], None]]]
     "cursor": [_inject_node_cert],  # Cursor
     "claude": [_inject_node_cert],  # Claude Code (Electron/Node)
     "opencode": [_inject_node_cert, _inject_go_cert],  # opencode (Node + Go TLS)
+    "python": [_inject_python_cert],
+    "python3": [_inject_python_cert],
+    "uv": [_inject_python_cert],
+    "uvx": [_inject_python_cert],
 }
 
 # Electron-based tools: on Windows env-var proxy doesn't reach the Node.js
@@ -560,6 +573,8 @@ def help_cmd() -> None:
             "setup-opencode",
             "Print env-var commands to route opencode through the proxy",
         ),
+        ("setup-python", "Print instructions for Python scripts using OpenAI SDK / httpx"),
+        ("inject-cert", "Append mitmproxy CA to certifi so httpx/OpenAI SDK trusts it"),
         ("setup-llamaserver", "Print setup instructions for llama.cpp/llama-server"),
         ("setup-ollama", "Print setup instructions for Ollama"),
         ("setup-vllm", "Print setup instructions for vLLM"),
@@ -995,6 +1010,164 @@ def setup_opencode() -> None:
     )
     console.print(
         "[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# setup-python
+# ---------------------------------------------------------------------------
+
+
+@app.command("setup-python")
+def setup_python() -> None:
+    """Print instructions to route Python scripts (OpenAI SDK, httpx) through the proxy."""
+    from contextspy.config import Settings
+
+    settings = Settings.load()
+    port = settings.proxy.port
+    cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+
+    console.print("\n[bold cyan]Python (OpenAI SDK / httpx) — proxy setup[/bold cyan]\n")
+    console.print(
+        "[bold yellow]Why SSL errors occur[/bold yellow]\n"
+        "The OpenAI Python SDK uses [bold]httpx[/bold], which verifies TLS certificates\n"
+        "against [bold]certifi[/bold]'s bundled CA store — not the Windows/macOS system store.\n"
+        "mitmproxy's CA is not in certifi, so certificate verification fails.\n"
+        "Setting [bold]SSL_CERT_FILE[/bold] or [bold]REQUESTS_CA_BUNDLE[/bold] does [bold]not[/bold] fix this\n"
+        "(httpx passes certifi's path explicitly, bypassing those env vars).\n"
+    )
+
+    console.print("[bold yellow]Option 1 — code change (recommended)[/bold yellow]")
+    console.print("Pass a custom httpx client when creating the OpenAI client:\n")
+    console.print(
+        "  [dim]import httpx[/dim]\n"
+        "  [dim]from openai import OpenAI[/dim]\n"
+        "\n"
+        f'  [dim]client = OpenAI([/dim]\n'
+        f'  [dim]    http_client=httpx.Client([/dim]\n'
+        f'  [dim]        proxy="http://127.0.0.1:{port}",[/dim]\n'
+        f'  [dim]        verify=r"{cert_path}",[/dim]\n'
+        f'  [dim]    )[/dim]\n'
+        f'  [dim])[/dim]\n'
+    )
+
+    console.print("[bold yellow]Option 2 — no code change (append cert to certifi)[/bold yellow]")
+    console.print(
+        "Append the mitmproxy CA to certifi's bundle in your virtual environment.\n"
+        "[yellow]Note:[/yellow] this is reset when certifi is upgraded.\n"
+    )
+    console.print("[bold]PowerShell:[/bold]")
+    console.print(
+        f'  $cert = python -c "import certifi; print(certifi.where())"\n'
+        f'  Get-Content "{cert_path}" | Add-Content $cert\n'
+    )
+    console.print("[bold]Bash / Zsh:[/bold]")
+    console.print(
+        f'  cat "{cert_path}" >> $(python -c "import certifi; print(certifi.where())")\n'
+    )
+    console.print(
+        "Or run: [bold]contextspy inject-cert[/bold] to do this automatically.\n"
+    )
+
+    console.print("[bold yellow]Env vars (for requests / urllib only)[/bold yellow]")
+    console.print("These help if your code uses [bold]requests[/bold] or [bold]urllib[/bold] (not httpx):\n")
+    console.print("[bold]PowerShell:[/bold]")
+    console.print(f'  $env:HTTPS_PROXY = "http://127.0.0.1:{port}"')
+    console.print(f'  $env:REQUESTS_CA_BUNDLE = "{cert_path}"')
+    console.print(f'  $env:SSL_CERT_FILE = "{cert_path}"')
+    console.print()
+    console.print("[bold]Bash / Zsh:[/bold]")
+    console.print(f"  export HTTPS_PROXY=http://127.0.0.1:{port}")
+    console.print(f'  export REQUESTS_CA_BUNDLE="{cert_path}"')
+    console.print(f'  export SSL_CERT_FILE="{cert_path}"')
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# inject-cert
+# ---------------------------------------------------------------------------
+
+
+@app.command("inject-cert")
+def inject_cert(
+    python_exe: Optional[str] = typer.Option(
+        None,
+        "--python",
+        help="Python executable to use (default: python in PATH or active venv)",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Append the mitmproxy CA cert to certifi's bundle so httpx/OpenAI SDK trusts it.
+
+    The change is scoped to the active virtual environment (or the Python in PATH).
+    It is reset when certifi is upgraded — re-run this command after upgrading certifi.
+    """
+    import shutil
+    import subprocess as sp
+
+    cert = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+    if not cert.exists():
+        console.print(
+            "[red]mitmproxy CA cert not found.[/red] "
+            "Run [bold]contextspy install-cert[/bold] first."
+        )
+        raise typer.Exit(1)
+
+    exe = python_exe or shutil.which("python") or shutil.which("python3")
+    if not exe:
+        console.print("[red]No Python executable found in PATH.[/red]")
+        raise typer.Exit(1)
+
+    # Locate certifi bundle
+    try:
+        result = sp.run(
+            [exe, "-c", "import certifi; print(certifi.where())"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            console.print(
+                f"[red]Failed to locate certifi:[/red] {result.stderr.strip()}\n"
+                "Install certifi with: pip install certifi"
+            )
+            raise typer.Exit(1)
+    except (sp.TimeoutExpired, FileNotFoundError) as exc:
+        console.print(f"[red]Error running Python:[/red] {exc}")
+        raise typer.Exit(1)
+
+    bundle = pathlib.Path(result.stdout.strip())
+
+    # Check if already injected
+    bundle_text = bundle.read_text(encoding="utf-8", errors="replace")
+    cert_text = cert.read_text(encoding="utf-8")
+    if cert_text.strip() in bundle_text:
+        console.print(
+            f"[green]mitmproxy CA is already present in {bundle}[/green]\n"
+            "No changes needed."
+        )
+        return
+
+    console.print(f"[bold]Python:[/bold]  {exe}")
+    console.print(f"[bold]Bundle:[/bold]  {bundle}")
+    console.print(f"[bold]Cert:[/bold]    {cert}")
+    console.print()
+    console.print(
+        "[yellow]Note:[/yellow] This modifies certifi's CA bundle. "
+        "The change is reset when certifi is upgraded.\n"
+        "Re-run [bold]contextspy inject-cert[/bold] after upgrading certifi."
+    )
+
+    if not yes:
+        typer.confirm("Append mitmproxy CA to certifi bundle?", abort=True)
+
+    with bundle.open("a", encoding="utf-8") as f:
+        f.write("\n# mitmproxy CA — injected by contextspy\n")
+        f.write(cert_text)
+
+    console.print(f"[green]Done.[/green] mitmproxy CA appended to {bundle}")
+    console.print(
+        "httpx and the OpenAI SDK will now trust the contextspy proxy certificate."
     )
 
 
