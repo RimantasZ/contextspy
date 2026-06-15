@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+import { useState } from 'react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import type { ToolStat } from '../api/client'
 
@@ -105,10 +106,63 @@ export function ToolBreakdownCharts({ tools }: { tools: ToolStat[] }) {
   )
 }
 
+type SortCol = 'tool' | 'def' | 'result' | 'pct'
+type SortDir = 'asc' | 'desc'
+
+function SortHeader({ label, col, sortCol, sortDir, onSort, className = '' }: {
+  label: string
+  col: SortCol
+  sortCol: SortCol | null
+  sortDir: SortDir
+  onSort: (col: SortCol) => void
+  className?: string
+}) {
+  const active = sortCol === col
+  return (
+    <th
+      className={`pb-2 font-medium border-b border-gray-700 whitespace-nowrap cursor-pointer select-none hover:text-gray-300 ${className}`}
+      onClick={() => onSort(col)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {active && <span className="text-indigo-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+      </span>
+    </th>
+  )
+}
+
 // ── Panel 2: table ───────────────────────────────────────────────────────────
 export function ToolBreakdownTable({ tools, totalInputTokens }: { tools: ToolStat[]; totalInputTokens?: number }) {
+  const [sortCol, setSortCol] = useState<SortCol | null>(null)
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+
   const totalDef = tools.reduce((s, t) => s + t.definition_tokens, 0)
   const totalRes = tools.reduce((s, t) => s + t.result_tokens, 0)
+
+  function handleSort(col: SortCol) {
+    let newCol: SortCol | null
+    let newDir: SortDir
+    if (sortCol === col) {
+      if (sortDir === 'asc') { newCol = col;  newDir = 'desc' }
+      else                   { newCol = null; newDir = 'asc'  }
+    } else {
+      newCol = col; newDir = 'asc'
+    }
+    setSortCol(newCol)
+    setSortDir(newDir)
+  }
+
+  const mapped = tools.map((t, i) => ({ t, i, combined: t.definition_tokens + t.result_tokens }))
+  const rows = sortCol
+    ? [...mapped].sort((a, b) => {
+        let diff = 0
+        if (sortCol === 'tool') diff = a.t.tool_name.localeCompare(b.t.tool_name)
+        else if (sortCol === 'def') diff = a.t.definition_tokens - b.t.definition_tokens
+        else if (sortCol === 'result') diff = a.t.result_tokens - b.t.result_tokens
+        else diff = a.combined - b.combined
+        return sortDir === 'asc' ? diff : -diff
+      })
+    : mapped
 
   return (
     <div className="bg-gray-800 rounded-lg p-4">
@@ -120,15 +174,14 @@ export function ToolBreakdownTable({ tools, totalInputTokens }: { tools: ToolSta
           <table className="w-full text-xs text-gray-300 border-separate border-spacing-0">
             <thead className="sticky top-0 bg-gray-800 z-10">
               <tr className="text-gray-500 uppercase tracking-wide">
-                <th className="text-left pb-2 pr-3 font-medium border-b border-gray-700">Tool</th>
-                <th className="text-right pb-2 pr-3 font-medium border-b border-gray-700 whitespace-nowrap">Def tokens</th>
-                <th className="text-right pb-2 pr-3 font-medium border-b border-gray-700 whitespace-nowrap">Result tokens</th>
-                <th className="text-right pb-2 font-medium border-b border-gray-700 whitespace-nowrap">% context</th>
+                <SortHeader label="Tool"          col="tool"   sortCol={sortCol} sortDir={sortDir} onSort={handleSort} className="text-left pr-3" />
+                <SortHeader label="Def tokens"    col="def"    sortCol={sortCol} sortDir={sortDir} onSort={handleSort} className="text-right pr-3" />
+                <SortHeader label="Result tokens" col="result" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} className="text-right pr-3" />
+                <SortHeader label="% context"     col="pct"    sortCol={sortCol} sortDir={sortDir} onSort={handleSort} className="text-right" />
               </tr>
             </thead>
             <tbody>
-              {tools.map((t, i) => {
-                const combined = t.definition_tokens + t.result_tokens
+              {rows.map(({ t, i, combined }) => {
                 const pct = totalInputTokens && totalInputTokens > 0
                   ? ((combined / totalInputTokens) * 100).toFixed(1)
                   : null
