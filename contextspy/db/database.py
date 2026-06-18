@@ -45,6 +45,7 @@ def _migrate(engine) -> None:
     new_columns = [
         ("cache_read_tokens", "INTEGER"),
         ("cache_creation_tokens", "INTEGER"),
+        ("ttft_ms", "INTEGER"),
     ]
     with engine.connect() as conn:
         for col, col_type in new_columns:

@@ -121,6 +121,8 @@ class ContextSpyAddon:
 
         def _collect(data: bytes) -> bytes:
             if data:
+                if "ts_first_chunk" not in flow.metadata:
+                    flow.metadata["ts_first_chunk"] = time.monotonic()
                 sse_chunks.append(data)
             else:
                 # Empty bytes signals end of stream
@@ -186,6 +188,10 @@ class ContextSpyAddon:
         if "ts_start" in flow.metadata:
             duration_ms = int((time.monotonic() - flow.metadata["ts_start"]) * 1000)
 
+        ttft_ms: int | None = None
+        if "ts_start" in flow.metadata and "ts_first_chunk" in flow.metadata:
+            ttft_ms = int((flow.metadata["ts_first_chunk"] - flow.metadata["ts_start"]) * 1000)
+
         parsed = parse_sse_request(provider, endpoint, req_body, raw_sse)
 
         # Store a clean synthetic JSON response (not raw SSE with all data: lines)
@@ -208,7 +214,7 @@ class ContextSpyAddon:
             raw_resp_text = raw_sse.decode("utf-8", errors="replace")
 
         self._save_request(flow, provider, agent, endpoint, req_body, parsed,
-                           duration_ms, raw_resp_text)
+                           duration_ms, raw_resp_text, ttft_ms=ttft_ms)
 
     def _handle_response(self, flow: http.HTTPFlow) -> None:
         if flow.response is None:
@@ -242,7 +248,8 @@ class ContextSpyAddon:
 
     def _save_request(self, flow: http.HTTPFlow, provider: str, agent: str,
                       endpoint: str, req_body: dict, parsed: ParsedRequest | None,
-                      duration_ms: int | None, raw_resp_text: str | None) -> None:
+                      duration_ms: int | None, raw_resp_text: str | None,
+                      ttft_ms: int | None = None) -> None:
         # Skip non-LLM endpoints (telemetry, auth, health checks, etc.)
         # Only persist requests that we could actually parse OR that look like
         # known LLM API paths so telemetry traffic is not stored as empty rows.
@@ -281,6 +288,7 @@ class ContextSpyAddon:
                 "agent": agent,
                 "endpoint": endpoint,
                 "duration_ms": duration_ms,
+                "ttft_ms": ttft_ms,
                 "status_code": flow.response.status_code if flow.response else None,
                 "provider_input_tokens": provider_input,
                 "provider_output_tokens": provider_output,

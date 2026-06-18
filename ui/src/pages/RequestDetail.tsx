@@ -89,6 +89,7 @@ export default function RequestDetail() {
     { label: 'Status', value: req.status_code ?? '—' },
     { label: 'Time', value: new Date(req.timestamp).toLocaleString() },
     { label: 'Duration', value: req.duration_ms != null ? `${req.duration_ms}ms` : '—' },
+    { label: 'TTFT', value: req.ttft_ms != null ? `${req.ttft_ms}ms` : <span className="text-gray-500">N/A</span> },
     {
       label: 'Cache',
       value: !cacheHasData ? (

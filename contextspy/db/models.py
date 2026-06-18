@@ -68,6 +68,7 @@ class Request(Base):
     agent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     endpoint: Mapped[str] = mapped_column(String, nullable=False)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ttft_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Token counts by category
@@ -109,6 +110,7 @@ class Request(Base):
             "agent": self.agent,
             "endpoint": self.endpoint,
             "duration_ms": self.duration_ms,
+            "ttft_ms": self.ttft_ms,
             "status_code": self.status_code,
             "tokens_system_prompt": self.tokens_system_prompt,
             "tokens_tool_definitions": self.tokens_tool_definitions,
