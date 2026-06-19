@@ -25,6 +25,25 @@ import autoTable from 'jspdf-autotable';
 
 type Bucket = 'minute' | 'hour' | 'day';
 
+function fmtTime(ts: string | null | undefined): string {
+  if (!ts) return '—';
+  const s = ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z';
+  return new Date(s).toLocaleString();
+}
+
+function fmtMs(ms: number | null | undefined): string {
+  if (ms == null) return '—';
+  if (ms < 1000) return `${ms}ms`;
+  const totalS = Math.floor(ms / 1000);
+  if (totalS < 60) return `${totalS}s`;
+  const m = Math.floor(totalS / 60);
+  const s = totalS % 60;
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+}
+
 export default function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -265,12 +284,43 @@ export default function SessionDetail() {
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Timing panel */}
+      <div className="bg-gray-800 rounded-lg p-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4 text-sm">
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Session started</p>
+            <p className="text-white font-medium">{fmtTime(s.started_at)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Session closed</p>
+            <p className="text-white font-medium">
+              {s.ended_at ? fmtTime(s.ended_at) : <span className="text-green-400">Active</span>}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">First request</p>
+            <p className="text-white font-medium">{fmtTime(st?.session_timing?.first_request_at)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Last request</p>
+            <p className="text-white font-medium">{fmtTime(st?.session_timing?.last_request_at)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Active duration</p>
+            <p className="text-white font-medium">{fmtMs(st?.session_timing?.active_duration_ms)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Elapsed time</p>
+            <p className="text-white font-medium">{fmtMs(st?.session_timing?.elapsed_ms)}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-3 gap-4">
         {[
           ['Context tokens', st ? st.tokens_total_input.toLocaleString() : '—'],
           ['Generated tokens', st ? st.tokens_total_output.toLocaleString() : '—'],
-          ['Started', new Date(s.started_at).toLocaleTimeString()],
           ['Requests', st?.request_count ?? '—'],
         ].map(([label, value]) => (
           <div key={String(label)} className="bg-gray-800 rounded-lg p-4">

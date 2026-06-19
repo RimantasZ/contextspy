@@ -267,6 +267,17 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         key = str(r.status_code) if r.status_code is not None else "unknown"
         by_status[key] = by_status.get(key, 0) + 1
 
+    # session timing derived from request timestamps
+    timestamps = [r.timestamp for r in rows]
+    first_ts = min(timestamps)
+    last_ts = max(timestamps)
+    session_timing = {
+        "first_request_at": first_ts.isoformat(),
+        "last_request_at": last_ts.isoformat(),
+        "elapsed_ms": int((last_ts - first_ts).total_seconds() * 1000),
+        "active_duration_ms": sum(r.duration_ms for r in rows if r.duration_ms is not None),
+    }
+
     return {
         "request_count": len(rows),
         "tokens_total_input": total_input,
@@ -277,11 +288,13 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         "by_model": by_model,
         "latency": latency,
         "by_status": by_status,
+        "session_timing": session_timing,
     }
 
 
 def _empty_stats() -> dict:
     _empty_latency = {"avg_ms": None, "p50_ms": None, "p95_ms": None, "p99_ms": None, "min_ms": None, "max_ms": None}
+    _empty_timing = {"first_request_at": None, "last_request_at": None, "elapsed_ms": None, "active_duration_ms": None}
     return {
         "request_count": 0,
         "tokens_total_input": 0,
@@ -295,6 +308,7 @@ def _empty_stats() -> dict:
         "by_model": {},
         "latency": _empty_latency,
         "by_status": {},
+        "session_timing": _empty_timing,
     }
 
 

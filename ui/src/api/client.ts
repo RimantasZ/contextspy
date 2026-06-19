@@ -45,6 +45,7 @@ export interface Request {
   agent: string | null
   endpoint: string
   duration_ms: number | null
+  ttft_ms: number | null
   status_code: number | null
   tokens_system_prompt: number
   tokens_tool_definitions: number
@@ -79,6 +80,13 @@ export interface LatencyStats {
   max_ms: number | null
 }
 
+export interface SessionTiming {
+  first_request_at: string | null
+  last_request_at: string | null
+  elapsed_ms: number | null
+  active_duration_ms: number | null
+}
+
 export interface Stats {
   request_count: number
   tokens_total_input: number
@@ -89,6 +97,7 @@ export interface Stats {
   by_model: Record<string, number>
   latency: LatencyStats
   by_status: Record<string, number>
+  session_timing: SessionTiming
 }
 
 export interface TimelineBucket {
