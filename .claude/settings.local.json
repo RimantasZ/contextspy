@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(xargs wc -l)",
-      "Bash(.venv/bin/python *)"
-    ]
-  }
-}

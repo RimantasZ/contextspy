@@ -107,10 +107,35 @@ export default function SessionDetail() {
 
     doc.setFontSize(9);
     doc.setTextColor(100, 100, 100);
-    const startLabel = `Started: ${new Date(s.started_at).toLocaleString()}`;
-    const endLabel = s.ended_at ? `  Ended: ${new Date(s.ended_at).toLocaleString()}` : '  (active)';
-    doc.text(startLabel + endLabel, 40, y);
+    doc.text(s.ended_at ? '(closed)' : '(active)', 40, y);
     y += 20;
+
+    // ── Timing ─────────────────────────────────────────────────────────
+    doc.setFontSize(12);
+    doc.setTextColor(30, 30, 30);
+    doc.text('Timing', 40, y);
+    y += 6;
+
+    const timing = st?.session_timing;
+    autoTable(doc, {
+      startY: y,
+      head: [['', '']],
+      showHead: 'never',
+      body: [
+        ['Session opened', fmtTime(s.started_at)],
+        ['Session closed', s.ended_at ? fmtTime(s.ended_at) : 'Active'],
+        ['First request', fmtTime(timing?.first_request_at)],
+        ['Last request', fmtTime(timing?.last_request_at)],
+        ['Elapsed time', fmtMs(timing?.elapsed_ms)],
+        ['Active duration', fmtMs(timing?.active_duration_ms)],
+      ],
+      theme: 'plain',
+      styles: { fontSize: 9 },
+      columnStyles: { 0: { textColor: [100, 100, 100], cellWidth: 120 }, 1: { textColor: [30, 30, 30] } },
+      margin: { left: 40, right: 40 },
+      tableWidth: pageW - 80,
+    });
+    y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 18;
 
     // ── Summary stats ──────────────────────────────────────────────────
     doc.setFontSize(12);
