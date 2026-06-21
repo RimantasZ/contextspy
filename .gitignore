@@ -84,3 +84,6 @@ desktop.ini
 *.db-shm
 *.db-wal
 *.log
+
+# claude
+.claude/settings.local.json
