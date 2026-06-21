@@ -343,16 +343,23 @@ export default function SessionDetail() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-3 gap-4">
-        {[
-          ['Context tokens', st ? st.tokens_total_input.toLocaleString() : '—'],
-          ['Generated tokens', st ? st.tokens_total_output.toLocaleString() : '—'],
-          ['Requests', st?.request_count ?? '—'],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="bg-gray-800 rounded-lg p-4">
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>
-            <p className="text-2xl font-semibold text-white">{value}</p>
-          </div>
-        ))}
+        <div className="bg-gray-800 rounded-lg p-4">
+          <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Context tokens</p>
+          <p className="text-2xl font-semibold text-white">{st ? st.tokens_total_input.toLocaleString() : '—'}</p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4">
+          <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Generated tokens</p>
+          <p className="text-2xl font-semibold text-white">{st ? st.tokens_total_output.toLocaleString() : '—'}</p>
+          {st && st.tokens_output_thinking > 0 && (
+            <p className="text-xs text-gray-500 mt-0.5">
+              {st.tokens_output_thinking.toLocaleString()} thinking · {(st.tokens_total_output - st.tokens_output_thinking).toLocaleString()} output
+            </p>
+          )}
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4">
+          <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Requests</p>
+          <p className="text-2xl font-semibold text-white">{st?.request_count ?? '—'}</p>
+        </div>
       </div>
 
       {/* Charts */}

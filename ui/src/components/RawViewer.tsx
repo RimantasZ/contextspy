@@ -38,13 +38,27 @@ function extractResponseText(parsed: unknown): string | null {
     }
     return null;
   }
-  // Anthropic format
+  // Anthropic format — only text blocks, not thinking
   const content = body.content;
   if (Array.isArray(content)) {
     return (content as { type?: string; text?: string }[])
       .filter(b => b.type === 'text')
       .map(b => b.text ?? '')
       .join('\n');
+  }
+  return null;
+}
+
+function extractThinkingText(parsed: unknown): string | null {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const body = parsed as Record<string, unknown>;
+  // Anthropic format — thinking blocks only
+  const content = body.content;
+  if (Array.isArray(content)) {
+    const parts = (content as { type?: string; thinking?: string }[])
+      .filter(b => b.type === 'thinking')
+      .map(b => b.thinking ?? '');
+    return parts.length > 0 ? parts.join('\n') : null;
   }
   return null;
 }
@@ -231,7 +245,7 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
   const containerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'parsed' | 'raw'>('parsed');
-  const [respTab, setRespTab] = useState<'json' | 'raw' | 'text'>('text');
+  const [respTab, setRespTab] = useState<'thinking' | 'output' | 'json' | 'raw'>('output');
   const [search, setSearch] = useState('');
   const searchLower = search.toLowerCase();
 
@@ -275,10 +289,10 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandToggle]);
 
-  // Fetch tokens for response "Text" tab
+  // Fetch tokens for response "Output" or "Thinking" tab
   useEffect(() => {
-    if (!responseMode || respTab !== 'text' || !isJson || respTokens !== null || loadingText) return;
-    const text = extractResponseText(parsed);
+    if (!responseMode || (respTab !== 'output' && respTab !== 'thinking') || !isJson || respTokens !== null || loadingText) return;
+    const text = respTab === 'thinking' ? extractThinkingText(parsed) : extractResponseText(parsed);
     if (!text) return;
     setLoadingText(true);
     tokenizeApi.tokenize([text])
@@ -336,13 +350,14 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
             <>
               <div className="flex border-b border-gray-800">
                 {([
-                  ['text', 'Text'],
-                  ['json', 'JSON'],
-                  ['raw',  'Raw'],
+                  ['thinking', 'Thinking'],
+                  ['output',   'Output'],
+                  ['json',     'JSON'],
+                  ['raw',      'Raw'],
                 ] as const).map(([key, label]) => (
                   <button
                     key={key}
-                    onClick={() => setRespTab(key)}
+                    onClick={() => { setRespTab(key); setRespTokens(null); }}
                     className={`px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
                       respTab === key
                         ? 'border-indigo-500 text-indigo-300'
@@ -385,8 +400,52 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
                 </div>
               )}
 
-              {/* Text tab — response text with optional token highlighting */}
-              {respTab === 'text' && (() => {
+              {/* Thinking tab — extracted thinking blocks */}
+              {respTab === 'thinking' && (() => {
+                const thinkingText = isJson ? extractThinkingText(parsed) : null;
+                if (!thinkingText) {
+                  return (
+                    <p className="px-4 py-3 text-sm text-gray-500 italic">
+                      No thinking content found.
+                    </p>
+                  );
+                }
+                return (
+                  <>
+                    <div className="flex items-center justify-end px-3 py-1.5 border-b border-gray-800">
+                      <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={showHighlight}
+                          onChange={e => setShowHighlight(e.target.checked)}
+                          className="accent-indigo-500"
+                        />
+                        Highlight tokens
+                      </label>
+                    </div>
+                    <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
+                      {showHighlight && respTokens !== null ? (
+                        <span className="whitespace-pre-wrap break-words leading-6">
+                          {respTokens.map((tok, i) => (
+                            <span
+                              key={i}
+                              style={{ background: TOKEN_COLORS[i % TOKEN_COLORS.length] }}
+                              className="rounded-[2px] text-gray-100"
+                            >
+                              {tok}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <pre className="text-gray-300 whitespace-pre-wrap break-words">{thinkingText}</pre>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+
+              {/* Output tab — response text with optional token highlighting */}
+              {respTab === 'output' && (() => {
                 const respText = isJson ? extractResponseText(parsed) : null;
                 if (!respText) {
                   return (

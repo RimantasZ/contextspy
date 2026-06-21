@@ -264,6 +264,7 @@ class ContextSpyAddon:
             model = parsed.model
             provider_input = parsed.provider_input_tokens
             provider_output = parsed.provider_output_tokens
+            provider_thinking = parsed.provider_thinking_tokens
             cache_read = parsed.cache_read_tokens
             cache_creation = parsed.cache_creation_tokens
         else:
@@ -272,6 +273,7 @@ class ContextSpyAddon:
             model = req_body.get("model")
             provider_input = None
             provider_output = None
+            provider_thinking = None
             cache_read = None
             cache_creation = None
 
@@ -292,6 +294,7 @@ class ContextSpyAddon:
                 "status_code": flow.response.status_code if flow.response else None,
                 "provider_input_tokens": provider_input,
                 "provider_output_tokens": provider_output,
+                "provider_thinking_tokens": provider_thinking,
                 "cache_read_tokens": cache_read,
                 "cache_creation_tokens": cache_creation,
                 "raw_request_body": flow.request.get_text(),

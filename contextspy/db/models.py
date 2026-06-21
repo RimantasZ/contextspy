@@ -83,9 +83,12 @@ class Request(Base):
     tokens_total_input: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_total_output: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    tokens_output_thinking: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     # Provider-reported usage
     provider_input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     provider_output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    provider_thinking_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Anthropic prompt-cache breakdown (None for non-Anthropic providers)
     cache_read_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cache_creation_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -94,7 +97,7 @@ class Request(Base):
         String, nullable=False, default="tiktoken/cl100k_base"
     )
 
-    # Raw content (NULLed when session ends)
+    # Raw content (NULLed after 7 days)
     raw_request_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     raw_response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -122,8 +125,10 @@ class Request(Base):
             "tokens_uncategorized": self.tokens_uncategorized,
             "tokens_total_input": self.tokens_total_input,
             "tokens_total_output": self.tokens_total_output,
+            "tokens_output_thinking": self.tokens_output_thinking,
             "provider_input_tokens": self.provider_input_tokens,
             "provider_output_tokens": self.provider_output_tokens,
+            "provider_thinking_tokens": self.provider_thinking_tokens,
             "cache_read_tokens": self.cache_read_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
             "tokenizer": self.tokenizer,

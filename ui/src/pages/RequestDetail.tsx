@@ -133,6 +133,14 @@ export default function RequestDetail() {
         <span className="text-gray-500">N/A</span>
       ),
     },
+    {
+      label: 'API reported thinking tokens',
+      value: req.provider_thinking_tokens != null ? (
+        <span>{req.provider_thinking_tokens.toLocaleString()}</span>
+      ) : (
+        <span className="text-gray-500">N/A</span>
+      ),
+    },
   ];
 
   return (
@@ -165,6 +173,11 @@ export default function RequestDetail() {
           >
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Generated tokens</p>
             <p className="text-2xl font-semibold text-white">{req.tokens_total_output.toLocaleString()}</p>
+            {req.tokens_output_thinking > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                {req.tokens_output_thinking.toLocaleString()} thinking · {(req.tokens_total_output - req.tokens_output_thinking).toLocaleString()} output
+              </p>
+            )}
             <p className="text-xs text-gray-500 mt-1">click to view response ↓</p>
           </button>
         </div>

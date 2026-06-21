@@ -257,7 +257,13 @@ export default function Overview() {
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Context tokens" value={s ? s.tokens_total_input.toLocaleString() : '—'} />
-        <StatCard label="Generated tokens" value={s ? s.tokens_total_output.toLocaleString() : '—'} />
+        <StatCard
+          label="Generated tokens"
+          value={s ? s.tokens_total_output.toLocaleString() : '—'}
+          sub={s && s.tokens_output_thinking > 0
+            ? `${s.tokens_output_thinking.toLocaleString()} thinking · ${(s.tokens_total_output - s.tokens_output_thinking).toLocaleString()} output`
+            : undefined}
+        />
         <StatCard label="Total requests" value={s?.request_count ?? '—'} />
         <StatCard label="Providers" value={s ? Object.keys(s.by_provider).length : '—'} />
       </div>

@@ -225,6 +225,7 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
 
     total_input = sum(r.tokens_total_input for r in rows)
     total_output = sum(r.tokens_total_output for r in rows)
+    total_output_thinking = sum(r.tokens_output_thinking for r in rows)
 
     by_category: dict[str, dict] = {}
     for col in _CATEGORY_COLS:
@@ -282,6 +283,7 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         "request_count": len(rows),
         "tokens_total_input": total_input,
         "tokens_total_output": total_output,
+        "tokens_output_thinking": total_output_thinking,
         "by_category": by_category,
         "by_provider": by_provider,
         "by_agent": by_agent,
@@ -299,6 +301,7 @@ def _empty_stats() -> dict:
         "request_count": 0,
         "tokens_total_input": 0,
         "tokens_total_output": 0,
+        "tokens_output_thinking": 0,
         "by_category": {
             col[len("tokens_"):]: {"tokens": 0, "pct": 0.0}
             for col in _CATEGORY_COLS
@@ -407,6 +410,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             func.count().label("req_count"),
             func.sum(Request.tokens_total_input).label("tok_in"),
             func.sum(Request.tokens_total_output).label("tok_out"),
+            func.sum(Request.tokens_output_thinking).label("tok_output_thinking"),
             func.sum(Request.tokens_system_prompt).label("tok_system_prompt"),
             func.sum(Request.tokens_tool_definitions).label("tok_tool_definitions"),
             func.sum(Request.tokens_tool_results).label("tok_tool_results"),
@@ -424,6 +428,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             "req_count": row.req_count,
             "tok_in": row.tok_in or 0,
             "tok_out": row.tok_out or 0,
+            "tok_output_thinking": row.tok_output_thinking or 0,
             "tokens_system_prompt": row.tok_system_prompt or 0,
             "tokens_tool_definitions": row.tok_tool_definitions or 0,
             "tokens_tool_results": row.tok_tool_results or 0,
@@ -442,6 +447,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             Request.timestamp,
             Request.tokens_total_input,
             Request.tokens_total_output,
+            Request.tokens_output_thinking,
             Request.tokens_system_prompt,
             Request.tokens_tool_definitions,
             Request.tokens_tool_results,
@@ -488,6 +494,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             "request_count": len(reqs),
             "tokens_in": sum(r.tokens_total_input for r in reqs),
             "tokens_out": sum(r.tokens_total_output for r in reqs),
+            "tokens_output_thinking": sum(r.tokens_output_thinking for r in reqs),
             "tokens_system_prompt": sum(r.tokens_system_prompt for r in reqs),
             "tokens_tool_definitions": sum(r.tokens_tool_definitions for r in reqs),
             "tokens_tool_results": sum(r.tokens_tool_results for r in reqs),
@@ -500,7 +507,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
 
     # Session entries
     _empty: dict = {
-        "req_count": 0, "tok_in": 0, "tok_out": 0,
+        "req_count": 0, "tok_in": 0, "tok_out": 0, "tok_output_thinking": 0,
         "tokens_system_prompt": 0, "tokens_tool_definitions": 0,
         "tokens_tool_results": 0, "tokens_file_contents": 0,
         "tokens_conversation_history": 0, "tokens_current_user_message": 0,
@@ -518,6 +525,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             "request_count": stats["req_count"],
             "tokens_in": stats["tok_in"],
             "tokens_out": stats["tok_out"],
+            "tokens_output_thinking": stats["tok_output_thinking"],
             "tokens_system_prompt": stats["tokens_system_prompt"],
             "tokens_tool_definitions": stats["tokens_tool_definitions"],
             "tokens_tool_results": stats["tokens_tool_results"],

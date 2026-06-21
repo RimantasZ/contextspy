@@ -57,8 +57,10 @@ export interface Request {
   tokens_uncategorized: number
   tokens_total_input: number
   tokens_total_output: number
+  tokens_output_thinking: number
   provider_input_tokens: number | null
   provider_output_tokens: number | null
+  provider_thinking_tokens: number | null
   cache_read_tokens: number | null
   cache_creation_tokens: number | null
   tokenizer: string
@@ -91,6 +93,7 @@ export interface Stats {
   request_count: number
   tokens_total_input: number
   tokens_total_output: number
+  tokens_output_thinking: number
   by_category: Record<string, CategoryStats>
   by_provider: Record<string, number>
   by_agent: Record<string, number>
@@ -116,6 +119,7 @@ export interface SessionSummaryEntry {
   request_count: number
   tokens_in: number
   tokens_out: number
+  tokens_output_thinking: number
   tokens_system_prompt: number
   tokens_tool_definitions: number
   tokens_tool_results: number

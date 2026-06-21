@@ -43,6 +43,9 @@ class ParsedRequest:
     # Anthropic prompt-cache breakdown (None for non-Anthropic providers)
     cache_read_tokens: int | None = None
     cache_creation_tokens: int | None = None
+    # Thinking / reasoning token tracking
+    thinking_text: str = ""
+    provider_thinking_tokens: int | None = None
 
 
 def _content_to_str(content: Any) -> str:
@@ -116,11 +119,14 @@ def parse_openai(req_body: dict, resp_body: dict) -> ParsedRequest:
     # Provider-reported usage
     provider_input = None
     provider_output = None
+    provider_thinking = None
     response_text = ""
     usage = resp_body.get("usage", {})
     if usage:
         provider_input = usage.get("prompt_tokens") or usage.get("input_tokens")
         provider_output = usage.get("completion_tokens") or usage.get("output_tokens")
+        details = usage.get("completion_tokens_details") or {}
+        provider_thinking = details.get("reasoning_tokens") or None
     choices = resp_body.get("choices", [])
     if choices:
         msg = choices[0].get("message") or choices[0].get("delta") or {}
@@ -139,6 +145,7 @@ def parse_openai(req_body: dict, resp_body: dict) -> ParsedRequest:
         provider_output_tokens=provider_output,
         response_text=response_text,
         tool_call_map=tool_call_map,
+        provider_thinking_tokens=provider_thinking,
     )
 
 
@@ -217,8 +224,17 @@ def parse_anthropic(req_body: dict, resp_body: dict) -> ParsedRequest:
         billed = usage.get("input_tokens") or 0
         provider_input = billed + (cache_read or 0) + (cache_creation or 0)
     resp_content = resp_body.get("content", [])
+    thinking_parts: list[str] = []
     if isinstance(resp_content, list):
-        response_text = _content_to_str(resp_content)
+        non_thinking: list[Any] = []
+        for block in resp_content:
+            if isinstance(block, dict) and block.get("type") == "thinking":
+                text = block.get("thinking", "")
+                if text:
+                    thinking_parts.append(text)
+            else:
+                non_thinking.append(block)
+        response_text = _content_to_str(non_thinking)
     elif isinstance(resp_content, str):
         response_text = resp_content
 
@@ -232,6 +248,7 @@ def parse_anthropic(req_body: dict, resp_body: dict) -> ParsedRequest:
         tool_call_map=tool_call_map,
         cache_read_tokens=cache_read,
         cache_creation_tokens=cache_creation,
+        thinking_text="\n".join(thinking_parts),
     )
 
 
@@ -369,6 +386,7 @@ def _sse_to_anthropic_resp(raw: bytes) -> dict:
     cache_creation: int | None = None
     model: str | None = None
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
 
     for line in text.splitlines():
         if not line.startswith("data: "):
@@ -396,6 +414,8 @@ def _sse_to_anthropic_resp(raw: bytes) -> dict:
             dtype = delta.get("type", "")
             if dtype == "text_delta":
                 text_parts.append(delta.get("text", ""))
+            elif dtype == "thinking_delta":
+                thinking_parts.append(delta.get("thinking", ""))
             elif dtype == "input_json_delta":
                 # Tool-use argument fragment — include for output token counting
                 text_parts.append(delta.get("partial_json", ""))
@@ -412,10 +432,12 @@ def _sse_to_anthropic_resp(raw: bytes) -> dict:
             if "cache_creation_input_tokens" in usage and cache_creation is None:
                 cache_creation = usage["cache_creation_input_tokens"]
 
-    resp: dict = {
-        "model": model,
-        "content": [{"type": "text", "text": "".join(text_parts)}],
-    }
+    content: list[dict] = []
+    if thinking_parts:
+        content.append({"type": "thinking", "thinking": "".join(thinking_parts)})
+    content.append({"type": "text", "text": "".join(text_parts)})
+
+    resp: dict = {"model": model, "content": content}
     if input_tokens is not None or output_tokens is not None or cache_read is not None or cache_creation is not None:
         resp["usage"] = {
             "input_tokens": input_tokens or 0,
@@ -431,6 +453,7 @@ def _sse_to_openai_resp(raw: bytes) -> dict:
     text = raw.decode("utf-8", errors="replace")
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    reasoning_tokens: int | None = None
     content_parts: list[str] = []
     tool_arg_parts: dict[int, list[str]] = {}   # index → argument fragments
     finish_reason: str | None = None
@@ -470,6 +493,9 @@ def _sse_to_openai_resp(raw: bytes) -> dict:
             prompt_tokens = usage["prompt_tokens"]
         if usage.get("completion_tokens") is not None:
             completion_tokens = usage["completion_tokens"]
+        details = usage.get("completion_tokens_details") or {}
+        if details.get("reasoning_tokens") is not None:
+            reasoning_tokens = details["reasoning_tokens"]
 
     response_content: str | None = "".join(content_parts) if content_parts else None
     tool_calls = [
@@ -491,10 +517,13 @@ def _sse_to_openai_resp(raw: bytes) -> dict:
         resp["model"] = model
     # Only include usage when the server actually reported it
     if prompt_tokens is not None or completion_tokens is not None:
-        resp["usage"] = {
+        usage_dict: dict = {
             "prompt_tokens": prompt_tokens or 0,
             "completion_tokens": completion_tokens or 0,
         }
+        if reasoning_tokens is not None:
+            usage_dict["completion_tokens_details"] = {"reasoning_tokens": reasoning_tokens}
+        resp["usage"] = usage_dict
     return resp
 
 

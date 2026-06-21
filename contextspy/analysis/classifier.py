@@ -70,6 +70,7 @@ class CategoryBreakdown:
     uncategorized: int = 0
     total_input: int = 0
     total_output: int = 0
+    total_output_thinking: int = 0
 
     def to_db_fields(self) -> dict:
         return {
@@ -83,6 +84,7 @@ class CategoryBreakdown:
             "tokens_uncategorized": self.uncategorized,
             "tokens_total_input": self.total_input,
             "tokens_total_output": self.total_output,
+            "tokens_output_thinking": self.total_output_thinking,
         }
 
 
@@ -150,7 +152,9 @@ def classify(parsed: ParsedRequest) -> CategoryBreakdown:
         + breakdown.uncategorized
         + chatml_overhead
     )
-    breakdown.total_output = count_tokens(parsed.response_text)
+    thinking_tokens = count_tokens(parsed.thinking_text)
+    breakdown.total_output_thinking = thinking_tokens
+    breakdown.total_output = count_tokens(parsed.response_text) + thinking_tokens
 
     return breakdown
 
