@@ -46,9 +46,9 @@ contextspy start
 
 # In a new terminal: launch your coding agent through the proxy
 # contextspy run sets required environment variables, so LLM requests are routed through the proxy
-contextspy run claude <path to your project>
-# contextspy run opencode <path to your project>
+contextspy run opencode <path to your project>
 # contextspy run code <path to your project>
+# contextspy run claude # run in the drectory of your project
 ```
 Open http://127.0.0.1:5173 in your browser for the ContextSpy dashboard.
 
