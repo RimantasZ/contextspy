@@ -146,7 +146,7 @@ function ContextOverview({
                 title={`${b.label}: ${b.tokenCount.toLocaleString()} tokens`}
               >
                 <div className={`text-xs font-medium truncate leading-tight ${selectedId === b.id ? 'text-white' : CAT_LABEL[b.category]}`}>
-                  <span className={`tabular-nums mr-1 ${selectedId === b.id ? 'text-gray-200' : 'text-gray-500'}`}>[{b.tokenCount.toLocaleString()}]</span>{shortLabel(b.label)}
+                  <span className="tabular-nums mr-1">[{b.tokenCount.toLocaleString()}]</span>{shortLabel(b.label)}
                 </div>
               </button>
             ))}
