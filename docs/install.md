@@ -259,3 +259,40 @@ ls -la ~/.mitmproxy/
 - If files are owned by `root` → run `sudo chown -R $USER ~/.mitmproxy/`
 - If both files exist and are readable → check contextspy's terminal output for a
   more specific error from mitmproxy
+
+### `Operation not permitted` error
+ 
+If you get exception like this on MacOS:
+
+```
+Traceback (most recent call last):
+    File "__main__.py", line 15, in <module>
+    File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+    File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+    File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+    File "pyimod02_importers.py", line 457, in exec_module
+    File "contextspy/cli.py", line 25, in <module>
+    File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+    File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+    File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+    File "pyimod02_importers.py", line 457, in exec_module
+    File "httpx/__init__.py", line 15, in <module>
+    File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+    File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+    File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+    File "pyimod02_importers.py", line 457, in exec_module
+    File "httpx/_main.py", line 11, in <module>
+    File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+    File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+    File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+    File "pyimod02_importers.py", line 457, in exec_module
+    File "rich/__init__.py", line 17, in <module>
+  PermissionError: [Errno 1] Operation not permitted
+```
+
+The problem is likely that you are running dowloaded binary, and get Gatekeeper issues. Run the following command:
+
+```bash
+xattr -d com.apple.quarantine ./contextspy
+```
+before starting contextspy to suppress MacOS gatekeeper errors.
