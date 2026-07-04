@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Rimantas Zukaitis
+// Copyright 2026 Rimantas Zukaitis
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,6 +13,8 @@
 // limitations under the License.
 import { useState, useEffect, useCallback } from 'react'
 import { tokenizeApi } from '../api/client'
+import { useRequestBlocks } from '../api/hooks'
+import type { RequestBlock } from '../api/client'
 
 // ---------------------------------------------------------------------------
 // Token color palette — cycles per token index
@@ -31,72 +33,101 @@ const TOKEN_COLORS = [
 ]
 
 // ---------------------------------------------------------------------------
-// Category styles
+// Visual styling — derived from the backend's structural block_type
 // ---------------------------------------------------------------------------
-type Category = 'system' | 'tool_def' | 'user' | 'assistant' | 'tool_result' | 'other'
+type Visual = 'system' | 'tool_def' | 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'thinking' | 'prefill' | 'other'
 
-const CAT_BAR: Record<Category, string> = {
+const BLOCK_TYPE_VISUAL: Record<string, Visual> = {
+  system_prompt: 'system',
+  tool_definition: 'tool_def',
+  user_message: 'user',
+  assistant_message: 'assistant',
+  assistant_prefill: 'prefill',
+  tool_call: 'tool_call',
+  tool_result: 'tool_result',
+  thinking: 'thinking',
+}
+
+function visualOf(b: RequestBlock): Visual {
+  return BLOCK_TYPE_VISUAL[b.block_type] ?? 'other'
+}
+
+const CAT_BAR: Record<Visual, string> = {
   system:      'bg-purple-500',
   tool_def:    'bg-amber-500',
   user:        'bg-blue-500',
   assistant:   'bg-emerald-500',
+  tool_call:   'bg-orange-500',
   tool_result: 'bg-teal-500',
+  thinking:    'bg-violet-500',
+  prefill:     'bg-lime-500',
   other:       'bg-gray-500',
 }
-const CAT_LABEL: Record<Category, string> = {
+const CAT_LABEL: Record<Visual, string> = {
   system:      'text-purple-300',
   tool_def:    'text-amber-300',
   user:        'text-blue-300',
   assistant:   'text-emerald-300',
+  tool_call:   'text-orange-300',
   tool_result: 'text-teal-300',
+  thinking:    'text-violet-300',
+  prefill:     'text-lime-300',
   other:       'text-gray-400',
 }
-
-// Solid bg + left-border colours for the overview rectangles
-const CAT_BG: Record<Category, string> = {
+const CAT_BG: Record<Visual, string> = {
   system:      'rgba(168,85,247,0.18)',
   tool_def:    'rgba(245,158,11,0.18)',
   user:        'rgba(59,130,246,0.18)',
   assistant:   'rgba(16,185,129,0.18)',
+  tool_call:   'rgba(249,115,22,0.18)',
   tool_result: 'rgba(20,184,166,0.18)',
+  thinking:    'rgba(139,92,246,0.18)',
+  prefill:     'rgba(132,204,22,0.18)',
   other:       'rgba(107,114,128,0.14)',
 }
-const CAT_BORDER: Record<Category, string> = {
+const CAT_BORDER: Record<Visual, string> = {
   system:      'rgba(168,85,247,0.55)',
   tool_def:    'rgba(245,158,11,0.55)',
   user:        'rgba(59,130,246,0.55)',
   assistant:   'rgba(16,185,129,0.55)',
+  tool_call:   'rgba(249,115,22,0.55)',
   tool_result: 'rgba(20,184,166,0.55)',
+  thinking:    'rgba(139,92,246,0.55)',
+  prefill:     'rgba(132,204,22,0.55)',
   other:       'rgba(107,114,128,0.45)',
 }
 
-function shortLabel(label: string): string {
-  if (label.startsWith('Tool: ')) return label.slice(6)
-  if (label.startsWith('Tool Result: ')) return label.slice(13)
-  if (label === 'System Prompt') return 'System'
-  const a = label.match(/^Assistant \(msg (\d+)\)$/)
-  if (a) return `Asst. ${a[1]}`
-  const u = label.match(/^User \(msg (\d+)\)$/)
-  if (u) return `User ${u[1]}`
-  const tr = label.match(/^Tool Result \(msg (\d+)\)$/)
-  if (tr) return `Result ${tr[1]}`
-  return label
+function blockLabel(b: RequestBlock): string {
+  switch (b.block_type) {
+    case 'system_prompt': return 'System'
+    case 'tool_definition': return b.tool_name ?? 'Tool'
+    case 'tool_result': return b.tool_name ? `Result: ${b.tool_name}` : `Result (msg ${b.message_index ?? '?'})`
+    case 'tool_call': return b.tool_name ? `Call: ${b.tool_name}` : `Tool call (msg ${b.message_index ?? '?'})`
+    case 'assistant_prefill': return `Prefill (msg ${b.message_index ?? '?'})`
+    case 'thinking': return `Thinking${b.message_index != null ? ` (msg ${b.message_index})` : ''}`
+    case 'user_message': return `User${b.message_index != null ? ` ${b.message_index}` : ''}`
+    case 'assistant_message': return `Assistant${b.message_index != null ? ` ${b.message_index}` : ''}`
+    default: return b.block_type
+  }
+}
+
+function blockKey(b: RequestBlock, i: number): string {
+  return `${b.direction}-${b.position}-${i}`
 }
 
 // ---------------------------------------------------------------------------
 // Context overview — contribution-graph-style justified block layout
 // ---------------------------------------------------------------------------
-interface OvBlock extends ParsedBlock { tokenCount: number }
-
-function packRows(blocks: OvBlock[], tokensPerRow: number): OvBlock[][] {
-  const rows: OvBlock[][] = []
-  let current: OvBlock[] = []
+function packRows(blocks: RequestBlock[], tokensPerRow: number): RequestBlock[][] {
+  const rows: RequestBlock[][] = []
+  let current: RequestBlock[] = []
   let rowTotal = 0
   for (const b of blocks) {
-    if (rowTotal + b.tokenCount > tokensPerRow && current.length > 0) {
-      rows.push(current); current = [b]; rowTotal = b.tokenCount
+    const t = Math.max(b.token_count, 1)
+    if (rowTotal + t > tokensPerRow && current.length > 0) {
+      rows.push(current); current = [b]; rowTotal = t
     } else {
-      current.push(b); rowTotal += b.tokenCount
+      current.push(b); rowTotal += t
     }
   }
   if (current.length > 0) rows.push(current)
@@ -104,52 +135,50 @@ function packRows(blocks: OvBlock[], tokensPerRow: number): OvBlock[][] {
 }
 
 function ContextOverview({
-  blocks, tokenCounts, tokensList, selectedId, onSelect,
+  blocks, tokensList, selectedIdx, onSelect,
 }: {
-  blocks: ParsedBlock[]
-  tokenCounts: number[]
+  blocks: RequestBlock[]
   tokensList?: (string[] | null)[] | null
-  selectedId: string | null
-  onSelect: (id: string | null) => void
+  selectedIdx: number | null
+  onSelect: (idx: number | null) => void
 }) {
-  const ovBlocks: OvBlock[] = blocks.map((b, i) => ({
-    ...b, tokenCount: Math.max(tokenCounts[i] ?? 1, 1),
-  }))
-  const totalTokens = ovBlocks.reduce((s, b) => s + b.tokenCount, 0)
+  const totalTokens = blocks.reduce((s, b) => s + Math.max(b.token_count, 1), 0)
   if (totalTokens === 0) return null
   const tokensPerRow = Math.max(Math.ceil(totalTokens / 6), 200)
-  const rows = packRows(ovBlocks, tokensPerRow)
-  const selectedBlockIndex = selectedId ? ovBlocks.findIndex(b => b.id === selectedId) : -1
-  const selectedBlock = selectedBlockIndex >= 0 ? ovBlocks[selectedBlockIndex] : null
-  const selectedTokens = selectedBlockIndex >= 0 && tokensList ? tokensList[selectedBlockIndex] ?? null : null
+  const rows = packRows(blocks, tokensPerRow)
+  const selectedBlock = selectedIdx != null ? blocks[selectedIdx] : null
+  const selectedTokens = selectedIdx != null && tokensList ? tokensList[selectedIdx] ?? null : null
 
   return (
     <div>
       <div className="p-3 space-y-1">
         {rows.map((row, ri) => (
           <div key={ri} className="flex gap-1" style={{ height: 52 }}>
-            {row.map(b => (
-              <button
-                key={b.id}
-                onClick={() => onSelect(selectedId === b.id ? null : b.id)}
-                style={{
-                  flex: `${Math.max(20, Math.sqrt(b.tokenCount))} 1 0`,
-                  minWidth: 0,
-                  background: selectedId === b.id
-                    ? CAT_BORDER[b.category]
-                    : CAT_BG[b.category],
-                  borderLeft: `3px solid ${CAT_BORDER[b.category]}`,
-                  outline: selectedId === b.id ? `2px solid ${CAT_BORDER[b.category]}` : 'none',
-                  outlineOffset: '1px',
-                }}
-                className="rounded-sm px-2 py-1.5 overflow-hidden text-left transition-all hover:brightness-125 cursor-pointer"
-                title={`${b.label}: ${b.tokenCount.toLocaleString()} tokens`}
-              >
-                <div className={`text-xs font-medium truncate leading-tight ${selectedId === b.id ? 'text-white' : CAT_LABEL[b.category]}`}>
-                  <span className="tabular-nums mr-1">[{b.tokenCount.toLocaleString()}]</span>{shortLabel(b.label)}
-                </div>
-              </button>
-            ))}
+            {row.map((b) => {
+              const idx = blocks.indexOf(b)
+              const visual = visualOf(b)
+              const isSelected = selectedIdx === idx
+              return (
+                <button
+                  key={blockKey(b, idx)}
+                  onClick={() => onSelect(isSelected ? null : idx)}
+                  style={{
+                    flex: `${Math.max(20, Math.sqrt(Math.max(b.token_count, 1)))} 1 0`,
+                    minWidth: 0,
+                    background: isSelected ? CAT_BORDER[visual] : CAT_BG[visual],
+                    borderLeft: `3px solid ${CAT_BORDER[visual]}`,
+                    outline: isSelected ? `2px solid ${CAT_BORDER[visual]}` : 'none',
+                    outlineOffset: '1px',
+                  }}
+                  className="rounded-sm px-2 py-1.5 overflow-hidden text-left transition-all hover:brightness-125 cursor-pointer"
+                  title={`${blockLabel(b)}: ${b.token_count.toLocaleString()} tokens`}
+                >
+                  <div className={`text-xs font-medium truncate leading-tight ${isSelected ? 'text-white' : CAT_LABEL[visual]}`}>
+                    <span className="tabular-nums mr-1">[{b.token_count.toLocaleString()}]</span>{blockLabel(b)}
+                  </div>
+                </button>
+              )
+            })}
           </div>
         ))}
       </div>
@@ -158,14 +187,14 @@ function ContextOverview({
         <div className="border-t border-gray-700 mx-3 mb-3">
           <div
             className="flex items-center justify-between px-3 py-2 rounded-t"
-            style={{ background: CAT_BG[selectedBlock.category], borderLeft: `3px solid ${CAT_BORDER[selectedBlock.category]}` }}
+            style={{ background: CAT_BG[visualOf(selectedBlock)], borderLeft: `3px solid ${CAT_BORDER[visualOf(selectedBlock)]}` }}
           >
-            <span className={`text-xs font-medium ${CAT_LABEL[selectedBlock.category]}`}>
-              {selectedBlock.label}
+            <span className={`text-xs font-medium ${CAT_LABEL[visualOf(selectedBlock)]}`}>
+              {blockLabel(selectedBlock)}
             </span>
             <div className="flex items-center gap-3">
               <span className="text-[10px] text-gray-500 tabular-nums">
-                {selectedBlock.tokenCount.toLocaleString()} tokens
+                {selectedBlock.token_count.toLocaleString()} tokens
               </span>
               <button
                 onClick={() => onSelect(null)}
@@ -176,7 +205,9 @@ function ContextOverview({
             </div>
           </div>
           <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-words max-h-[320px] overflow-auto bg-gray-900 px-3 py-2.5 rounded-b border border-gray-700 border-t-0 leading-6">
-            {selectedTokens ? (
+            {selectedBlock.content_purged ? (
+              <span className="text-gray-500 italic">Content purged (older than retention window).</span>
+            ) : selectedTokens ? (
               selectedTokens.map((tok, j) => (
                 <span
                   key={j}
@@ -187,7 +218,7 @@ function ContextOverview({
                 </span>
               ))
             ) : (
-              selectedBlock.text
+              selectedBlock.content
             )}
           </pre>
         </div>
@@ -195,145 +226,13 @@ function ContextOverview({
     </div>
   )
 }
-interface ParsedBlock {
-  id: string
-  label: string
-  category: Category
-  text: string
-}
-
-function contentToStr(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content.map((b: unknown) => {
-    if (typeof b === 'string') return b
-    const block = b as Record<string, unknown>
-    if (block.type === 'text') return block.text as string || ''
-    if (block.type === 'tool_use') return `[Tool call: ${block.name}]\n${JSON.stringify(block.input, null, 2)}`
-    if (block.type === 'tool_result') {
-      const inner = Array.isArray(block.content)
-        ? (block.content as {text?: string}[]).map(x => x.text ?? '').join('\n')
-        : (typeof block.content === 'string' ? block.content : '')
-      return inner
-    }
-    return JSON.stringify(b)
-  }).filter(Boolean).join('\n')
-}
-
-function extractBlocks(rawBody: string): ParsedBlock[] {
-  try {
-    const body = JSON.parse(rawBody) as Record<string, unknown>
-    const blocks: ParsedBlock[] = []
-
-    // System (Anthropic top-level)
-    if (body.system) {
-      const text = contentToStr(body.system)
-      if (text) blocks.push({ id: 'system', label: 'System Prompt', category: 'system', text })
-    }
-
-    // Tool definitions
-    const tools = (body.tools as unknown[] | undefined) ?? (body.functions as unknown[] | undefined) ?? []
-    for (const tool of tools) {
-      const t = tool as Record<string, unknown>
-      const name = (t.name as string) ?? (t.function as Record<string, unknown>)?.name as string ?? 'unknown'
-      blocks.push({
-        id: `tool-${name}`,
-        label: `Tool: ${name}`,
-        category: 'tool_def',
-        text: JSON.stringify(tool, null, 2),
-      })
-    }
-
-    // Messages
-    const messages = (body.messages as unknown[] | undefined) ?? []
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i] as Record<string, unknown>
-      const role = (msg.role as string) ?? 'unknown'
-      const content = msg.content
-
-      if (role === 'system') {
-        const text = contentToStr(content)
-        if (text) blocks.push({ id: `msg-${i}`, label: 'System Prompt', category: 'system', text })
-        continue
-      }
-
-      // Tool result message (OpenAI role=tool, or Anthropic user with tool_result blocks)
-      const isOaiToolResult = role === 'tool'
-      const isAnthropicToolResult = Array.isArray(content) &&
-        (content as {type?: string}[]).some(b => b.type === 'tool_result')
-
-      if (isOaiToolResult || isAnthropicToolResult) {
-        let text = ''
-        const toolName = msg.name as string | undefined
-        if (isOaiToolResult) {
-          text = contentToStr(content)
-        } else {
-          // Extract each tool_result block separately
-          for (const block of (content as {type?: string; content?: unknown; tool_use_id?: string}[])) {
-            if (block.type === 'tool_result') {
-              const inner = Array.isArray(block.content)
-                ? (block.content as {text?: string}[]).map(x => x.text ?? '').join('\n')
-                : (typeof block.content === 'string' ? block.content : '')
-              if (inner) text += (text ? '\n---\n' : '') + inner
-            }
-          }
-        }
-        if (text) blocks.push({
-          id: `msg-${i}`,
-          label: toolName ? `Tool Result: ${toolName}` : `Tool Result (msg ${i + 1})`,
-          category: 'tool_result',
-          text,
-        })
-        continue
-      }
-
-      // Assistant with tool_calls (OpenAI) or tool_use blocks (Anthropic)
-      if (role === 'assistant') {
-        const parts: string[] = []
-        if (Array.isArray(content)) {
-          for (const b of content as {type?: string; text?: string; name?: string; input?: unknown}[]) {
-            if (b.type === 'text' && b.text) parts.push(b.text)
-            else if (b.type === 'tool_use') parts.push(`[Tool call: ${b.name}]\n${JSON.stringify(b.input, null, 2)}`)
-          }
-        } else if (typeof content === 'string' && content) {
-          parts.push(content)
-        }
-        // OpenAI tool_calls field
-        for (const tc of (msg.tool_calls as {function?: {name?: string; arguments?: string}}[] | undefined) ?? []) {
-          parts.push(`[Tool call: ${tc.function?.name}]\n${tc.function?.arguments ?? ''}`)
-        }
-        const text = parts.filter(Boolean).join('\n\n')
-        if (text) blocks.push({ id: `msg-${i}`, label: `Assistant (msg ${i + 1})`, category: 'assistant', text })
-        continue
-      }
-
-      // Regular user message
-      const text = contentToStr(content)
-      if (text) blocks.push({
-        id: `msg-${i}`,
-        label: `${role.charAt(0).toUpperCase() + role.slice(1)} (msg ${i + 1})`,
-        category: role === 'user' ? 'user' : 'other',
-        text,
-      })
-    }
-
-    return blocks
-  } catch {
-    return []
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Block component — shows tokenized text with colored spans
 // ---------------------------------------------------------------------------
-interface BlockProps {
-  block: ParsedBlock
-  tokens: string[] | null
-}
-
-function TokenBlock({ block, tokens }: BlockProps) {
+function TokenBlock({ block, tokens }: { block: RequestBlock; tokens: string[] | null }) {
   const [collapsed, setCollapsed] = useState(true)
-  const tokenCount = tokens?.length ?? null
+  const visual = visualOf(block)
 
   return (
     <div className="border border-gray-700 rounded-lg overflow-hidden">
@@ -341,17 +240,17 @@ function TokenBlock({ block, tokens }: BlockProps) {
         onClick={() => setCollapsed(c => !c)}
         className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-750 text-left"
       >
-        <span className={`w-1 self-stretch rounded-full shrink-0 ${CAT_BAR[block.category]}`} />
-        <span className={`text-xs font-medium ${CAT_LABEL[block.category]} flex-1`}>{block.label}</span>
-        {tokenCount !== null && (
-          <span className="text-xs text-gray-500 tabular-nums">{tokenCount.toLocaleString()} tokens</span>
-        )}
+        <span className={`w-1 self-stretch rounded-full shrink-0 ${CAT_BAR[visual]}`} />
+        <span className={`text-xs font-medium ${CAT_LABEL[visual]} flex-1`}>{blockLabel(block)}</span>
+        <span className="text-xs text-gray-500 tabular-nums">{block.token_count.toLocaleString()} tokens</span>
         <span className="text-gray-600 text-xs ml-1">{collapsed ? '▶' : '▼'}</span>
       </button>
       {!collapsed && (
         <div className="px-3 py-2.5 bg-gray-900 text-xs font-mono leading-relaxed overflow-auto max-h-[400px]">
-          {tokens === null ? (
-            <span className="text-gray-400 whitespace-pre-wrap break-words">{block.text}</span>
+          {block.content_purged ? (
+            <span className="text-gray-500 italic">Content purged (older than retention window).</span>
+          ) : tokens === null ? (
+            <span className="text-gray-400 whitespace-pre-wrap break-words">{block.content}</span>
           ) : (
             <span className="whitespace-pre-wrap break-words leading-6">
               {tokens.map((tok, j) => (
@@ -372,56 +271,57 @@ function TokenBlock({ block, tokens }: BlockProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Main ParsedViewer
+// Main ParsedViewer — Overview / Parsed tabs are server-driven (blocks API);
+// Raw tab still shows the exact raw request body when available.
 // ---------------------------------------------------------------------------
 interface Props {
+  requestId: string
   rawBody: string | null | undefined
-  rawContent?: string | null
   totalInputTokens?: number | null
 }
 
-export function ParsedViewer({ rawBody, rawContent, totalInputTokens }: Props) {
+export function ParsedViewer({ requestId, rawBody, totalInputTokens }: Props) {
   const [tab, setTab] = useState<'overview' | 'parsed' | 'raw'>('overview')
-  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [tokenized, setTokenized] = useState<string[][] | null>(null)
   const [loading, setLoading] = useState(false)
   const [showHighlight, setShowHighlight] = useState(true)
   const [colorizeOverview, setColorizeOverview] = useState(false)
 
-  const blocks = rawBody ? extractBlocks(rawBody) : []
+  const blocksQuery = useRequestBlocks(requestId)
+  const allBlocks = blocksQuery.data?.blocks
+  const blocks = allBlocks ? allBlocks.filter(b => b.direction === 'input') : []
 
   const fetchTokens = useCallback(async () => {
-    if (!rawBody || blocks.length === 0) return
+    if (blocks.length === 0) return
     setLoading(true)
     try {
-      const res = await tokenizeApi.tokenize(blocks.map(b => b.text))
+      const res = await tokenizeApi.tokenize(blocks.map(b => b.content ?? ''))
       setTokenized(res.results)
     } catch {
       setTokenized(null)
     } finally {
       setLoading(false)
     }
-  }, [rawBody]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allBlocks]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setTokenized(null)
-    setSelectedBlockId(null)
+    setSelectedIdx(null)
     fetchTokens()
   }, [fetchTokens])
 
-  if (!rawBody) {
-    return <p className="px-4 py-3 text-sm text-gray-500 italic">Raw content has been purged.</p>
+  if (blocksQuery.isLoading) {
+    return <p className="px-4 py-3 text-sm text-gray-500 italic">Loading…</p>
   }
 
-  if (blocks.length === 0) {
-    return <p className="px-4 py-3 text-sm text-gray-500 italic">Cannot parse request body.</p>
+  if (blocks.length === 0 && rawBody == null) {
+    return <p className="px-4 py-3 text-sm text-gray-500 italic">No block data available for this request.</p>
   }
 
-  const tokenCounts = tokenized ? blocks.map((_, i) => tokenized[i]?.length ?? 0) : null
-  const totalTokens = tokenCounts ? tokenCounts.reduce((s, c) => s + c, 0) : null
+  const totalTokens = tokenized ? blocks.reduce((s, _b, i) => s + (tokenized[i]?.length ?? 0), 0) : null
 
-  // Pretty-print for Raw tab
-  let rawPretty = rawContent ?? rawBody ?? ''
+  let rawPretty = rawBody ?? ''
   try { rawPretty = JSON.stringify(JSON.parse(rawPretty), null, 2) } catch { /* keep as-is */ }
 
   return (
@@ -445,7 +345,7 @@ export function ParsedViewer({ rawBody, rawContent, totalInputTokens }: Props) {
         </div>
         <div className="pr-3 flex items-center gap-3">
           {loading && <span className="text-xs text-gray-500 italic">Tokenizing…</span>}
-          {!loading && (totalInputTokens != null || totalTokens !== null) && (
+          {!loading && (totalInputTokens != null || totalTokens !== null) && tab !== 'raw' && (
             <span className="text-xs text-gray-500 tabular-nums">
               {(totalInputTokens ?? totalTokens!).toLocaleString()} tokens
             </span>
@@ -477,17 +377,14 @@ export function ParsedViewer({ rawBody, rawContent, totalInputTokens }: Props) {
 
       {/* Overview tab */}
       {tab === 'overview' && (
-        tokenCounts === null ? (
-          <div className="p-4 text-xs text-gray-500 italic">
-            {loading ? 'Tokenizing…' : 'No data available.'}
-          </div>
+        blocks.length === 0 ? (
+          <div className="p-4 text-xs text-gray-500 italic">No block data available.</div>
         ) : (
           <ContextOverview
             blocks={blocks}
-            tokenCounts={tokenCounts}
             tokensList={colorizeOverview ? tokenized : null}
-            selectedId={selectedBlockId}
-            onSelect={setSelectedBlockId}
+            selectedIdx={selectedIdx}
+            onSelect={setSelectedIdx}
           />
         )
       )}
@@ -495,22 +392,30 @@ export function ParsedViewer({ rawBody, rawContent, totalInputTokens }: Props) {
       {/* Parsed tab */}
       {tab === 'parsed' && (
         <div className="p-3 space-y-2">
-          {blocks.map((block, i) => (
-            <TokenBlock
-              key={block.id}
-              block={block}
-              tokens={showHighlight && tokenized ? tokenized[i] ?? null : null}
-            />
-          ))}
+          {blocks.length === 0 ? (
+            <div className="p-4 text-xs text-gray-500 italic">No block data available.</div>
+          ) : (
+            blocks.map((block, i) => (
+              <TokenBlock
+                key={blockKey(block, i)}
+                block={block}
+                tokens={showHighlight && tokenized ? tokenized[i] ?? null : null}
+              />
+            ))
+          )}
         </div>
       )}
 
       {/* Raw tab */}
       {tab === 'raw' && (
         <div className="p-4 overflow-auto max-h-[600px]">
-          <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-all">
-            {rawPretty}
-          </pre>
+          {rawBody == null ? (
+            <p className="text-sm text-gray-500 italic">Raw content has been purged.</p>
+          ) : (
+            <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-all">
+              {rawPretty}
+            </pre>
+          )}
         </div>
       )}
     </div>

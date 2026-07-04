@@ -23,8 +23,9 @@ import uuid
 
 from mitmproxy import http
 
-from contextspy.analysis.classifier import classify, per_tool_tokens
-from contextspy.analysis.providers import ParsedRequest, parse_request, parse_sse_request
+from contextspy.analysis.adapters import get_adapter
+from contextspy.analysis.blocks import AnalyzedRequest
+from contextspy.analysis.classifier import CategoryBreakdown, classify, per_tool_tokens
 from contextspy.db import crud
 from contextspy.db.database import get_db
 
@@ -192,28 +193,42 @@ class ContextSpyAddon:
         if "ts_start" in flow.metadata and "ts_first_chunk" in flow.metadata:
             ttft_ms = int((flow.metadata["ts_first_chunk"] - flow.metadata["ts_start"]) * 1000)
 
-        parsed = parse_sse_request(provider, endpoint, req_body, raw_sse)
+        adapter = get_adapter(endpoint)
+        analyzed: AnalyzedRequest | None = None
+        if adapter is not None:
+            try:
+                input_blocks, tool_call_map = adapter.parse_request(req_body)
+                output_blocks, usage = adapter.parse_sse(raw_sse)
+                analyzed = AnalyzedRequest(
+                    model=req_body.get("model"),
+                    input_blocks=input_blocks,
+                    output_blocks=output_blocks,
+                    usage=usage,
+                    tool_call_map=tool_call_map,
+                )
+            except Exception as exc:
+                logger.warning("Adapter parse error (sse): %s", exc, exc_info=True)
 
         # Store a clean synthetic JSON response (not raw SSE with all data: lines)
-        if parsed is not None:
+        if analyzed is not None:
             synthetic: dict = {
                 "choices": [{
-                    "message": {"role": "assistant", "content": parsed.response_text},
+                    "message": {"role": "assistant", "content": analyzed.response_text},
                     "finish_reason": "stop",
                 }],
             }
-            if parsed.model:
-                synthetic["model"] = parsed.model
-            if parsed.provider_input_tokens is not None or parsed.provider_output_tokens is not None:
+            if analyzed.model:
+                synthetic["model"] = analyzed.model
+            if analyzed.usage.input_tokens is not None or analyzed.usage.output_tokens is not None:
                 synthetic["usage"] = {
-                    "prompt_tokens": parsed.provider_input_tokens,
-                    "completion_tokens": parsed.provider_output_tokens,
+                    "prompt_tokens": analyzed.usage.input_tokens,
+                    "completion_tokens": analyzed.usage.output_tokens,
                 }
             raw_resp_text: str = json.dumps(synthetic, ensure_ascii=False)
         else:
             raw_resp_text = raw_sse.decode("utf-8", errors="replace")
 
-        self._save_request(flow, provider, agent, endpoint, req_body, parsed,
+        self._save_request(flow, provider, agent, endpoint, req_body, analyzed,
                            duration_ms, raw_resp_text, ttft_ms=ttft_ms)
 
     def _handle_response(self, flow: http.HTTPFlow) -> None:
@@ -242,12 +257,27 @@ class ContextSpyAddon:
         if "ts_start" in flow.metadata:
             duration_ms = int((time.monotonic() - flow.metadata["ts_start"]) * 1000)
 
-        parsed = parse_request(provider, endpoint, req_body, resp_body)
-        self._save_request(flow, provider, agent, endpoint, req_body, parsed,
+        adapter = get_adapter(endpoint)
+        analyzed: AnalyzedRequest | None = None
+        if adapter is not None:
+            try:
+                input_blocks, tool_call_map = adapter.parse_request(req_body)
+                output_blocks, usage = adapter.parse_response(resp_body)
+                analyzed = AnalyzedRequest(
+                    model=req_body.get("model"),
+                    input_blocks=input_blocks,
+                    output_blocks=output_blocks,
+                    usage=usage,
+                    tool_call_map=tool_call_map,
+                )
+            except Exception as exc:
+                logger.warning("Adapter parse error: %s", exc, exc_info=True)
+
+        self._save_request(flow, provider, agent, endpoint, req_body, analyzed,
                            duration_ms, flow.response.get_text() if flow.response else None)
 
     def _save_request(self, flow: http.HTTPFlow, provider: str, agent: str,
-                      endpoint: str, req_body: dict, parsed: ParsedRequest | None,
+                      endpoint: str, req_body: dict, analyzed: AnalyzedRequest | None,
                       duration_ms: int | None, raw_resp_text: str | None,
                       ttft_ms: int | None = None) -> None:
         # Skip non-LLM endpoints (telemetry, auth, health checks, etc.)
@@ -255,25 +285,29 @@ class ContextSpyAddon:
         # known LLM API paths so telemetry traffic is not stored as empty rows.
         _LLM_PATHS = ("/chat/completions", "/completions", "/messages", "/responses",
                       "/api/chat", "/api/generate")
-        if parsed is None and not any(p in endpoint for p in _LLM_PATHS):
+        if analyzed is None and not any(p in endpoint for p in _LLM_PATHS):
             logger.debug("Skipping non-LLM endpoint: %s %s", provider, endpoint)
             return
 
-        if parsed is not None:
-            breakdown = classify(parsed)
-            model = parsed.model
-            provider_input = parsed.provider_input_tokens
-            provider_output = parsed.provider_output_tokens
-            cache_read = parsed.cache_read_tokens
-            cache_creation = parsed.cache_creation_tokens
+        if analyzed is not None:
+            breakdown = classify(analyzed)
+            model = analyzed.model
+            usage = analyzed.usage
+            provider_input = usage.input_tokens
+            provider_output = usage.output_tokens
+            provider_reasoning = usage.reasoning_tokens
+            cache_read = usage.cache_read_tokens
+            cache_creation = usage.cache_creation_tokens
+            usage_extra = json.dumps(usage.extra) if usage.extra else None
         else:
-            from contextspy.analysis.classifier import CategoryBreakdown
             breakdown = CategoryBreakdown()
             model = req_body.get("model")
             provider_input = None
             provider_output = None
+            provider_reasoning = None
             cache_read = None
             cache_creation = None
+            usage_extra = None
 
         with get_db() as db:
             active_session = crud.get_active_session(db)
@@ -292,17 +326,22 @@ class ContextSpyAddon:
                 "status_code": flow.response.status_code if flow.response else None,
                 "provider_input_tokens": provider_input,
                 "provider_output_tokens": provider_output,
+                "provider_reasoning_tokens": provider_reasoning,
                 "cache_read_tokens": cache_read,
                 "cache_creation_tokens": cache_creation,
+                "usage_extra": usage_extra,
                 "raw_request_body": flow.request.get_text(),
                 "raw_response_body": raw_resp_text,
             }
             data.update(breakdown.to_db_fields())
             req_record = crud.create_request(db, data)
 
-            # Per-tool breakdown
-            if parsed is not None:
-                tool_rows = per_tool_tokens(parsed)
+            if analyzed is not None:
+                all_blocks = analyzed.input_blocks + analyzed.output_blocks
+                if all_blocks:
+                    crud.insert_blocks(db, req_record.id, all_blocks)
+
+                tool_rows = per_tool_tokens(analyzed)
                 if tool_rows:
                     crud.upsert_tool_stats(db, req_record.id, tool_rows)
 

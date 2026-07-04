@@ -81,8 +81,19 @@ All data is stored in `~/.contextspy/`:
 | `~/.contextspy/contextspy.db` | SQLite database — all requests and sessions |
 | `~/.contextspy/config.toml` | Configuration file (auto-created on first run) |
 
-Raw request/response bodies are stored per-request and purged automatically 7 days after
-capture (on next server startup) to limit disk usage.
+Raw request/response bodies, plus the content-addressed `block_contents` table (see below), are
+purged automatically 7 days after capture by default to limit disk usage — configurable via
+`[retention]` in `config.toml` (`raw_body_days`, `block_content_days`; `0` disables purging).
+Purging only runs once, at server startup — there is no background timer, so a `contextspy`
+process left running for many days won't purge again until restarted.
+
+### Blocks
+
+Every request/response is also decomposed into `blocks` — one row per content part (system
+prompt, tool definition, a single tool call or tool result, a text or thinking segment, ...).
+Each block's semantic `category` (one of the 8 breakdown categories) and structural `block_type`
+are kept forever; only the block's `content` (in `block_contents`, deduplicated by content hash
+across requests) is subject to the retention window above.
 
 ---
 

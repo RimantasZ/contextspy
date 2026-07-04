@@ -40,6 +40,17 @@ class StorageSettings:
 
 
 @dataclass
+class RetentionSettings:
+    """How long raw bodies / block contents are kept before being purged.
+
+    Purge only runs at server startup (not on a background timer) — see
+    docs/development.md. 0 means keep forever.
+    """
+    raw_body_days: int = 7
+    block_content_days: int = 7
+
+
+@dataclass
 class ReverseTarget:
     """A local LLM server to proxy in reverse mode."""
     name: str                   # human label, e.g. "llama-server"
@@ -53,6 +64,7 @@ class Settings:
     proxy: ProxySettings = field(default_factory=ProxySettings)
     web: WebSettings = field(default_factory=WebSettings)
     storage: StorageSettings = field(default_factory=StorageSettings)
+    retention: RetentionSettings = field(default_factory=RetentionSettings)
     extra_hosts: list[str] = field(default_factory=list)
     reverse_targets: list[ReverseTarget] = field(default_factory=list)
     config_dir: Path = field(default_factory=lambda: _DEFAULT_DIR)
@@ -76,6 +88,12 @@ class Settings:
                 s = data["storage"]
                 if "db_path" in s:
                     settings.storage.db_path = Path(s["db_path"]).expanduser()
+            if "retention" in data:
+                r = data["retention"]
+                settings.retention.raw_body_days = r.get("raw_body_days", settings.retention.raw_body_days)
+                settings.retention.block_content_days = r.get(
+                    "block_content_days", settings.retention.block_content_days
+                )
             if "intercepted_hosts" in data:
                 settings.extra_hosts = data["intercepted_hosts"].get("extra_hosts", [])
             if "reverse_targets" in data:
@@ -110,6 +128,13 @@ bind_addr = "{self.web.bind_addr}"
 
 [storage]
 db_path = "{db_path_toml}"
+
+[retention]
+# How many days to keep raw request/response bodies and block contents before
+# purging (0 = keep forever). Purge only runs at server startup, not on a
+# timer — see docs/development.md if contextspy runs for days without restart.
+raw_body_days = {self.retention.raw_body_days}
+block_content_days = {self.retention.block_content_days}
 
 [intercepted_hosts]
 # Add extra hosts if needed (besides the built-in list)

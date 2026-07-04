@@ -1,4 +1,4 @@
-﻿# Copyright 2026 Rimantas Zukaitis
+# Copyright 2026 Rimantas Zukaitis
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,8 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from contextspy.analysis.providers import ParsedMessage, ParsedRequest
-from contextspy.analysis.tokenizer import count_tokens
+from contextspy.analysis.blocks import AnalyzedRequest, Block, BlockType
 
 # ---------------------------------------------------------------------------
 # File content heuristics
@@ -69,6 +68,8 @@ class CategoryBreakdown:
     assistant_prefill: int = 0
     uncategorized: int = 0
     total_input: int = 0
+    tokens_output_text: int = 0
+    tokens_output_thinking: int = 0
     total_output: int = 0
 
     def to_db_fields(self) -> dict:
@@ -83,6 +84,8 @@ class CategoryBreakdown:
             "tokens_uncategorized": self.uncategorized,
             "tokens_total_input": self.total_input,
             "tokens_total_output": self.total_output,
+            "tokens_output_text": self.tokens_output_text,
+            "tokens_output_thinking": self.tokens_output_thinking,
         }
 
 
@@ -90,54 +93,57 @@ class CategoryBreakdown:
 # Classifier
 # ---------------------------------------------------------------------------
 
-def classify(parsed: ParsedRequest) -> CategoryBreakdown:
-    breakdown = CategoryBreakdown()
+def classify_blocks(input_blocks: list[Block]) -> None:
+    """Assign each input block's `category` in place.
 
-    # Tool definitions are from the top-level tools array, counted once
-    breakdown.tool_definitions = count_tokens(parsed.tool_definitions_text)
+    Priority: tool_results > system_prompt > assistant_prefill > file_contents >
+              current_user_message > conversation_history > tool_definitions > uncategorized
+    """
+    last_user_idx: int | None = None
+    for b in input_blocks:
+        if b.block_type == BlockType.USER_MESSAGE and not b.attrs.get("is_prefill"):
+            if b.message_index is not None:
+                last_user_idx = b.message_index
 
-    # Find the last user message index
-    last_user_idx = -1
-    for i, msg in enumerate(parsed.messages):
-        if msg.role == "user" and not msg.is_tool_result:
-            last_user_idx = i
-
-    for i, msg in enumerate(parsed.messages):
-        tokens = count_tokens(msg.content)
-
-        # Priority: tool_results > system_prompt > assistant_prefill >
-        #           file_contents > current_user_message > conversation_history > uncategorized
-
-        if msg.is_tool_result:
-            breakdown.tool_results += tokens
-        elif msg.role == "system":
-            breakdown.system_prompt += tokens
-        elif msg.is_assistant_prefill:
-            breakdown.assistant_prefill += tokens
-        elif msg.role == "user":
-            if i == last_user_idx:
-                if _is_file_content(msg.content):
-                    breakdown.file_contents += tokens
-                else:
-                    breakdown.current_user_message += tokens
+    for b in input_blocks:
+        if b.block_type == BlockType.TOOL_RESULT:
+            b.category = "tool_results"
+        elif b.block_type == BlockType.SYSTEM_PROMPT:
+            b.category = "system_prompt"
+        elif b.attrs.get("is_prefill"):
+            b.category = "assistant_prefill"
+        elif b.block_type == BlockType.USER_MESSAGE:
+            if _is_file_content(b.content):
+                b.category = "file_contents"
+            elif b.message_index == last_user_idx:
+                b.category = "current_user_message"
             else:
-                if _is_file_content(msg.content):
-                    breakdown.file_contents += tokens
-                else:
-                    breakdown.conversation_history += tokens
-        elif msg.role == "assistant":
-            if _is_file_content(msg.content):
-                breakdown.file_contents += tokens
-            else:
-                breakdown.conversation_history += tokens
+                b.category = "conversation_history"
+        elif b.block_type == BlockType.TOOL_DEFINITION:
+            b.category = "tool_definitions"
+        elif b.block_type in (BlockType.ASSISTANT_MESSAGE, BlockType.TOOL_CALL, BlockType.THINKING, BlockType.OTHER):
+            b.category = "file_contents" if _is_file_content(b.content) else "conversation_history"
         else:
-            breakdown.uncategorized += tokens
+            b.category = "uncategorized"
+
+
+def classify(analyzed: AnalyzedRequest) -> CategoryBreakdown:
+    classify_blocks(analyzed.input_blocks)
+
+    breakdown = CategoryBreakdown()
+    for b in analyzed.input_blocks:
+        cat = b.category or "uncategorized"
+        setattr(breakdown, cat, getattr(breakdown, cat) + b.token_count)
 
     # ChatML overhead: ~4 tokens per message (role marker + framing tokens) +
     # 3 tokens to prime the reply.  This matches OpenAI's own token-counting
     # formula and significantly reduces the systematic undercount for long
-    # multi-turn / tool-heavy conversations.
-    chatml_overhead = 4 * len(parsed.messages) + 3
+    # multi-turn / tool-heavy conversations. Tool-definition blocks carry no
+    # message_index so they don't inflate the message count.
+    distinct_message_indices = {
+        b.message_index for b in analyzed.input_blocks if b.message_index is not None
+    }
+    chatml_overhead = 4 * len(distinct_message_indices) + 3
 
     breakdown.total_input = (
         breakdown.system_prompt
@@ -150,53 +156,45 @@ def classify(parsed: ParsedRequest) -> CategoryBreakdown:
         + breakdown.uncategorized
         + chatml_overhead
     )
-    breakdown.total_output = count_tokens(parsed.response_text)
+
+    for b in analyzed.output_blocks:
+        if b.block_type == BlockType.THINKING:
+            breakdown.tokens_output_thinking += b.token_count
+        else:
+            breakdown.tokens_output_text += b.token_count
+    breakdown.total_output = breakdown.tokens_output_text + breakdown.tokens_output_thinking
 
     return breakdown
 
 
-def per_tool_tokens(parsed: ParsedRequest) -> list[dict]:
+def per_tool_tokens(analyzed: AnalyzedRequest) -> list[dict]:
     """Return per-tool definition token counts and result token counts.
 
-    Definition tokens: each tool definition counted individually.
-    Result tokens: attributed to the specific tool via tool_call_id mapping;
-    falls back to even distribution only when the call_id cannot be resolved.
+    Definition tokens: each tool definition block counted individually.
+    Result tokens: attributed via the tool_result block's tool_name (already
+    resolved by the adapter from tool_call_map); falls back to even
+    distribution only when the tool name cannot be resolved.
     """
-    if not parsed.tool_definitions_text:
-        return []
-
-    try:
-        import json
-        tools: list[dict] = json.loads(parsed.tool_definitions_text)
-    except Exception:
-        return []
-
-    if not tools:
+    def_blocks = [b for b in analyzed.input_blocks if b.block_type == BlockType.TOOL_DEFINITION]
+    if not def_blocks:
         return []
 
     rows: list[dict] = []
-    for tool in tools:
-        name = tool.get("name") or tool.get("function", {}).get("name") or "unknown"
-        def_tokens = count_tokens(json.dumps(tool))
-        rows.append({"tool_name": name, "definition_tokens": def_tokens, "result_tokens": 0})
-
-    name_to_idx = {row["tool_name"]: i for i, row in enumerate(rows)}
+    name_to_idx: dict[str, int] = {}
+    for b in def_blocks:
+        name = b.tool_name or "unknown"
+        name_to_idx[name] = len(rows)
+        rows.append({"tool_name": name, "definition_tokens": b.token_count, "result_tokens": 0})
 
     unattributed_tokens = 0
-    for msg in parsed.messages:
-        if not msg.is_tool_result:
+    for b in analyzed.input_blocks:
+        if b.block_type != BlockType.TOOL_RESULT or b.token_count == 0:
             continue
-        tokens = count_tokens(msg.content)
-        if tokens == 0:
-            continue
-        # Resolve via tool_call_id → tool_name map
-        tool_name = parsed.tool_call_map.get(msg.tool_call_id or "") if msg.tool_call_id else None
-        if tool_name and tool_name in name_to_idx:
-            rows[name_to_idx[tool_name]]["result_tokens"] += tokens
+        if b.tool_name and b.tool_name in name_to_idx:
+            rows[name_to_idx[b.tool_name]]["result_tokens"] += b.token_count
         else:
-            unattributed_tokens += tokens
+            unattributed_tokens += b.token_count
 
-    # Distribute any unattributed tokens evenly
     if unattributed_tokens > 0 and rows:
         per = unattributed_tokens // len(rows)
         remainder = unattributed_tokens % len(rows)

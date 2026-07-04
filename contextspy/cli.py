@@ -125,6 +125,22 @@ _TOOL_INJECTORS: dict[str, list[Callable[[dict[str, str], pathlib.Path], None]]]
 _ELECTRON_TOOLS: frozenset[str] = frozenset({"code", "cursor"})
 
 
+def _warn_if_migrations_pending(settings) -> None:
+    """Print a warning if the DB has pending data migrations (e.g. after an upgrade)."""
+    from contextspy.db import migrations
+    from contextspy.db.database import get_db, init_db
+
+    init_db(settings.storage.db_path)
+    with get_db() as db:
+        pending = migrations.check_and_flag_pending_migrations(db)
+    if pending:
+        console.print(
+            f"[yellow]Database schema has pending data migrations: {pending}.[/yellow]\n"
+            "[yellow]Run [bold]contextspy db-upgrade[/bold] to backfill (recommended), "
+            "or [bold]contextspy reset-db[/bold] to start fresh.[/yellow]\n"
+        )
+
+
 @app.command()
 def start(
     proxy_port: int = typer.Option(8888, "--proxy-port", help="Proxy listen port"),
@@ -142,6 +158,7 @@ def start(
     settings.web.port = web_port
     settings.ensure_dirs()
     settings.write_defaults()
+    _warn_if_migrations_pending(settings)
 
     # Validate cert (regenerates if missing or corrupted). Abort on failure —
     # a broken cert causes silent TLS drops, which is worse than not starting.
@@ -251,6 +268,7 @@ def start_local(
     settings.web.port = web_port
     settings.ensure_dirs()
     settings.write_defaults()
+    _warn_if_migrations_pending(settings)
 
     if not settings.reverse_targets:
         console.print(
@@ -559,6 +577,7 @@ def help_cmd() -> None:
             "Run a tool with proxy env vars injected (code/cursor/claude/opencode + fallback)",
         ),
         ("reset-db", "Delete all requests and sessions from the local database"),
+        ("db-upgrade", "Apply pending data migrations (e.g. backfill blocks from raw bodies)"),
         ("db-stats", "Print row counts for each database table"),
         ("report", "Print aggregate stats: requests, tokens, category breakdown"),
         (
@@ -616,12 +635,45 @@ def reset_db(
     con = sqlite3.connect(db_path)
     cur = con.cursor()
     cur.execute("PRAGMA foreign_keys = ON")
-    cur.execute("DELETE FROM tool_stats")
-    cur.execute("DELETE FROM requests")
-    cur.execute("DELETE FROM sessions")
+    for table in ("tool_stats", "blocks", "block_contents", "requests", "sessions", "schema_meta"):
+        try:
+            cur.execute(f"DELETE FROM {table}")
+        except sqlite3.OperationalError:
+            pass  # table not yet created (old DB)
     con.commit()
     con.close()
     console.print("[green]Database cleared.[/green]")
+
+
+# ---------------------------------------------------------------------------
+# db-upgrade
+# ---------------------------------------------------------------------------
+
+
+@app.command("db-upgrade")
+def db_upgrade() -> None:
+    """Apply pending data migrations (e.g. backfill blocks from raw request bodies).
+
+    Safe to re-run — already-migrated requests are skipped. Requests whose raw
+    bodies were already purged by retention simply get no blocks.
+    """
+    from contextspy.config import Settings
+    from contextspy.db import migrations
+    from contextspy.db.database import get_db, init_db
+
+    settings = Settings.load()
+    settings.ensure_dirs()
+    init_db(settings.storage.db_path)
+
+    with get_db() as db:
+        pending = migrations.check_and_flag_pending_migrations(db)
+        if not pending:
+            console.print("[green]Database is already up to date. No migrations pending.[/green]")
+            return
+        console.print(f"[bold]Applying data migrations:[/bold] {pending}")
+        applied = migrations.apply_data_migrations(db)
+
+    console.print(f"[green]Done.[/green] Applied migrations: {applied}")
 
 
 # ---------------------------------------------------------------------------

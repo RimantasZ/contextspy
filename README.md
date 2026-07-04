@@ -105,7 +105,11 @@ The proxy and dashboard server are bound to localhost, and not exposed to extern
 
 The intended use case is to run ContextSpy as a profiler tool on dedicated profiling and optimisation sessions, rather than keeping it permanently as a monitoring tool.
 
-The contents of requests are purged from the database after 7 days, and only statistics are retained.
+The contents of requests (raw bodies and block contents) are purged from the database after 7 days
+by default — configurable via `[retention]` in `~/.contextspy/config.toml`. Aggregated token counts
+and classifications are retained indefinitely. Purging only runs at server startup, not on a
+background timer, so a `contextspy` process left running for many days in a row won't purge again
+until it's restarted.
 
 The contents of database can be cleared manually by running `contextspy reset-db`. 
 In practice, it is recommended to do it from time to time.
@@ -122,7 +126,10 @@ brew update
 brew upgrade contextspy
 ```
 
-At this stage, the database schema is subject to change, so it is advisable to purge db before upgrading.
+At this stage, the database schema is subject to change. Structural changes (new tables/columns)
+are applied automatically on next startup. If a data migration is needed (e.g. backfilling new
+derived data for existing requests), `contextspy start` will print a warning — run
+`contextspy db-upgrade` to backfill, or `contextspy reset-db` to start fresh.
 
 ## Tech stack
 
