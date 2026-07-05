@@ -89,6 +89,14 @@ export function useRequest(id: string) {
   })
 }
 
+export function useRequestBlocks(id: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['request', id, 'blocks'],
+    queryFn: () => requestsApi.blocks(id),
+    enabled: !!id && enabled,
+  })
+}
+
 // ---- Stats ----------------------------------------------------------------
 
 export function useStatsOverview() {

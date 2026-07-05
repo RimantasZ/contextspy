@@ -165,7 +165,13 @@ export default function RequestDetail() {
           >
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Generated tokens</p>
             <p className="text-2xl font-semibold text-white">{req.tokens_total_output.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 mt-1">click to view response ↓</p>
+            {req.tokens_output_thinking > 0 ? (
+              <p className="text-xs text-gray-500 mt-1">
+                {req.tokens_output_text.toLocaleString()} text · {req.tokens_output_thinking.toLocaleString()} thinking
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500 mt-1">click to view response ↓</p>
+            )}
           </button>
         </div>
         {/* Right: metadata grid (~75%) */}
@@ -225,8 +231,8 @@ export default function RequestDetail() {
 
       {/* Raw bodies */}
       <div className="space-y-3">
-        <RawViewer title="Request" content={req.raw_request_body} parsedBody={req.raw_request_body} totalInputTokens={req.tokens_total_input} expandToggle={requestToggle} />
-        <RawViewer title="Response" content={req.raw_response_body} responseMode totalInputTokens={req.tokens_total_output} expandToggle={responseToggle} />
+        <RawViewer title="Request" requestId={req.id} content={req.raw_request_body} totalInputTokens={req.tokens_total_input} expandToggle={requestToggle} />
+        <RawViewer title="Response" requestId={req.id} content={req.raw_response_body} responseMode totalInputTokens={req.tokens_total_output} expandToggle={responseToggle} />
       </div>
     </div>
   );

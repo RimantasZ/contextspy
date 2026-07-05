@@ -58,3 +58,13 @@ def get_request(request_id: str):
         if not req:
             raise HTTPException(status_code=404, detail="Request not found")
         return {"request": req.to_dict(include_raw=True)}
+
+
+@router.get("/requests/{request_id}/blocks")
+def get_request_blocks(request_id: str):
+    with get_db() as db:
+        req = crud.get_request(db, request_id)
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found")
+        blocks = crud.get_blocks(db, request_id)
+        return {"session_seq": req.session_seq, "blocks": blocks}

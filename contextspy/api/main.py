@@ -46,7 +46,7 @@ def create_app(settings=None) -> FastAPI:
         _ws_manager.set_loop(asyncio.get_event_loop())
         settings.ensure_dirs()
         init_db(settings.storage.db_path)
-        startup_vacuum()
+        startup_vacuum(settings)
         # Start proxy
         from contextspy.proxy.runner import start_proxy
         start_proxy(settings, _ws_manager)
@@ -115,7 +115,7 @@ def create_app_local(settings=None) -> FastAPI:
         _ws_manager.set_loop(asyncio.get_event_loop())
         settings.ensure_dirs()
         init_db(settings.storage.db_path)
-        startup_vacuum()
+        startup_vacuum(settings)
         from contextspy.proxy.runner import start_local_proxies
         start_local_proxies(settings, _ws_manager)
         yield
