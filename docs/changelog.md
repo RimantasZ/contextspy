@@ -1,5 +1,62 @@
 # What's New
 
+## v0.3.0
+
+### Architecture
+- **All context analysis moved to the backend** — request/response bodies are now decomposed
+  into structured *blocks* (system prompt, tool definitions, individual tool calls/results, text
+  and thinking segments) directly in Python, replacing the old approach where the frontend
+  re-parsed raw JSON in the browser to build the request/response breakdown views. This makes the
+  breakdown UI work correctly even after raw bodies have been purged by retention, and lays the
+  groundwork for tracking how context evolves across requests in a session.
+- **New provider adapter layer** — `analysis/providers.py` has been replaced by
+  `analysis/adapters/` (Anthropic, OpenAI Chat Completions, OpenAI Responses, Ollama), making it
+  straightforward to add support for new providers or wire formats going forward.
+- **Reasoning/thinking tokens tracked separately** — Anthropic extended-thinking blocks and
+  OpenAI reasoning-token usage are now broken out from regular generated output tokens instead of
+  being lumped into a single output count.
+
+### Fixes & improvements
+- **Startup now blocks on pending DB migrations** — if a database schema upgrade requires a data
+  backfill, `contextspy start`/`start-local` now refuse to start and print instructions
+  (`contextspy db-upgrade` or `contextspy reset-db`) instead of running against a partially
+  migrated database.
+- **Breakdown view reordering** — the token composition view now shows tokens before labels for
+  easier scanning.
+- Font fix in the request breakdown view.
+- Expanded [Troubleshooting](install.md#troubleshooting) section covering more install/cert
+  edge cases.
+- README fixes.
+
+---
+
+## v0.2.1
+
+### New features
+- **`contextspy setup-python` / `contextspy inject-cert`** — new commands for routing Python
+  scripts (OpenAI SDK, httpx) through the proxy, including a one-shot fix for the case where
+  httpx/the OpenAI SDK ignores `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` because it verifies against
+  certifi's bundled CA store directly.
+- **Time to first token (TTFT)** — requests now record and display TTFT for streaming responses
+  when the provider makes it measurable, alongside total duration.
+- **Session duration tracking** — sessions now track active duration, surfaced in the session
+  detail view and included in the PDF report.
+- **Sortable tool breakdown table** — the per-tool token breakdown table can now be sorted by
+  column.
+
+---
+
+## v0.2.0
+
+### Documentation
+- Expanded README and FAQ with clearer setup and usage guidance.
+- Added a cloud-mode setup walkthrough (`docs/cloud-mode.md`) and expanded the install guide.
+- Layout/formatting fixes to the README.
+
+No functional or code changes in this release — documentation only.
+
+---
+
 ## v0.1.11
 
 ### Fixes & improvements

@@ -1,6 +1,6 @@
 [project]
 name = "contextspy"
-version = "0.2.1"
+version = "0.3.0"
 description = "Context profiler for LLMs and AI agents - used to inspect context conents and reduce token costs"
 readme = "README.md"
 requires-python = ">=3.11"
