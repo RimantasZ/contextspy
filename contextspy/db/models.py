@@ -104,7 +104,7 @@ class Request(Base):
         String, nullable=False, default="tiktoken/cl100k_base"
     )
 
-    # Raw content (NULLed when session ends)
+    # Raw content (Nulled after a retention period, if configured)
     raw_request_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     raw_response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
