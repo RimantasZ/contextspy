@@ -46,6 +46,11 @@ def _migrate(engine) -> None:
         ("cache_read_tokens", "INTEGER"),
         ("cache_creation_tokens", "INTEGER"),
         ("ttft_ms", "INTEGER"),
+        ("tokens_output_text", "INTEGER NOT NULL DEFAULT 0"),
+        ("tokens_output_thinking", "INTEGER NOT NULL DEFAULT 0"),
+        ("provider_reasoning_tokens", "INTEGER"),
+        ("usage_extra", "TEXT"),
+        ("session_seq", "INTEGER"),
     ]
     with engine.connect() as conn:
         for col, col_type in new_columns:
@@ -81,20 +86,53 @@ def get_db() -> Generator[OrmSession, None, None]:
         db.close()
 
 
-def startup_vacuum() -> None:
-    """NULL out raw bodies for any request older than 7 days."""
+def startup_vacuum(settings=None) -> None:
+    """Purge raw bodies and orphaned block contents past their retention window.
+
+    Runs once, at server startup, using the [retention] settings from
+    config.toml (default 7 days for both; 0 = keep forever). There is no
+    background timer — a contextspy process left running for days will not
+    re-purge until restarted (see docs/development.md).
+    """
     if _engine is None:
         return
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    if settings is None:
+        from contextspy.config import Settings
+        settings = Settings.load()
+
     with _engine.begin() as conn:
-        conn.execute(
-            text(
-                """
-                UPDATE requests
-                SET raw_request_body = NULL, raw_response_body = NULL
-                WHERE timestamp < :cutoff
-                  AND (raw_request_body IS NOT NULL OR raw_response_body IS NOT NULL)
-                """
-            ),
-            {"cutoff": cutoff.isoformat()},
-        )
+        raw_body_days = settings.retention.raw_body_days
+        if raw_body_days > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=raw_body_days)
+            conn.execute(
+                text(
+                    """
+                    UPDATE requests
+                    SET raw_request_body = NULL, raw_response_body = NULL
+                    WHERE timestamp < :cutoff
+                      AND (raw_request_body IS NOT NULL OR raw_response_body IS NOT NULL)
+                    """
+                ),
+                {"cutoff": cutoff.isoformat()},
+            )
+
+        block_content_days = settings.retention.block_content_days
+        if block_content_days > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=block_content_days)
+            # Keep any content still referenced by a block whose request is
+            # newer than the cutoff (shared content across a session is only
+            # GC'd once every request that uses it has aged out).
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM block_contents
+                    WHERE hash NOT IN (
+                        SELECT DISTINCT b.content_hash
+                        FROM blocks b
+                        JOIN requests r ON r.id = b.request_id
+                        WHERE b.content_hash IS NOT NULL AND r.timestamp >= :cutoff
+                    )
+                    """
+                ),
+                {"cutoff": cutoff.isoformat()},
+            )

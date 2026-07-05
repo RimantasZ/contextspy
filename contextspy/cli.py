@@ -125,6 +125,27 @@ _TOOL_INJECTORS: dict[str, list[Callable[[dict[str, str], pathlib.Path], None]]]
 _ELECTRON_TOOLS: frozenset[str] = frozenset({"code", "cursor"})
 
 
+def _abort_if_migrations_pending(settings) -> None:
+    """Exit before starting if the DB has pending data migrations (e.g. after an upgrade).
+
+    Starting on a partially-migrated DB would serve stale/incomplete data (e.g.
+    older requests missing blocks), so this blocks startup rather than just warning.
+    """
+    from contextspy.db import migrations
+    from contextspy.db.database import get_db, init_db
+
+    init_db(settings.storage.db_path)
+    with get_db() as db:
+        pending = migrations.check_and_flag_pending_migrations(db)
+    if pending:
+        console.print(
+            f"[red]Database schema has pending data migrations: {pending}.[/red]\n"
+            "[yellow]Run [bold]contextspy db-upgrade[/bold] to backfill, "
+            "or [bold]contextspy reset-db[/bold] to start fresh (recommended).[/yellow]\n"
+        )
+        raise typer.Exit(1)
+
+
 @app.command()
 def start(
     proxy_port: int = typer.Option(8888, "--proxy-port", help="Proxy listen port"),
@@ -142,6 +163,7 @@ def start(
     settings.web.port = web_port
     settings.ensure_dirs()
     settings.write_defaults()
+    _abort_if_migrations_pending(settings)
 
     # Validate cert (regenerates if missing or corrupted). Abort on failure —
     # a broken cert causes silent TLS drops, which is worse than not starting.
@@ -251,6 +273,7 @@ def start_local(
     settings.web.port = web_port
     settings.ensure_dirs()
     settings.write_defaults()
+    _abort_if_migrations_pending(settings)
 
     if not settings.reverse_targets:
         console.print(
@@ -559,6 +582,10 @@ def help_cmd() -> None:
             "Run a tool with proxy env vars injected (code/cursor/claude/opencode + fallback)",
         ),
         ("reset-db", "Delete all requests and sessions from the local database"),
+        (
+            "db-upgrade",
+            "Apply pending data migrations (e.g. backfill blocks from raw bodies)",
+        ),
         ("db-stats", "Print row counts for each database table"),
         ("report", "Print aggregate stats: requests, tokens, category breakdown"),
         (
@@ -573,7 +600,10 @@ def help_cmd() -> None:
             "setup-opencode",
             "Print env-var commands to route opencode through the proxy",
         ),
-        ("setup-python", "Print instructions for Python scripts using OpenAI SDK / httpx"),
+        (
+            "setup-python",
+            "Print instructions for Python scripts using OpenAI SDK / httpx",
+        ),
         ("inject-cert", "Append mitmproxy CA to certifi so httpx/OpenAI SDK trusts it"),
         ("setup-llamaserver", "Print setup instructions for llama.cpp/llama-server"),
         ("setup-ollama", "Print setup instructions for Ollama"),
@@ -616,12 +646,54 @@ def reset_db(
     con = sqlite3.connect(db_path)
     cur = con.cursor()
     cur.execute("PRAGMA foreign_keys = ON")
-    cur.execute("DELETE FROM tool_stats")
-    cur.execute("DELETE FROM requests")
-    cur.execute("DELETE FROM sessions")
+    for table in (
+        "tool_stats",
+        "blocks",
+        "block_contents",
+        "requests",
+        "sessions",
+        "schema_meta",
+    ):
+        try:
+            cur.execute(f"DELETE FROM {table}")
+        except sqlite3.OperationalError:
+            pass  # table not yet created (old DB)
     con.commit()
     con.close()
     console.print("[green]Database cleared.[/green]")
+
+
+# ---------------------------------------------------------------------------
+# db-upgrade
+# ---------------------------------------------------------------------------
+
+
+@app.command("db-upgrade")
+def db_upgrade() -> None:
+    """Apply pending data migrations (e.g. backfill blocks from raw request bodies).
+
+    Safe to re-run — already-migrated requests are skipped. Requests whose raw
+    bodies were already purged by retention simply get no blocks.
+    """
+    from contextspy.config import Settings
+    from contextspy.db import migrations
+    from contextspy.db.database import get_db, init_db
+
+    settings = Settings.load()
+    settings.ensure_dirs()
+    init_db(settings.storage.db_path)
+
+    with get_db() as db:
+        pending = migrations.check_and_flag_pending_migrations(db)
+        if not pending:
+            console.print(
+                "[green]Database is already up to date. No migrations pending.[/green]"
+            )
+            return
+        console.print(f"[bold]Applying data migrations:[/bold] {pending}")
+        applied = migrations.apply_data_migrations(db)
+
+    console.print(f"[green]Done.[/green] Applied migrations: {applied}")
 
 
 # ---------------------------------------------------------------------------
@@ -1027,7 +1099,9 @@ def setup_python() -> None:
     port = settings.proxy.port
     cert_path = pathlib.Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
 
-    console.print("\n[bold cyan]Python (OpenAI SDK / httpx) — proxy setup[/bold cyan]\n")
+    console.print(
+        "\n[bold cyan]Python (OpenAI SDK / httpx) — proxy setup[/bold cyan]\n"
+    )
     console.print(
         "[bold yellow]Why SSL errors occur[/bold yellow]\n"
         "The OpenAI Python SDK uses [bold]httpx[/bold], which verifies TLS certificates\n"
@@ -1043,15 +1117,17 @@ def setup_python() -> None:
         "  [dim]import httpx[/dim]\n"
         "  [dim]from openai import OpenAI[/dim]\n"
         "\n"
-        f'  [dim]client = OpenAI([/dim]\n'
-        f'  [dim]    http_client=httpx.Client([/dim]\n'
+        f"  [dim]client = OpenAI([/dim]\n"
+        f"  [dim]    http_client=httpx.Client([/dim]\n"
         f'  [dim]        proxy="http://127.0.0.1:{port}",[/dim]\n'
         f'  [dim]        verify=r"{cert_path}",[/dim]\n'
-        f'  [dim]    )[/dim]\n'
-        f'  [dim])[/dim]\n'
+        f"  [dim]    )[/dim]\n"
+        f"  [dim])[/dim]\n"
     )
 
-    console.print("[bold yellow]Option 2 — no code change (append cert to certifi)[/bold yellow]")
+    console.print(
+        "[bold yellow]Option 2 — no code change (append cert to certifi)[/bold yellow]"
+    )
     console.print(
         "Append the mitmproxy CA to certifi's bundle in your virtual environment.\n"
         "[yellow]Note:[/yellow] this is reset when certifi is upgraded.\n"
@@ -1070,7 +1146,9 @@ def setup_python() -> None:
     )
 
     console.print("[bold yellow]Env vars (for requests / urllib only)[/bold yellow]")
-    console.print("These help if your code uses [bold]requests[/bold] or [bold]urllib[/bold] (not httpx):\n")
+    console.print(
+        "These help if your code uses [bold]requests[/bold] or [bold]urllib[/bold] (not httpx):\n"
+    )
     console.print("[bold]PowerShell:[/bold]")
     console.print(f'  $env:HTTPS_PROXY = "http://127.0.0.1:{port}"')
     console.print(f'  $env:REQUESTS_CA_BUNDLE = "{cert_path}"')

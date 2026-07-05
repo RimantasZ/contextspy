@@ -13,7 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import (
@@ -82,19 +83,28 @@ class Request(Base):
     tokens_uncategorized: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_total_input: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_total_output: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Output split: generated text vs. reasoning/thinking (both roll up into tokens_total_output)
+    tokens_output_text: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tokens_output_thinking: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # Provider-reported usage
     provider_input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     provider_output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    provider_reasoning_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Anthropic prompt-cache breakdown (None for non-Anthropic providers)
     cache_read_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cache_creation_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Any other provider usage fields not otherwise modelled (JSON)
+    usage_extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Ordinal of this request within its session (1, 2, 3, ...); NULL when session_id is NULL
+    session_seq: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     tokenizer: Mapped[str] = mapped_column(
         String, nullable=False, default="tiktoken/cl100k_base"
     )
 
-    # Raw content (NULLed when session ends)
+    # Raw content (Nulled after a retention period, if configured)
     raw_request_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     raw_response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -122,10 +132,15 @@ class Request(Base):
             "tokens_uncategorized": self.tokens_uncategorized,
             "tokens_total_input": self.tokens_total_input,
             "tokens_total_output": self.tokens_total_output,
+            "tokens_output_text": self.tokens_output_text,
+            "tokens_output_thinking": self.tokens_output_thinking,
             "provider_input_tokens": self.provider_input_tokens,
             "provider_output_tokens": self.provider_output_tokens,
+            "provider_reasoning_tokens": self.provider_reasoning_tokens,
             "cache_read_tokens": self.cache_read_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
+            "usage_extra": json.loads(self.usage_extra) if self.usage_extra else None,
+            "session_seq": self.session_seq,
             "tokenizer": self.tokenizer,
         }
         if include_raw:
@@ -163,3 +178,77 @@ class ToolStat(Base):
 
 Index("idx_tool_stats_request", ToolStat.request_id)
 Index("idx_tool_stats_name", ToolStat.tool_name)
+
+
+class BlockContent(Base):
+    """Content-addressed store for block text — one row per unique content string.
+
+    Deduplicates across requests within a session (system prompts, tool
+    definitions, and growing conversation history repeat almost verbatim
+    turn over turn) and is the basis for future request-diffing.
+    """
+
+    __tablename__ = "block_contents"
+
+    hash: Mapped[str] = mapped_column(String, primary_key=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class BlockRecord(Base):
+    """One content-part block (system prompt, tool def, message part, tool
+    result, tool call, thinking segment, ...) belonging to a request.
+
+    ``content_hash`` points at ``block_contents.hash`` but is not FK-enforced:
+    content rows are garbage-collected independently by retention (see
+    ``db/database.py: startup_vacuum``), while the block row — hash, type,
+    category, token_count — is kept forever.
+    """
+
+    __tablename__ = "blocks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(
+        String, ForeignKey("requests.id", ondelete="CASCADE"), nullable=False
+    )
+    direction: Mapped[str] = mapped_column(String, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    message_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    block_type: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tool_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    tool_call_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    attrs: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+
+    def to_dict(self, content: str | None, content_purged: bool) -> dict:
+        return {
+            "direction": self.direction,
+            "position": self.position,
+            "message_index": self.message_index,
+            "block_type": self.block_type,
+            "category": self.category,
+            "content": content,
+            "content_purged": content_purged,
+            "token_count": self.token_count,
+            "tool_name": self.tool_name,
+            "tool_call_id": self.tool_call_id,
+            "attrs": json.loads(self.attrs) if self.attrs else {},
+        }
+
+
+Index("idx_blocks_request", BlockRecord.request_id)
+Index("idx_blocks_content_hash", BlockRecord.content_hash)
+Index("idx_blocks_type", BlockRecord.block_type)
+
+
+class SchemaMeta(Base):
+    """Key/value store for schema version + pending-data-migration tracking."""
+
+    __tablename__ = "schema_meta"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(String, nullable=False)

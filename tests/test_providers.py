@@ -11,30 +11,28 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for contextspy.analysis.providers.
+"""Tests for contextspy.analysis.adapters + classifier.
 
 Covers every wire-format / provider combination including the Copilot-via-Claude
-case that was broken (provider="copilot", endpoint="/v1/messages", Anthropic SSE).
+case that was broken (endpoint="/v1/messages", Anthropic SSE, regardless of
+which host was detected) plus the block-level model introduced in the
+blocks/adapters refactor: per-content-part splitting, category assignment,
+content-addressed dedup, retention GC, and hidden-reasoning synthesis.
 """
 from __future__ import annotations
 
 import json
-import textwrap
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from contextspy.analysis.providers import (
-    ParsedRequest,
-    _sse_to_anthropic_resp,
-    _sse_to_openai_resp,
-    _sse_to_openai_responses_resp,
-    _wire_format,
-    parse_anthropic,
-    parse_openai,
-    parse_openai_responses,
-    parse_request,
-    parse_sse_request,
-)
+from contextspy.analysis.adapters import get_adapter
+from contextspy.analysis.adapters.anthropic import AnthropicAdapter
+from contextspy.analysis.adapters.ollama import OllamaAdapter
+from contextspy.analysis.adapters.openai_chat import OpenAIChatAdapter
+from contextspy.analysis.adapters.openai_responses import OpenAIResponsesAdapter
+from contextspy.analysis.blocks import AnalyzedRequest, BlockType, Direction, Usage
+from contextspy.analysis.classifier import classify, classify_blocks, per_tool_tokens
 
 try:
     from contextspy.proxy.addon import _detect_agent, _detect_provider
@@ -162,7 +160,6 @@ def _make_anthropic_sse(
                    separators=(",", ":")),
         "",
     ]
-    # Emit one delta per word so we exercise the accumulation loop
     for word in text.split():
         lines += [
             "event: content_block_delta",
@@ -187,9 +184,8 @@ def _make_anthropic_sse(
         "data: [DONE]",
         "",
     ]
-    # SSE format: each line is either "event: …" or "data: …"
     sse_lines: list[str] = []
-    for i, line in enumerate(lines):
+    for line in lines:
         if line.startswith("event:"):
             sse_lines.append(line)
         elif line == "":
@@ -246,7 +242,6 @@ def _make_copilot_claude_sse(
         json.dumps({"type": "content_block_stop", "index": 0}, separators=(",", ":")),
         "",
         "event: message_delta",
-        # Copilot/Bedrock: all four token counts in message_delta
         json.dumps({
             "type": "message_delta",
             "copilot_usage": {"total_nano_aiu": 0},
@@ -284,12 +279,13 @@ def _make_openai_sse(
     completion_tokens: int = 42,
 ) -> bytes:
     chunks: list[str] = []
-    for i, word in enumerate(text.split()):
+    words = text.split()
+    for i, word in enumerate(words):
         chunks.append("data: " + json.dumps({
             "id": "chatcmpl-01",
             "object": "chat.completion.chunk",
             "model": "gpt-4o",
-            "choices": [{"index": 0, "delta": {"content": word + (" " if i < len(text.split()) - 1 else "")}}],
+            "choices": [{"index": 0, "delta": {"content": word + (" " if i < len(words) - 1 else "")}}],
         }, separators=(",", ":")))
     chunks.append("data: " + json.dumps({
         "id": "chatcmpl-01",
@@ -307,7 +303,6 @@ def _make_openai_responses_sse(
     input_tokens: int = 20,
     output_tokens: int = 42,
 ) -> bytes:
-    """Build a minimal OpenAI Responses API SSE stream."""
     events = [
         {"type": "response.created", "response": {"model": "gpt-4o"}},
         {"type": "response.output_item.added", "output_index": 0,
@@ -333,289 +328,358 @@ def _make_openai_responses_sse(
 
 
 # ---------------------------------------------------------------------------
-# _wire_format
+# get_adapter dispatch (was _wire_format)
 # ---------------------------------------------------------------------------
 
-class TestWireFormat:
+class TestGetAdapter:
     def test_anthropic_messages(self):
-        assert _wire_format("/v1/messages") == "anthropic"
-        assert _wire_format("/messages") == "anthropic"
+        assert get_adapter("/v1/messages").format_id == "anthropic"
+        assert get_adapter("/messages").format_id == "anthropic"
 
     def test_openai_chat_completions(self):
-        assert _wire_format("/v1/chat/completions") == "openai"
-        assert _wire_format("/chat/completions") == "openai"
+        assert get_adapter("/v1/chat/completions").format_id == "openai_chat"
+        assert get_adapter("/chat/completions").format_id == "openai_chat"
 
     def test_openai_completions(self):
-        assert _wire_format("/v1/completions") == "openai"
-        assert _wire_format("/completions") == "openai"
+        assert get_adapter("/v1/completions").format_id == "openai_chat"
+        assert get_adapter("/completions").format_id == "openai_chat"
 
     def test_ollama_native(self):
-        assert _wire_format("/api/chat") == "ollama_native"
-        assert _wire_format("/api/generate") == "ollama_native"
+        assert get_adapter("/api/chat").format_id == "ollama"
+        assert get_adapter("/api/generate").format_id == "ollama"
 
     def test_unknown_returns_none(self):
-        assert _wire_format("/telemetry") is None
-        assert _wire_format("/health") is None
-        assert _wire_format("/") is None
-        assert _wire_format("") is None
+        assert get_adapter("/telemetry") is None
+        assert get_adapter("/health") is None
+        assert get_adapter("/") is None
+        assert get_adapter("") is None
 
     def test_openai_responses_api(self):
-        assert _wire_format("/v1/responses") == "openai_responses"
-        assert _wire_format("/responses") == "openai_responses"
+        assert get_adapter("/v1/responses").format_id == "openai_responses"
+        assert get_adapter("/responses").format_id == "openai_responses"
 
     def test_opencode_zen_anthropic_path(self):
-        """opencode zen → Claude uses /zen/v1/messages — must route to anthropic, not responses."""
-        assert _wire_format("/zen/v1/messages") == "anthropic"
+        assert get_adapter("/zen/v1/messages").format_id == "anthropic"
 
     def test_opencode_zen_openai_path(self):
-        """opencode zen → OpenAI uses /zen/v1/chat/completions — must route to openai."""
-        assert _wire_format("/zen/v1/chat/completions") == "openai"
+        assert get_adapter("/zen/v1/chat/completions").format_id == "openai_chat"
 
     def test_messages_checked_before_responses(self):
-        """/messages takes priority so a hypothetical /responses/messages routes to anthropic."""
-        assert _wire_format("/responses/messages") == "anthropic"
+        assert get_adapter("/responses/messages").format_id == "anthropic"
 
     def test_chat_completions_checked_before_responses(self):
-        """/chat/completions takes priority over any /responses suffix."""
-        assert _wire_format("/v1/chat/completions/responses") == "openai"
+        assert get_adapter("/v1/chat/completions/responses").format_id == "openai_chat"
 
 
 # ---------------------------------------------------------------------------
-# _sse_to_anthropic_resp — low-level SSE parsing
+# Anthropic adapter — non-streaming
 # ---------------------------------------------------------------------------
 
-class TestSseToAnthropicResp:
+class TestAnthropicAdapter:
+    def setup_method(self):
+        self.adapter = AnthropicAdapter()
+
+    def test_request_system_and_user(self):
+        blocks, tool_call_map = self.adapter.parse_request(ANTHROPIC_REQ)
+        types = [b.block_type for b in blocks]
+        assert BlockType.SYSTEM_PROMPT in types
+        assert BlockType.USER_MESSAGE in types
+        assert tool_call_map == {}
+
+    def test_response_text_and_usage(self):
+        blocks, usage = self.adapter.parse_response(ANTHROPIC_RESP)
+        text_blocks = [b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]
+        assert text_blocks and text_blocks[0].content == "Hello world"
+        assert usage.output_tokens == 42
+        assert usage.input_tokens == 610  # 10 + 500 + 100
+        assert usage.cache_read_tokens == 500
+        assert usage.cache_creation_tokens == 100
+
+    def test_malformed_body_does_not_raise(self):
+        blocks, usage = self.adapter.parse_response({"unexpected": True})
+        assert blocks == []
+        assert usage.input_tokens is None
+
+
+# ---------------------------------------------------------------------------
+# Anthropic adapter — SSE
+# ---------------------------------------------------------------------------
+
+class TestAnthropicSse:
+    def setup_method(self):
+        self.adapter = AnthropicAdapter()
+
     def test_standard_stream(self):
         raw = _make_anthropic_sse(text="Hello world", input_tokens=10,
                                    output_tokens=42, cache_read=500, cache_creation=100)
-        resp = _sse_to_anthropic_resp(raw)
-        assert resp["usage"]["input_tokens"] == 10
-        assert resp["usage"]["output_tokens"] == 42
-        assert resp["usage"]["cache_read_input_tokens"] == 500
-        assert resp["usage"]["cache_creation_input_tokens"] == 100
-        text = resp["content"][0]["text"]
+        blocks, usage = self.adapter.parse_sse(raw)
+        assert usage.input_tokens == 610
+        assert usage.output_tokens == 42
+        assert usage.cache_read_tokens == 500
+        assert usage.cache_creation_tokens == 100
+        text = "".join(b.content for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
         assert "Hello" in text and "world" in text
 
     def test_copilot_bedrock_stream_all_tokens_in_message_delta(self):
-        """Copilot/Bedrock sends all token counts in message_delta, not just output_tokens."""
-        raw = _make_copilot_claude_sse(
-            text="Hi there",
-            input_tokens=1,
-            output_tokens=220,
-            cache_read=40876,
-            cache_creation=3926,
-        )
-        resp = _sse_to_anthropic_resp(raw)
-        assert resp["usage"]["output_tokens"] == 220
-        # cache tokens must be captured (from message_start in this fixture)
-        assert resp["usage"]["cache_read_input_tokens"] == 40876
-        assert resp["usage"]["cache_creation_input_tokens"] == 3926
+        raw = _make_copilot_claude_sse(text="Hi there", input_tokens=1, output_tokens=220,
+                                        cache_read=40876, cache_creation=3926)
+        blocks, usage = self.adapter.parse_sse(raw)
+        assert usage.output_tokens == 220
+        assert usage.cache_read_tokens == 40876
+        assert usage.cache_creation_tokens == 3926
 
     def test_empty_stream(self):
-        resp = _sse_to_anthropic_resp(b"")
-        assert resp["content"][0]["text"] == ""
+        blocks, usage = self.adapter.parse_sse(b"")
+        assert blocks == []
 
-
-# ---------------------------------------------------------------------------
-# parse_sse_request — the key regression test
-# ---------------------------------------------------------------------------
-
-class TestParseSseRequest:
-    # --- Copilot + Claude (the previously broken case) ---
-
-    def test_copilot_claude_sse_returns_parsed_request(self):
-        """provider=copilot, endpoint=/v1/messages must use the Anthropic parser."""
+    def test_copilot_claude_sse_via_get_adapter(self):
+        """endpoint=/v1/messages must dispatch to the Anthropic adapter regardless of host."""
         raw = _make_copilot_claude_sse(text="Hello world", input_tokens=1,
-                                        output_tokens=220, cache_read=40876,
-                                        cache_creation=3926)
-        result = parse_sse_request("copilot", "/v1/messages", ANTHROPIC_REQ, raw)
-        assert result is not None, "Must not return None for Copilot+Claude streaming"
-        assert "Hello" in result.response_text
-        assert result.provider_output_tokens == 220
-        # total input = billed + cache_read + cache_creation
-        assert result.provider_input_tokens == 1 + 40876 + 3926
+                                        output_tokens=220, cache_read=40876, cache_creation=3926)
+        adapter = get_adapter("/v1/messages")
+        assert adapter is not None
+        blocks, usage = adapter.parse_sse(raw)
+        text = "".join(b.content for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
+        assert "Hello" in text
+        assert usage.output_tokens == 220
+        assert usage.input_tokens == 1 + 40876 + 3926
 
-    def test_copilot_claude_sse_nonzero_tokens(self):
-        """Regression: tokens_in and tokens_out must be > 0 for Copilot+Claude."""
-        raw = _make_copilot_claude_sse(text="Test", output_tokens=5,
-                                        input_tokens=2, cache_read=100, cache_creation=50)
-        result = parse_sse_request("copilot", "/v1/messages", ANTHROPIC_REQ, raw)
-        assert result is not None
-        assert result.provider_input_tokens and result.provider_input_tokens > 0
-        assert result.provider_output_tokens and result.provider_output_tokens > 0
 
-    # --- Direct Anthropic streaming ---
+# ---------------------------------------------------------------------------
+# Anthropic adapter — thinking, redacted_thinking, cache_control
+# ---------------------------------------------------------------------------
 
-    def test_anthropic_sse(self):
-        raw = _make_anthropic_sse(text="Hello world", input_tokens=10, output_tokens=42,
-                                   cache_read=500, cache_creation=100)
-        result = parse_sse_request("anthropic", "/v1/messages", ANTHROPIC_REQ, raw)
-        assert result is not None
-        assert result.provider_input_tokens == 610  # 10 + 500 + 100
-        assert result.provider_output_tokens == 42
-        assert "Hello" in result.response_text
+class TestAnthropicThinking:
+    def setup_method(self):
+        self.adapter = AnthropicAdapter()
 
-    # --- OpenAI streaming ---
+    def test_request_thinking_block(self):
+        req = {
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "user", "content": "Solve this"},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "Let me think...", "signature": "sig123"},
+                    {"type": "text", "text": "The answer is 42."},
+                ]},
+            ],
+        }
+        blocks, _ = self.adapter.parse_request(req)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert len(thinking) == 1
+        assert thinking[0].content == "Let me think..."
+        assert thinking[0].attrs.get("signature") == "sig123"
 
-    def test_openai_sse(self):
+    def test_request_redacted_thinking_block(self):
+        req = {
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "user", "content": "Solve this"},
+                {"role": "assistant", "content": [
+                    {"type": "redacted_thinking", "data": "encrypted-blob"},
+                    {"type": "text", "text": "Done."},
+                ]},
+            ],
+        }
+        blocks, _ = self.adapter.parse_request(req)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert len(thinking) == 1
+        assert thinking[0].content == ""
+        assert thinking[0].attrs.get("redacted") is True
+
+    def test_response_thinking_block(self):
+        resp = {
+            "content": [
+                {"type": "thinking", "thinking": "reasoning...", "signature": "sig"},
+                {"type": "text", "text": "answer"},
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 10},
+        }
+        blocks, _ = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert thinking and thinking[0].content == "reasoning..."
+
+    def test_sse_thinking_delta(self):
+        events = [
+            {"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "step 1 "}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "step 2"}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "abc"}},
+            {"type": "content_block_stop", "index": 0},
+            {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
+            {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "final answer"}},
+            {"type": "message_delta", "usage": {"output_tokens": 15}},
+        ]
+        raw = b"\n".join(b"data: " + json.dumps(e).encode() for e in events)
+        blocks, usage = self.adapter.parse_sse(raw)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        text = [b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]
+        assert thinking and thinking[0].content == "step 1 step 2"
+        assert thinking[0].attrs.get("signature") == "abc"
+        assert text and text[0].content == "final answer"
+
+    def test_cache_control_captured(self):
+        req = {
+            "model": "claude-sonnet-4-6",
+            "system": "You are helpful.",
+            "tools": [{"name": "search", "cache_control": {"type": "ephemeral"}}],
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}},
+            ]}],
+        }
+        blocks, _ = self.adapter.parse_request(req)
+        tool_block = next(b for b in blocks if b.block_type == BlockType.TOOL_DEFINITION)
+        user_block = next(b for b in blocks if b.block_type == BlockType.USER_MESSAGE)
+        assert tool_block.attrs.get("cache_control") == {"type": "ephemeral"}
+        assert user_block.attrs.get("cache_control") == {"type": "ephemeral"}
+
+
+# ---------------------------------------------------------------------------
+# Anthropic adapter — assistant prefill
+# ---------------------------------------------------------------------------
+
+class TestAssistantPrefill:
+    def setup_method(self):
+        self.adapter = AnthropicAdapter()
+
+    def test_trailing_assistant_message_flagged(self):
+        req = {
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "user", "content": "Continue the story"},
+                {"role": "assistant", "content": "Once upon a time"},
+            ],
+        }
+        blocks, _ = self.adapter.parse_request(req)
+        assistant_block = next(b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
+        assert assistant_block.attrs.get("is_prefill") is True
+
+    def test_non_trailing_assistant_message_not_flagged(self):
+        req = {
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+                {"role": "user", "content": "how are you"},
+            ],
+        }
+        blocks, _ = self.adapter.parse_request(req)
+        assistant_block = next(b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
+        assert not assistant_block.attrs.get("is_prefill")
+
+
+# ---------------------------------------------------------------------------
+# Anthropic adapter — per-content-part block splitting + tool_call_map
+# ---------------------------------------------------------------------------
+
+class TestBlockSplitting:
+    def setup_method(self):
+        self.adapter = AnthropicAdapter()
+
+    def test_multiple_tool_results_become_separate_blocks(self):
+        req = {
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "user", "content": "run two tools"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "a", "name": "Read", "input": {"path": "x"}},
+                    {"type": "tool_use", "id": "b", "name": "Bash", "input": {"cmd": "ls"}},
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "a", "content": "file contents"},
+                    {"type": "tool_result", "tool_use_id": "b", "content": "dir listing"},
+                    {"type": "text", "text": "continue please"},
+                ]},
+            ],
+        }
+        blocks, tool_call_map = self.adapter.parse_request(req)
+        assert tool_call_map == {"a": "Read", "b": "Bash"}
+
+        results = [b for b in blocks if b.block_type == BlockType.TOOL_RESULT]
+        assert len(results) == 2
+        assert {r.tool_name for r in results} == {"Read", "Bash"}
+        # all three parts of the last message share the same message_index
+        last_msg_blocks = [b for b in blocks if b.message_index == 2]
+        assert len(last_msg_blocks) == 3
+        assert any(b.block_type == BlockType.USER_MESSAGE and b.content == "continue please"
+                   for b in last_msg_blocks)
+
+
+# ---------------------------------------------------------------------------
+# OpenAI Chat Completions adapter
+# ---------------------------------------------------------------------------
+
+class TestOpenAIChatAdapter:
+    def setup_method(self):
+        self.adapter = OpenAIChatAdapter()
+
+    def test_request_system_message(self):
+        blocks, _ = self.adapter.parse_request(OPENAI_REQ)
+        assert any(b.block_type == BlockType.SYSTEM_PROMPT for b in blocks)
+
+    def test_response(self):
+        blocks, usage = self.adapter.parse_response(OPENAI_RESP)
+        text_blocks = [b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]
+        assert text_blocks[0].content == "Hello world"
+        assert usage.input_tokens == 20
+        assert usage.output_tokens == 42
+
+    def test_sse(self):
         raw = _make_openai_sse(text="Hello world", prompt_tokens=20, completion_tokens=42)
-        result = parse_sse_request("openai", "/v1/chat/completions", OPENAI_REQ, raw)
-        assert result is not None
-        assert result.provider_input_tokens == 20
-        assert result.provider_output_tokens == 42
-        assert "Hello" in result.response_text
+        blocks, usage = self.adapter.parse_sse(raw)
+        text = "".join(b.content for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
+        assert "Hello" in text
+        assert usage.input_tokens == 20
+        assert usage.output_tokens == 42
 
-    def test_copilot_openai_sse(self):
-        """Copilot using OpenAI-format backend (/chat/completions) still works."""
-        raw = _make_openai_sse(text="Hello world", prompt_tokens=20, completion_tokens=42)
-        result = parse_sse_request("copilot", "/v1/chat/completions", OPENAI_REQ, raw)
-        assert result is not None
-        assert result.provider_output_tokens == 42
+    def test_tool_call_round_trip(self):
+        req = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "user", "content": "what's the weather"},
+                {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "call_1", "type": "function",
+                     "function": {"name": "get_weather", "arguments": '{"city":"NYC"}'}},
+                ]},
+                {"role": "tool", "tool_call_id": "call_1", "content": "Sunny, 72F"},
+            ],
+        }
+        blocks, tool_call_map = self.adapter.parse_request(req)
+        assert tool_call_map == {"call_1": "get_weather"}
+        result = next(b for b in blocks if b.block_type == BlockType.TOOL_RESULT)
+        assert result.tool_name == "get_weather"
+        assert result.content == "Sunny, 72F"
 
-    def test_openai_azure_sse(self):
-        raw = _make_openai_sse(text="Hi", prompt_tokens=5, completion_tokens=3)
-        result = parse_sse_request("openai_azure", "/chat/completions", OPENAI_REQ, raw)
-        assert result is not None
-        assert result.provider_output_tokens == 3
-
-    # --- Unknown endpoint ---
-
-    def test_unknown_endpoint_returns_none(self):
-        result = parse_sse_request("copilot", "/telemetry", {}, b"data: {}\n")
-        assert result is None
-
-    def test_empty_sse_bytes(self):
-        result = parse_sse_request("anthropic", "/v1/messages", ANTHROPIC_REQ, b"")
-        assert result is not None  # returns a ParsedRequest with empty/zero fields
-
-
-# ---------------------------------------------------------------------------
-# parse_request — non-streaming
-# ---------------------------------------------------------------------------
-
-class TestParseRequest:
-    def test_anthropic_direct(self):
-        result = parse_request("anthropic", "/v1/messages", ANTHROPIC_REQ, ANTHROPIC_RESP)
-        assert result is not None
-        assert result.response_text == "Hello world"
-        assert result.provider_output_tokens == 42
-        assert result.provider_input_tokens == 610  # 10 + 500 + 100
-        assert result.cache_read_tokens == 500
-        assert result.cache_creation_tokens == 100
-
-    def test_copilot_via_anthropic_endpoint(self):
-        """Copilot relaying to Claude (non-streaming) must use the Anthropic parser."""
-        result = parse_request("copilot", "/v1/messages", ANTHROPIC_REQ, ANTHROPIC_RESP)
-        assert result is not None
-        assert result.response_text == "Hello world"
-        assert result.provider_output_tokens == 42
-
-    def test_openai_direct(self):
-        result = parse_request("openai", "/v1/chat/completions", OPENAI_REQ, OPENAI_RESP)
-        assert result is not None
-        assert result.response_text == "Hello world"
-        assert result.provider_input_tokens == 20
-        assert result.provider_output_tokens == 42
-
-    def test_copilot_openai_format(self):
-        result = parse_request("copilot", "/v1/chat/completions", OPENAI_REQ, OPENAI_RESP)
-        assert result is not None
-        assert result.provider_output_tokens == 42
-
-    def test_openai_azure(self):
-        result = parse_request("openai_azure", "/chat/completions", OPENAI_REQ, OPENAI_RESP)
-        assert result is not None
-        assert result.provider_output_tokens == 42
-
-    def test_ollama_native(self):
-        result = parse_request("ollama", "/api/chat", OPENAI_REQ, OLLAMA_RESP)
-        assert result is not None
-        assert result.response_text == "Hello world"
-        assert result.provider_input_tokens == 20
-        assert result.provider_output_tokens == 42
-
-    def test_ollama_openai_compat(self):
-        result = parse_request("ollama", "/v1/chat/completions", OPENAI_REQ, OPENAI_RESP)
-        assert result is not None
-        assert result.provider_output_tokens == 42
-
-    def test_unknown_endpoint_returns_none(self):
-        result = parse_request("copilot", "/telemetry", {}, {})
-        assert result is None
-
-    def test_malformed_body_returns_none(self):
-        """parse_request must not raise on unexpected body shapes."""
-        result = parse_request("anthropic", "/v1/messages", {}, {"unexpected": True})
-        assert result is not None  # parse_anthropic returns zeroes, not an exception
+    def test_malformed_body_does_not_raise(self):
+        blocks, tool_call_map = self.adapter.parse_request({})
+        assert blocks == []
+        assert tool_call_map == {}
 
 
 # ---------------------------------------------------------------------------
-# Message content parsing
+# OpenAI Responses API adapter
 # ---------------------------------------------------------------------------
 
-class TestMessageParsing:
-    def test_system_message_injected_for_anthropic(self):
-        result = parse_request("anthropic", "/v1/messages", ANTHROPIC_REQ, ANTHROPIC_RESP)
-        assert result is not None
-        roles = [m.role for m in result.messages]
-        assert "system" in roles
+class TestOpenAIResponsesAdapter:
+    def setup_method(self):
+        self.adapter = OpenAIResponsesAdapter()
 
-    def test_openai_system_message(self):
-        result = parse_request("openai", "/v1/chat/completions", OPENAI_REQ, OPENAI_RESP)
-        assert result is not None
-        roles = [m.role for m in result.messages]
-        assert "system" in roles
+    def test_instructions_become_system_block(self):
+        blocks, _ = self.adapter.parse_request(OPENAI_RESPONSES_REQ)
+        system_blocks = [b for b in blocks if b.block_type == BlockType.SYSTEM_PROMPT]
+        assert system_blocks and system_blocks[0].content == "You are helpful."
 
-    def test_anthropic_cache_tokens_breakdown(self):
-        result = parse_request("anthropic", "/v1/messages", ANTHROPIC_REQ, ANTHROPIC_RESP)
-        assert result is not None
-        assert result.cache_read_tokens == 500
-        assert result.cache_creation_tokens == 100
+    def test_user_message_in_input(self):
+        blocks, _ = self.adapter.parse_request(OPENAI_RESPONSES_REQ)
+        assert any(b.block_type == BlockType.USER_MESSAGE and "hello" in b.content.lower() for b in blocks)
 
-    def test_copilot_claude_cache_tokens(self):
-        raw = _make_copilot_claude_sse(cache_read=40876, cache_creation=3926,
-                                        input_tokens=1, output_tokens=220, text="Hi")
-        result = parse_sse_request("copilot", "/v1/messages", ANTHROPIC_REQ, raw)
-        assert result is not None
-        assert result.cache_read_tokens == 40876
-        assert result.cache_creation_tokens == 3926
-
-
-# ---------------------------------------------------------------------------
-# OpenAI Responses API  (/v1/responses)
-# ---------------------------------------------------------------------------
-
-class TestOpenAIResponsesApi:
-    """Parser tests for the OpenAI Responses API wire format."""
-
-    # --- Non-streaming ---
-
-    def test_parse_basic(self):
-        result = parse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, OPENAI_RESPONSES_RESP)
-        assert result is not None
-        assert result.response_text == "Hello world"
-        assert result.provider_input_tokens == 20
-        assert result.provider_output_tokens == 42
-
-    def test_parse_instructions_become_system_message(self):
-        result = parse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, OPENAI_RESPONSES_RESP)
-        assert result is not None
-        system_msgs = [m for m in result.messages if m.role == "system"]
-        assert system_msgs, "instructions field must produce a system message"
-        assert system_msgs[0].content == "You are helpful."
-
-    def test_parse_user_message_in_input(self):
-        result = parse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, OPENAI_RESPONSES_RESP)
-        assert result is not None
-        assert any(m.role == "user" and "hello" in m.content.lower() for m in result.messages)
-
-    def test_parse_tool_definitions(self):
+    def test_tool_definitions(self):
         req = {**OPENAI_RESPONSES_REQ, "tools": [{"type": "function", "function": {"name": "search"}}]}
-        result = parse_request("openai", "/v1/responses", req, OPENAI_RESPONSES_RESP)
-        assert result is not None
-        assert "search" in result.tool_definitions_text
+        blocks, _ = self.adapter.parse_request(req)
+        assert any(b.block_type == BlockType.TOOL_DEFINITION for b in blocks)
 
-    def test_parse_function_call_in_output(self):
+    def test_function_call_in_output(self):
         resp = {
             "model": "gpt-4o",
             "output": [
@@ -623,49 +687,42 @@ class TestOpenAIResponsesApi:
             ],
             "usage": {"input_tokens": 10, "output_tokens": 5},
         }
-        result = parse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, resp)
-        assert result is not None
-        assert result.tool_call_map == {"c1": "search"}
-        assert "search" in result.response_text
+        blocks, usage = self.adapter.parse_response(resp)
+        call = next(b for b in blocks if b.block_type == BlockType.TOOL_CALL)
+        assert call.tool_name == "search"
+        assert call.tool_call_id == "c1"
 
-    def test_parse_function_call_in_input(self):
-        """function_call + function_call_output items in input (multi-turn history)."""
+    def test_function_call_in_input_history(self):
         req = {
             "model": "gpt-4o",
             "input": [
                 {"role": "user", "content": "What's the weather?"},
-                {"type": "function_call", "call_id": "c1", "name": "get_weather",
-                 "arguments": '{"city":"NYC"}'},
+                {"type": "function_call", "call_id": "c1", "name": "get_weather", "arguments": '{"city":"NYC"}'},
                 {"type": "function_call_output", "call_id": "c1", "output": "Sunny, 72F"},
             ],
         }
-        result = parse_request("openai", "/v1/responses", req, OPENAI_RESPONSES_RESP)
-        assert result is not None
-        assert result.tool_call_map == {"c1": "get_weather"}
-        tool_result = next((m for m in result.messages if m.is_tool_result), None)
-        assert tool_result is not None
-        assert tool_result.content == "Sunny, 72F"
+        blocks, tool_call_map = self.adapter.parse_request(req)
+        assert tool_call_map == {"c1": "get_weather"}
+        result = next(b for b in blocks if b.block_type == BlockType.TOOL_RESULT)
+        assert result.tool_name == "get_weather"
+        assert result.content == "Sunny, 72F"
 
-    def test_parse_no_usage(self):
-        resp = {"model": "gpt-4o", "output": [], "usage": {}}
-        result = parse_openai_responses(OPENAI_RESPONSES_REQ, resp)
-        assert result.provider_input_tokens is None
-        assert result.provider_output_tokens is None
+    def test_no_usage(self):
+        blocks, usage = self.adapter.parse_response({"model": "gpt-4o", "output": [], "usage": {}})
+        assert usage.input_tokens is None
+        assert usage.output_tokens is None
 
-    def test_parse_empty_input(self):
-        result = parse_openai_responses({"model": "gpt-4o", "input": []}, {})
-        assert result is not None
-        assert result.messages == []
-
-    # --- SSE ---
+    def test_empty_input(self):
+        blocks, _ = self.adapter.parse_request({"model": "gpt-4o", "input": []})
+        assert blocks == []
 
     def test_sse_accumulates_text(self):
         raw = _make_openai_responses_sse(text="Hello world", input_tokens=20, output_tokens=42)
-        resp = _sse_to_openai_responses_resp(raw)
-        assert resp["usage"]["input_tokens"] == 20
-        assert resp["usage"]["output_tokens"] == 42
-        text_item = next(o for o in resp["output"] if o["type"] == "message")
-        assert "Hello" in text_item["content"][0]["text"]
+        blocks, usage = self.adapter.parse_sse(raw)
+        text = "".join(b.content for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
+        assert "Hello" in text
+        assert usage.input_tokens == 20
+        assert usage.output_tokens == 42
 
     def test_sse_accumulates_function_call(self):
         events = [
@@ -677,46 +734,288 @@ class TestOpenAIResponsesApi:
              "response": {"model": "gpt-4o", "usage": {"input_tokens": 10, "output_tokens": 5}}},
         ]
         raw = b"\n".join(b"data: " + json.dumps(e).encode() for e in events)
-        resp = _sse_to_openai_responses_resp(raw)
-        fc = next(o for o in resp["output"] if o["type"] == "function_call")
-        assert fc["name"] == "search"
-        assert fc["call_id"] == "fc1"
-        assert fc["arguments"] == '{"q":"test"}'
+        blocks, usage = self.adapter.parse_sse(raw)
+        call = next(b for b in blocks if b.block_type == BlockType.TOOL_CALL)
+        assert call.tool_name == "search"
+        assert call.tool_call_id == "fc1"
+        assert call.content == '{"q":"test"}'
 
     def test_sse_empty_stream(self):
-        resp = _sse_to_openai_responses_resp(b"")
-        assert resp["output"] == []
-        assert "usage" not in resp
-
-    def test_parse_sse_request_routing(self):
-        raw = _make_openai_responses_sse(text="Hi", input_tokens=10, output_tokens=3)
-        result = parse_sse_request("openai", "/v1/responses", OPENAI_RESPONSES_REQ, raw)
-        assert result is not None
-        assert "Hi" in result.response_text
-        assert result.provider_input_tokens == 10
-        assert result.provider_output_tokens == 3
+        blocks, usage = self.adapter.parse_sse(b"")
+        assert blocks == []
+        assert usage.input_tokens is None
 
     def test_opencode_zen_responses_path(self):
-        """opencode routing an OpenAI model via zen gateway: /zen/v1/responses still parsed."""
         raw = _make_openai_responses_sse(text="Hi", input_tokens=10, output_tokens=3)
-        result = parse_sse_request("opencode_zen", "/zen/v1/responses", OPENAI_RESPONSES_REQ, raw)
-        assert result is not None
-        assert result.provider_output_tokens == 3
+        adapter = get_adapter("/zen/v1/responses")
+        assert adapter is not None and adapter.format_id == "openai_responses"
+        _, usage = adapter.parse_sse(raw)
+        assert usage.output_tokens == 3
+
+    # -- hidden reasoning -------------------------------------------------
+
+    def test_hidden_reasoning_synthetic_block(self):
+        """No reasoning item in output, but usage reports reasoning_tokens > 0."""
+        resp = {
+            "model": "o3",
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "answer"}]},
+            ],
+            "usage": {
+                "input_tokens": 10, "output_tokens": 50,
+                "output_tokens_details": {"reasoning_tokens": 200},
+            },
+        }
+        blocks, usage = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert len(thinking) == 1
+        assert thinking[0].content == ""
+        assert thinking[0].content_hash is None
+        assert thinking[0].token_count == 200
+        assert thinking[0].attrs.get("hidden") is True
+        assert usage.reasoning_tokens == 200
+
+    def test_explicit_reasoning_item_not_duplicated(self):
+        resp = {
+            "model": "o3",
+            "output": [
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "because X"}]},
+                {"type": "message", "content": [{"type": "output_text", "text": "answer"}]},
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 50,
+                      "output_tokens_details": {"reasoning_tokens": 200}},
+        }
+        blocks, usage = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert len(thinking) == 1
+        assert thinking[0].content == "because X"
 
 
 # ---------------------------------------------------------------------------
-# Provider and agent detection  (addon routing)
+# Ollama adapter
+# ---------------------------------------------------------------------------
+
+class TestOllamaAdapter:
+    def setup_method(self):
+        self.adapter = OllamaAdapter()
+
+    def test_request(self):
+        blocks, tool_call_map = self.adapter.parse_request(OPENAI_REQ)
+        assert any(b.block_type == BlockType.SYSTEM_PROMPT for b in blocks)
+        assert tool_call_map == {}
+
+    def test_response(self):
+        blocks, usage = self.adapter.parse_response(OLLAMA_RESP)
+        assert blocks[0].content == "Hello world"
+        assert usage.input_tokens == 20
+        assert usage.output_tokens == 42
+
+    def test_sse_ndjson(self):
+        lines = [
+            json.dumps({"message": {"role": "assistant", "content": "Hello "}, "done": False}),
+            json.dumps({"message": {"role": "assistant", "content": "world"}, "done": False}),
+            json.dumps({"done": True, "prompt_eval_count": 20, "eval_count": 42}),
+        ]
+        raw = "\n".join(lines).encode()
+        blocks, usage = self.adapter.parse_sse(raw)
+        assert blocks[0].content == "Hello world"
+        assert usage.input_tokens == 20
+        assert usage.output_tokens == 42
+
+
+# ---------------------------------------------------------------------------
+# classify_blocks / classify / per_tool_tokens
+# ---------------------------------------------------------------------------
+
+class TestClassify:
+    def test_category_priority(self):
+        adapter = AnthropicAdapter()
+        req = {
+            "model": "claude-sonnet-4-6",
+            "system": "You are helpful.",
+            "tools": [{"name": "search", "input_schema": {}}],
+            "messages": [
+                {"role": "user", "content": "first turn"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "t1", "name": "search", "input": {}},
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "result"},
+                ]},
+                {"role": "user", "content": "latest turn"},
+            ],
+        }
+        input_blocks, tool_call_map = adapter.parse_request(req)
+        classify_blocks(input_blocks)
+
+        by_type = {b.block_type: b for b in input_blocks}
+        assert by_type[BlockType.SYSTEM_PROMPT].category == "system_prompt"
+        assert by_type[BlockType.TOOL_DEFINITION].category == "tool_definitions"
+        assert by_type[BlockType.TOOL_RESULT].category == "tool_results"
+
+        first_user = next(b for b in input_blocks if b.block_type == BlockType.USER_MESSAGE and b.content == "first turn")
+        latest_user = next(b for b in input_blocks if b.block_type == BlockType.USER_MESSAGE and b.content == "latest turn")
+        assert first_user.category == "conversation_history"
+        assert latest_user.category == "current_user_message"
+
+    def test_file_content_detection(self):
+        adapter = AnthropicAdapter()
+        big_file = "\n".join(f"line {i}" for i in range(60))
+        req = {
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "user", "content": f"```python src/foo.py\n{big_file}\n```"},
+            ],
+        }
+        input_blocks, _ = adapter.parse_request(req)
+        classify_blocks(input_blocks)
+        assert input_blocks[0].category == "file_contents"
+
+    def test_assistant_prefill_category(self):
+        adapter = AnthropicAdapter()
+        req = {
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "user", "content": "continue the story"},
+                {"role": "assistant", "content": "Once upon a time"},
+            ],
+        }
+        input_blocks, _ = adapter.parse_request(req)
+        classify_blocks(input_blocks)
+        assistant_block = next(b for b in input_blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
+        assert assistant_block.category == "assistant_prefill"
+
+    def test_classify_full_analyzed_request(self):
+        adapter = AnthropicAdapter()
+        input_blocks, tool_call_map = adapter.parse_request(ANTHROPIC_REQ)
+        output_blocks, usage = adapter.parse_response(ANTHROPIC_RESP)
+        analyzed = AnalyzedRequest(
+            model=ANTHROPIC_REQ["model"], input_blocks=input_blocks,
+            output_blocks=output_blocks, usage=usage, tool_call_map=tool_call_map,
+        )
+        breakdown = classify(analyzed)
+        assert breakdown.total_input > 0
+        assert breakdown.total_output == 2  # "Hello world" -> 2 tokens
+        assert breakdown.tokens_output_text == 2
+        assert breakdown.tokens_output_thinking == 0
+
+    def test_per_tool_tokens_attribution(self):
+        adapter = AnthropicAdapter()
+        req = {
+            "model": "claude-sonnet-4-6",
+            "tools": [{"name": "search", "input_schema": {}}],
+            "messages": [
+                {"role": "user", "content": "go"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "t1", "name": "search", "input": {}},
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "a fairly long result body"},
+                ]},
+            ],
+        }
+        input_blocks, tool_call_map = adapter.parse_request(req)
+        analyzed = AnalyzedRequest(model=req["model"], input_blocks=input_blocks,
+                                    output_blocks=[], usage=Usage(),
+                                    tool_call_map=tool_call_map)
+        rows = per_tool_tokens(analyzed)
+        assert len(rows) == 1
+        assert rows[0]["tool_name"] == "search"
+        assert rows[0]["result_tokens"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Content-addressed persistence + retention GC
+# ---------------------------------------------------------------------------
+
+class TestBlockPersistence:
+    def test_content_addressed_dedup(self, tmp_path):
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+        from contextspy.analysis.blocks import Block
+
+        init_db(tmp_path / "dedup.db")
+        shared_text = "You are a helpful coding assistant."
+        b1 = Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, shared_text)
+        b2 = Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, shared_text)
+        assert b1.content_hash == b2.content_hash
+
+        with get_db() as db:
+            r1 = crud.create_request(db, {
+                "id": "req1", "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, r1.id, [b1])
+            r2 = crud.create_request(db, {
+                "id": "req2", "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, r2.id, [b2])
+
+        from contextspy.db.database import get_engine
+        from sqlalchemy import text as sql_text
+        with get_engine().connect() as conn:
+            count = conn.execute(
+                sql_text("SELECT COUNT(*) FROM block_contents WHERE hash = :h"), {"h": b1.content_hash}
+            ).scalar()
+        assert count == 1
+
+        with get_db() as db:
+            blocks_r1 = crud.get_blocks(db, "req1")
+            blocks_r2 = crud.get_blocks(db, "req2")
+        assert blocks_r1[0]["content"] == shared_text
+        assert blocks_r2[0]["content"] == shared_text
+
+    def test_retention_gc_keeps_shared_content(self, tmp_path):
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db, startup_vacuum
+        from contextspy.analysis.blocks import Block
+        from contextspy.config import Settings
+
+        init_db(tmp_path / "gc.db")
+        shared = Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, "shared prompt")
+        old_only = Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "old only message")
+
+        with get_db() as db:
+            old_req = crud.create_request(db, {
+                "id": "old1", "timestamp": datetime.now(timezone.utc) - timedelta(days=30),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, old_req.id, [shared, old_only])
+            new_req = crud.create_request(db, {
+                "id": "new1", "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, new_req.id, [shared])
+
+        settings = Settings()
+        settings.retention.raw_body_days = 0
+        settings.retention.block_content_days = 7
+        startup_vacuum(settings)
+
+        from contextspy.db.database import get_engine
+        from sqlalchemy import text as sql_text
+        with get_engine().connect() as conn:
+            shared_count = conn.execute(
+                sql_text("SELECT COUNT(*) FROM block_contents WHERE hash = :h"), {"h": shared.content_hash}
+            ).scalar()
+            old_only_count = conn.execute(
+                sql_text("SELECT COUNT(*) FROM block_contents WHERE hash = :h"), {"h": old_only.content_hash}
+            ).scalar()
+
+        assert shared_count == 1, "content still referenced by a recent request must survive GC"
+        assert old_only_count == 0, "content only referenced by an old request must be purged"
+
+
+# ---------------------------------------------------------------------------
+# Provider and agent detection  (addon routing) — unchanged by this refactor
 # ---------------------------------------------------------------------------
 
 @pytest.mark.skipif(not _HAS_ADDON, reason="mitmproxy not installed")
 class TestProviderDetection:
-    """Guards against accidentally breaking host→provider routing when adding new entries.
-
-    Each test documents one live integration and the provider label it must produce.
-    """
+    """Guards against accidentally breaking host→provider routing when adding new entries."""
 
     def test_claude_code(self):
-        """Claude Code talks directly to api.anthropic.com."""
         assert _detect_provider("api.anthropic.com", 443) == "anthropic"
 
     def test_anthropic_subdomain(self):
@@ -732,35 +1031,28 @@ class TestProviderDetection:
         assert _detect_provider("copilot-proxy.githubusercontent.com", 443) == "copilot"
 
     def test_copilot_api_subdomain(self):
-        """api.githubcopilot.com must match via endswith(.githubcopilot.com)."""
         assert _detect_provider("api.githubcopilot.com", 443) == "copilot"
 
     def test_opencode_zen_gateway(self):
-        """opencode.ai zen gateway — added to support opencode cloud model routing."""
         assert _detect_provider("opencode.ai", 443) == "opencode_zen"
 
     def test_opencode_zen_subdomain(self):
         assert _detect_provider("api.opencode.ai", 443) == "opencode_zen"
 
     def test_ollama_port(self):
-        """Ollama is detected by port (11434), not host — works for any bind address."""
         assert _detect_provider("localhost", 11434) == "ollama"
         assert _detect_provider("127.0.0.1", 11434) == "ollama"
 
     def test_unknown_host_returns_none(self):
-        """Unrecognised hosts must return None so the addon skips them."""
         assert _detect_provider("example.com", 443) is None
 
     def test_telemetry_hosts_return_none(self):
-        """Hosts seen in real traffic that must NOT be treated as LLM providers."""
         assert _detect_provider("eu-central-1-1.aws.cloud2.influxdata.com", 443) is None
         assert _detect_provider("models.dev", 443) is None
 
 
 @pytest.mark.skipif(not _HAS_ADDON, reason="mitmproxy not installed")
 class TestAgentDetection:
-    """Guards against breaking User-Agent → agent label mapping."""
-
     def test_claude_code_sdk(self):
         assert _detect_agent("anthropic-python/0.50.0 Python/3.12") == "claude_sdk"
 

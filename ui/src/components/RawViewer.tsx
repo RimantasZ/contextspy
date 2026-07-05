@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Rimantas Zukaitis
+// Copyright 2026 Rimantas Zukaitis
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,40 +14,9 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { ParsedViewer } from './ParsedViewer';
 import { tokenizeApi } from '../api/client';
-
-// ---------------------------------------------------------------------------
-// Response text extractor
-// ---------------------------------------------------------------------------
+import { useRequestBlocks } from '../api/hooks';
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
-
-function extractResponseText(parsed: unknown): string | null {
-  if (!parsed || typeof parsed !== 'object') return null;
-  const body = parsed as Record<string, unknown>;
-  // OpenAI / synthetic format
-  const choices = body.choices;
-  if (Array.isArray(choices) && choices.length > 0) {
-    const msg = ((choices[0] as Record<string, unknown>).message ?? {}) as Record<string, unknown>;
-    const content = msg.content;
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-      return (content as { type?: string; text?: string }[])
-        .filter(b => b.type === 'text')
-        .map(b => b.text ?? '')
-        .join('\n');
-    }
-    return null;
-  }
-  // Anthropic format
-  const content = body.content;
-  if (Array.isArray(content)) {
-    return (content as { type?: string; text?: string }[])
-      .filter(b => b.type === 'text')
-      .map(b => b.text ?? '')
-      .join('\n');
-  }
-  return null;
-}
 
 const TOKEN_COLORS = [
   'rgba(99,102,241,0.32)', 'rgba(52,211,153,0.25)', 'rgba(251,191,36,0.28)',
@@ -57,10 +26,8 @@ const TOKEN_COLORS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Syntax-highlighted, collapsible JSON tree
+// Syntax-highlighted, collapsible JSON tree (used by the response JSON tab)
 // ---------------------------------------------------------------------------
-
-
 
 interface NodeProps {
   value: JsonValue;
@@ -167,59 +134,13 @@ function JsonNode({ value, depth = 0, searchLower }: NodeProps) {
 }
 
 // ---------------------------------------------------------------------------
-// SSE event stream viewer
-// ---------------------------------------------------------------------------
-
-function SseViewer({ raw, searchLower }: { raw: string; searchLower: string }) {
-  const events = useMemo(() => {
-    const result: { type: string; data: JsonValue | string }[] = [];
-    let currentType = '';
-    for (const line of raw.split('\n')) {
-      if (line.startsWith('event: ')) {
-        currentType = line.slice(7).trim();
-      } else if (line.startsWith('data: ')) {
-        const payload = line.slice(6).trim();
-        if (payload === '[DONE]') {
-          result.push({ type: currentType || 'done', data: '[DONE]' });
-        } else {
-          try {
-            result.push({ type: currentType || 'data', data: JSON.parse(payload) });
-          } catch {
-            result.push({ type: currentType || 'data', data: payload });
-          }
-        }
-        currentType = '';
-      }
-    }
-    return result;
-  }, [raw]);
-
-  return (
-    <div className="space-y-1">
-      {events.map((ev, i) => (
-        <div key={i} className="border border-gray-700 rounded">
-          <div className="px-2 py-0.5 bg-gray-800 text-xs text-indigo-400 font-mono">{ev.type}</div>
-          <div className="px-3 py-1 text-xs font-mono leading-relaxed">
-            {typeof ev.data === 'string' ? (
-              <span className="text-gray-400">{ev.data}</span>
-            ) : (
-              <JsonNode value={ev.data} depth={0} searchLower={searchLower} />
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Main RawViewer
 // ---------------------------------------------------------------------------
 
 interface Props {
   title: string;
+  requestId: string;
   content: string | null | undefined;
-  parsedBody?: string | null;
   /** When true shows 3-tab output view: JSON tree / Raw text / Response text */
   responseMode?: boolean;
   totalInputTokens?: number | null;
@@ -227,10 +148,9 @@ interface Props {
   expandToggle?: number;
 }
 
-export function RawViewer({ title, content, parsedBody, responseMode, totalInputTokens, expandToggle }: Props) {
+export function RawViewer({ title, requestId, content, responseMode, totalInputTokens, expandToggle }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'parsed' | 'raw'>('parsed');
   const [respTab, setRespTab] = useState<'json' | 'raw' | 'text'>('text');
   const [search, setSearch] = useState('');
   const searchLower = search.toLowerCase();
@@ -240,16 +160,22 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
   const [respTokens, setRespTokens] = useState<string[] | null>(null);
   const [loadingText, setLoadingText] = useState(false);
 
-  const { parsed, isSse, isJson } = useMemo(() => {
-    if (!content) return { parsed: null, isSse: false, isJson: false };
-    if (content.includes('data: ') && content.includes('\n')) {
-      // Likely SSE
-      return { parsed: content, isSse: true, isJson: false };
-    }
+  // Output blocks power the response "Text" tab even when the raw body has
+  // been purged by retention — block contents/token counts persist longer.
+  const blocksQuery = useRequestBlocks(requestId, !!responseMode);
+  const textBlocks = (blocksQuery.data?.blocks ?? []).filter(
+    b => b.direction === 'output' && b.block_type === 'assistant_message'
+  );
+  const respText = textBlocks.map(b => b.content ?? '').join('\n');
+  const respTextPurged = textBlocks.length > 0 && textBlocks.every(b => b.content_purged);
+  const respTokenCount = textBlocks.reduce((s, b) => s + b.token_count, 0);
+
+  const { parsed, isJson } = useMemo(() => {
+    if (!content) return { parsed: null, isJson: false };
     try {
-      return { parsed: JSON.parse(content), isSse: false, isJson: true };
+      return { parsed: JSON.parse(content), isJson: true };
     } catch {
-      return { parsed: content, isSse: false, isJson: false };
+      return { parsed: content, isJson: false };
     }
   }, [content]);
 
@@ -257,8 +183,8 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
     if (content) navigator.clipboard.writeText(content);
   }, [content]);
 
-  // Reset tokens when content changes
-  useEffect(() => { setRespTokens(null); }, [content]);
+  // Reset tokens when the underlying text changes
+  useEffect(() => { setRespTokens(null); }, [respText]);
 
   // Respond to external toggle requests (expandToggle prop)
   useEffect(() => {
@@ -277,15 +203,14 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
 
   // Fetch tokens for response "Text" tab
   useEffect(() => {
-    if (!responseMode || respTab !== 'text' || !isJson || respTokens !== null || loadingText) return;
-    const text = extractResponseText(parsed);
-    if (!text) return;
+    if (!responseMode || respTab !== 'text' || respTokens !== null || loadingText) return;
+    if (!respText || respTextPurged) return;
     setLoadingText(true);
-    tokenizeApi.tokenize([text])
+    tokenizeApi.tokenize([respText])
       .then(r => setRespTokens(r.results[0] ?? []))
       .catch(() => setRespTokens([]))
       .finally(() => setLoadingText(false));
-  }, [responseMode, respTab, isJson, parsed, respTokens, loadingText]);
+  }, [responseMode, respTab, respText, respTextPurged, respTokens, loadingText]);
 
   const purged = content === null || content === undefined;
 
@@ -309,7 +234,7 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
         >
           <span className="text-gray-500 text-xs">{open ? '▼' : '▶'}</span>
           {title}
-          {!purged && totalInputTokens != null && (
+          {totalInputTokens != null && (
             <span className="ml-2 text-xs text-gray-500 font-mono">{totalInputTokens.toLocaleString()} tokens</span>
           )}
         </button>
@@ -325,11 +250,7 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
 
       {open && (
         <div className="bg-gray-900">
-          {purged ? (
-            <p className="px-4 py-3 text-sm text-gray-500 italic">
-              Raw content has been purged.
-            </p>
-          ) : responseMode ? (
+          {responseMode ? (
             /* ----------------------------------------------------------------
                Response mode: JSON | Raw | Text tabs
             ---------------------------------------------------------------- */
@@ -354,48 +275,57 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
                 ))}
               </div>
 
-              {/* JSON tab — collapsible tree */}
+              {/* JSON tab — collapsible tree (needs the raw body; purged if gone) */}
               {respTab === 'json' && (
-                <>
-                  <div className="px-3 py-2 border-b border-gray-800">
-                    <input
-                      type="text"
-                      placeholder="Search…"
-                      value={search}
-                      onChange={e => setSearch(e.target.value)}
-                      className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
-                    {isJson ? (
-                      <JsonNode value={parsed as JsonValue} depth={0} searchLower={searchLower} />
-                    ) : (
-                      <pre className="text-gray-300 whitespace-pre-wrap break-all">{content}</pre>
-                    )}
-                  </div>
-                </>
+                purged ? (
+                  <p className="px-4 py-3 text-sm text-gray-500 italic">Raw content has been purged.</p>
+                ) : (
+                  <>
+                    <div className="px-3 py-2 border-b border-gray-800">
+                      <input
+                        type="text"
+                        placeholder="Search…"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
+                      {isJson ? (
+                        <JsonNode value={parsed as JsonValue} depth={0} searchLower={searchLower} />
+                      ) : (
+                        <pre className="text-gray-300 whitespace-pre-wrap break-all">{content}</pre>
+                      )}
+                    </div>
+                  </>
+                )
               )}
 
-              {/* Raw tab — plain text */}
+              {/* Raw tab — plain text (needs the raw body; purged if gone) */}
               {respTab === 'raw' && (
-                <div className="p-4 overflow-auto max-h-[600px]">
-                  <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-all">
-                    {isJson ? JSON.stringify(parsed, null, 2) : content}
-                  </pre>
-                </div>
+                purged ? (
+                  <p className="px-4 py-3 text-sm text-gray-500 italic">Raw content has been purged.</p>
+                ) : (
+                  <div className="p-4 overflow-auto max-h-[600px]">
+                    <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-all">
+                      {isJson ? JSON.stringify(parsed, null, 2) : content}
+                    </pre>
+                  </div>
+                )
               )}
 
-              {/* Text tab — response text with optional token highlighting */}
-              {respTab === 'text' && (() => {
-                const respText = isJson ? extractResponseText(parsed) : null;
-                if (!respText) {
-                  return (
-                    <p className="px-4 py-3 text-sm text-gray-500 italic">
-                      No response text found.
-                    </p>
-                  );
-                }
-                return (
+              {/* Text tab — response text derived from output blocks, which
+                  outlive the raw body under retention */}
+              {respTab === 'text' && (
+                respTextPurged ? (
+                  <p className="px-4 py-3 text-sm text-gray-500 italic">
+                    Response text has been purged ({respTokenCount.toLocaleString()} tokens).
+                  </p>
+                ) : !respText ? (
+                  <p className="px-4 py-3 text-sm text-gray-500 italic">
+                    No response text found.
+                  </p>
+                ) : (
                   <>
                     <div className="flex items-center justify-end px-3 py-1.5 border-b border-gray-800">
                       <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
@@ -426,42 +356,16 @@ export function RawViewer({ title, content, parsedBody, responseMode, totalInput
                       )}
                     </div>
                   </>
-                );
-              })()}
+                )
+              )}
             </>
           ) : (
             /* ----------------------------------------------------------------
-               Default mode: ParsedViewer owns Overview / Parsed / Raw tabs
+               Default mode: ParsedViewer owns Overview / Parsed / Raw tabs.
+               Overview/Parsed are server-driven (blocks API) and work even
+               when the raw request body has already been purged.
             ---------------------------------------------------------------- */
-            <>
-              {parsedBody != null ? (
-                <ParsedViewer rawBody={parsedBody} rawContent={content} totalInputTokens={totalInputTokens} />
-              ) : (
-                /* No parsedBody — fall back to JSON/SSE/text viewer */
-                <>
-                  <div className="px-3 py-2 border-b border-gray-800">
-                    <input
-                      type="text"
-                      placeholder="Search…"
-                      value={search}
-                      onChange={e => setSearch(e.target.value)}
-                      className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
-                    {isSse ? (
-                      <SseViewer raw={parsed as string} searchLower={searchLower} />
-                    ) : isJson ? (
-                      <JsonNode value={parsed as JsonValue} depth={0} searchLower={searchLower} />
-                    ) : (
-                      <pre className="text-gray-300 whitespace-pre-wrap break-all">
-                        {typeof parsed === 'string' ? parsed : String(parsed)}
-                      </pre>
-                    )}
-                  </div>
-                </>
-              )}
-            </>
+            <ParsedViewer requestId={requestId} rawBody={content} totalInputTokens={totalInputTokens} />
           )}
         </div>
       )}

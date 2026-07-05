@@ -13,14 +13,19 @@
 # limitations under the License.
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from sqlalchemy import func, or_, select, text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session as OrmSession
 
-from contextspy.db.models import Request, Session, ToolStat
+from contextspy.db.models import BlockContent, BlockRecord, Request, Session, ToolStat
+
+if TYPE_CHECKING:
+    from contextspy.analysis.blocks import Block
 
 
 # ---------------------------------------------------------------------------
@@ -100,25 +105,22 @@ def delete_session_with_requests(db: OrmSession, session_id: str) -> bool:
     return True
 
 
-def purge_raw_bodies(db: OrmSession, session_id: str) -> None:
-    db.execute(
-        text(
-            """
-            UPDATE requests
-            SET raw_request_body = NULL, raw_response_body = NULL
-            WHERE session_id = :sid
-            """
-        ),
-        {"sid": session_id},
-    )
-    db.flush()
-
-
 # ---------------------------------------------------------------------------
 # Requests
 # ---------------------------------------------------------------------------
 
+def _next_session_seq(db: OrmSession, session_id: str | None) -> int | None:
+    if session_id is None:
+        return None
+    max_seq = db.execute(
+        select(func.max(Request.session_seq)).where(Request.session_id == session_id)
+    ).scalar()
+    return (max_seq or 0) + 1
+
+
 def create_request(db: OrmSession, data: dict[str, Any]) -> Request:
+    data = dict(data)
+    data.setdefault("session_seq", _next_session_seq(db, data.get("session_id")))
     req = Request(**data)
     db.add(req)
     db.flush()
@@ -310,6 +312,58 @@ def _empty_stats() -> dict:
         "by_status": {},
         "session_timing": _empty_timing,
     }
+
+
+# ---------------------------------------------------------------------------
+# Blocks
+# ---------------------------------------------------------------------------
+
+def insert_blocks(db: OrmSession, request_id: str, blocks: list["Block"]) -> None:
+    """Persist a request's analyzed blocks, content-addressed.
+
+    Each unique content string is written once to block_contents
+    (INSERT OR IGNORE on the hash); the block row itself — type, category,
+    token_count, tool attribution — is always written, one row per block.
+    """
+    position_by_direction: dict[str, int] = {}
+    for b in blocks:
+        pos = position_by_direction.get(b.direction, 0)
+        position_by_direction[b.direction] = pos + 1
+
+        if b.content_hash and b.content:
+            stmt = sqlite_insert(BlockContent).values(
+                hash=b.content_hash, content=b.content, created_at=datetime.now(timezone.utc),
+            ).on_conflict_do_nothing(index_elements=["hash"])
+            db.execute(stmt)
+
+        db.add(BlockRecord(
+            request_id=request_id,
+            direction=b.direction,
+            position=pos,
+            message_index=b.message_index,
+            block_type=b.block_type,
+            category=b.category,
+            content_hash=b.content_hash,
+            token_count=b.token_count,
+            tool_name=b.tool_name,
+            tool_call_id=b.tool_call_id,
+            attrs=json.dumps(b.attrs) if b.attrs else None,
+        ))
+    db.flush()
+
+
+def get_blocks(db: OrmSession, request_id: str) -> list[dict]:
+    rows = db.execute(
+        select(BlockRecord, BlockContent.content)
+        .outerjoin(BlockContent, BlockRecord.content_hash == BlockContent.hash)
+        .where(BlockRecord.request_id == request_id)
+        .order_by(BlockRecord.direction.asc(), BlockRecord.position.asc())
+    ).all()
+    result = []
+    for record, content in rows:
+        content_purged = record.content_hash is not None and content is None
+        result.append(record.to_dict(content=content, content_purged=content_purged))
+    return result
 
 
 # ---------------------------------------------------------------------------

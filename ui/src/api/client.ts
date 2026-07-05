@@ -57,10 +57,15 @@ export interface Request {
   tokens_uncategorized: number
   tokens_total_input: number
   tokens_total_output: number
+  tokens_output_text: number
+  tokens_output_thinking: number
   provider_input_tokens: number | null
   provider_output_tokens: number | null
+  provider_reasoning_tokens: number | null
   cache_read_tokens: number | null
   cache_creation_tokens: number | null
+  usage_extra: Record<string, unknown> | null
+  session_seq: number | null
   tokenizer: string
   raw_request_body?: string | null
   raw_response_body?: string | null
@@ -132,6 +137,20 @@ export interface ToolStat {
   result_tokens: number
 }
 
+export interface RequestBlock {
+  direction: 'input' | 'output'
+  position: number
+  message_index: number | null
+  block_type: string
+  category: string | null
+  content: string | null
+  content_purged: boolean
+  token_count: number
+  tool_name: string | null
+  tool_call_id: string | null
+  attrs: Record<string, unknown>
+}
+
 export interface ProxyStatus {
   running: boolean
   port: number
@@ -177,6 +196,8 @@ export const requestsApi = {
     return apiFetch<{ requests: Request[] }>(`/requests?${qs}`)
   },
   get: (id: string) => apiFetch<{ request: Request }>(`/requests/${id}`),
+  blocks: (id: string) =>
+    apiFetch<{ session_seq: number | null; blocks: RequestBlock[] }>(`/requests/${id}/blocks`),
 }
 
 // ---- Stats API ------------------------------------------------------------

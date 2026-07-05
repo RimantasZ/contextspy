@@ -121,7 +121,11 @@ All data lives in `~/.contextspy/`:
 
 ### How long is request data kept?
 
-Raw request and response bodies are automatically purged 7 days after capture (on the next server startup). Aggregated token counts and classifications are kept indefinitely until you run `contextspy reset-db`.
+Raw request/response bodies and the underlying block contents are automatically purged 7 days
+after capture by default — configurable via `[retention]` in `~/.contextspy/config.toml`
+(`raw_body_days`, `block_content_days`; `0` keeps forever). Purging only happens at server startup,
+not on a background timer, so a long-running `contextspy` process won't re-purge until restarted.
+Aggregated token counts and classifications are kept indefinitely until you run `contextspy reset-db`.
 
 ### Can I delete everything and start fresh?
 
