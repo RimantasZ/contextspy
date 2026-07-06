@@ -966,6 +966,85 @@ class TestBlockPersistence:
         assert blocks_r1[0]["content"] == shared_text
         assert blocks_r2[0]["content"] == shared_text
 
+    def test_tool_block_links(self, tmp_path):
+        """tool_call/tool_result blocks link to their tool_definition; tool_result also
+        links to its tool_call — resolved at read time via tool_name/tool_call_id, no
+        stored FK column needed."""
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+        from contextspy.analysis.blocks import Block
+
+        init_db(tmp_path / "links.db")
+        definition = Block.make(Direction.INPUT, BlockType.TOOL_DEFINITION,
+                                 '{"name": "search"}', tool_name="search")
+        call = Block.make(Direction.INPUT, BlockType.TOOL_CALL, '{"q": "x"}',
+                           message_index=1, tool_name="search", tool_call_id="t1")
+        result = Block.make(Direction.INPUT, BlockType.TOOL_RESULT, "result text",
+                             message_index=2, tool_name="search", tool_call_id="t1")
+        unrelated = Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "hi", message_index=0)
+
+        with get_db() as db:
+            req = crud.create_request(db, {
+                "id": "req-links", "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, req.id, [unrelated, definition, call, result])
+
+        with get_db() as db:
+            blocks = crud.get_blocks(db, "req-links")
+
+        by_type = {b["block_type"]: b for b in blocks}
+        definition_id = by_type[BlockType.TOOL_DEFINITION]["id"]
+        call_id = by_type[BlockType.TOOL_CALL]["id"]
+
+        assert by_type[BlockType.TOOL_CALL]["linked_definition_id"] == definition_id
+        assert by_type[BlockType.TOOL_CALL]["linked_call_id"] is None
+        assert by_type[BlockType.TOOL_RESULT]["linked_call_id"] == call_id
+        assert by_type[BlockType.TOOL_RESULT]["linked_definition_id"] == definition_id
+        assert by_type[BlockType.USER_MESSAGE]["linked_call_id"] is None
+        assert by_type[BlockType.USER_MESSAGE]["linked_definition_id"] is None
+        assert by_type[BlockType.TOOL_DEFINITION]["linked_call_id"] is None
+        assert by_type[BlockType.TOOL_DEFINITION]["linked_definition_id"] is None
+
+    def test_previous_message_chain(self, tmp_path):
+        """user/assistant message blocks link back to the previous conversational turn,
+        skipping over tool-only turns (call/result) and the system prompt in between."""
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+        from contextspy.analysis.blocks import Block
+
+        init_db(tmp_path / "prevmsg.db")
+        system = Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, "You are helpful.", message_index=-1)
+        user0 = Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "read the file", message_index=0)
+        # message_index 1: a pure tool-call turn — no user/assistant message block here
+        call1 = Block.make(Direction.INPUT, BlockType.TOOL_CALL, '{"path": "x"}',
+                            message_index=1, tool_name="Read", tool_call_id="t1")
+        result2 = Block.make(Direction.INPUT, BlockType.TOOL_RESULT, "file contents",
+                              message_index=2, tool_name="Read", tool_call_id="t1")
+        assistant3 = Block.make(Direction.INPUT, BlockType.ASSISTANT_MESSAGE, "here's the file", message_index=3)
+        user4 = Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "thanks, now edit it", message_index=4)
+
+        with get_db() as db:
+            req = crud.create_request(db, {
+                "id": "req-chain", "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, req.id, [system, user0, call1, result2, assistant3, user4])
+
+        with get_db() as db:
+            blocks = crud.get_blocks(db, "req-chain")
+
+        by_content = {b["content"]: b for b in blocks}
+        user0_id = by_content["read the file"]["id"]
+        assistant3_id = by_content["here's the file"]["id"]
+
+        assert by_content["read the file"]["linked_previous_message_id"] is None
+        assert by_content["here's the file"]["linked_previous_message_id"] == user0_id
+        assert by_content["thanks, now edit it"]["linked_previous_message_id"] == assistant3_id
+        # non-message blocks never get a previous-message link
+        assert by_content["You are helpful."]["linked_previous_message_id"] is None
+        assert by_content["file contents"]["linked_previous_message_id"] is None
+
     def test_retention_gc_keeps_shared_content(self, tmp_path):
         from contextspy.db import crud
         from contextspy.db.database import get_db, init_db, startup_vacuum

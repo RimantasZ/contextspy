@@ -22,6 +22,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session as OrmSession
 
+from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.db.models import BlockContent, BlockRecord, Request, Session, ToolStat
 
 if TYPE_CHECKING:
@@ -359,10 +360,59 @@ def get_blocks(db: OrmSession, request_id: str) -> list[dict]:
         .where(BlockRecord.request_id == request_id)
         .order_by(BlockRecord.direction.asc(), BlockRecord.position.asc())
     ).all()
+
+    # Resolve tool_call <-> tool_definition and tool_result <-> tool_call/tool_definition
+    # links from the join keys already on each block (tool_name, tool_call_id) — no
+    # extra query, and no stored FK needed since both sides of each link always live
+    # in the same request's block set (the agent resends full history each turn).
+    definition_by_name = {
+        r.tool_name: r.id for r, _ in rows if r.block_type == BlockType.TOOL_DEFINITION and r.tool_name
+    }
+    call_by_id = {
+        r.tool_call_id: r.id for r, _ in rows if r.block_type == BlockType.TOOL_CALL and r.tool_call_id
+    }
+
+    # Conversation traceback: chain user/assistant message blocks by message_index so a
+    # block can link back to the previous conversational turn, skipping over tool-only
+    # turns (calls/results/system/tool-defs) in between. Canonical id per message_index
+    # is the first block encountered there (lowest position) — matters when one message
+    # has multiple text parts sharing the same message_index.
+    _MESSAGE_TYPES = (BlockType.USER_MESSAGE, BlockType.ASSISTANT_MESSAGE)
+    message_blocks = sorted(
+        (r for r, _ in rows
+         if r.direction == Direction.INPUT and r.block_type in _MESSAGE_TYPES and r.message_index is not None),
+        key=lambda r: (r.message_index, r.position),
+    )
+    first_by_index: dict[int, int] = {}
+    for r in message_blocks:
+        first_by_index.setdefault(r.message_index, r.id)
+
+    prev_message_id_by_index: dict[int, int | None] = {}
+    prev_id: int | None = None
+    for idx in sorted(first_by_index):
+        prev_message_id_by_index[idx] = prev_id
+        prev_id = first_by_index[idx]
+
     result = []
     for record, content in rows:
         content_purged = record.content_hash is not None and content is None
-        result.append(record.to_dict(content=content, content_purged=content_purged))
+        linked_call_id = None
+        linked_definition_id = None
+        linked_previous_message_id = None
+        if record.block_type == BlockType.TOOL_CALL:
+            linked_definition_id = definition_by_name.get(record.tool_name)
+        elif record.block_type == BlockType.TOOL_RESULT:
+            linked_call_id = call_by_id.get(record.tool_call_id)
+            linked_definition_id = definition_by_name.get(record.tool_name)
+        elif record.direction == Direction.INPUT and record.block_type in _MESSAGE_TYPES:
+            linked_previous_message_id = prev_message_id_by_index.get(record.message_index)
+        result.append(record.to_dict(
+            content=content,
+            content_purged=content_purged,
+            linked_call_id=linked_call_id,
+            linked_definition_id=linked_definition_id,
+            linked_previous_message_id=linked_previous_message_id,
+        ))
     return result
 
 

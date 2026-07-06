@@ -111,8 +111,45 @@ function blockLabel(b: RequestBlock): string {
   }
 }
 
-function blockKey(b: RequestBlock, i: number): string {
-  return `${b.direction}-${b.position}-${i}`
+function blockKey(b: RequestBlock): number {
+  return b.id
+}
+
+// ---------------------------------------------------------------------------
+// Link chips — shared between the Overview detail panel and Parsed-tab headers
+// ---------------------------------------------------------------------------
+function LinkChips({ block, onJump }: { block: RequestBlock; onJump: (targetId: number) => void }) {
+  return (
+    <>
+      {block.linked_previous_message_id != null && (
+        <button
+          onClick={() => onJump(block.linked_previous_message_id!)}
+          title="Jump to previous message"
+          className="text-[10px] px-1.5 py-0.5 rounded border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 whitespace-nowrap"
+        >
+          ← previous
+        </button>
+      )}
+      {block.linked_call_id != null && (
+        <button
+          onClick={() => onJump(block.linked_call_id!)}
+          title={`Jump to tool call${block.tool_name ? `: ${block.tool_name}` : ''}`}
+          className="text-[10px] px-1.5 py-0.5 rounded border border-orange-500/40 text-orange-300 hover:bg-orange-500/10 whitespace-nowrap"
+        >
+          → call
+        </button>
+      )}
+      {block.linked_definition_id != null && (
+        <button
+          onClick={() => onJump(block.linked_definition_id!)}
+          title={`Jump to tool definition${block.tool_name ? `: ${block.tool_name}` : ''}`}
+          className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 whitespace-nowrap"
+        >
+          → definition
+        </button>
+      )}
+    </>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +186,11 @@ function ContextOverview({
   const selectedBlock = selectedIdx != null ? blocks[selectedIdx] : null
   const selectedTokens = selectedIdx != null && tokensList ? tokensList[selectedIdx] ?? null : null
 
+  const jumpToId = (targetId: number) => {
+    const idx = blocks.findIndex(b => b.id === targetId)
+    if (idx !== -1) onSelect(idx)
+  }
+
   return (
     <div>
       <div className="p-3 space-y-1">
@@ -160,7 +202,7 @@ function ContextOverview({
               const isSelected = selectedIdx === idx
               return (
                 <button
-                  key={blockKey(b, idx)}
+                  key={blockKey(b)}
                   onClick={() => onSelect(isSelected ? null : idx)}
                   style={{
                     flex: `${Math.max(20, Math.sqrt(Math.max(b.token_count, 1)))} 1 0`,
@@ -189,10 +231,11 @@ function ContextOverview({
             className="flex items-center justify-between px-3 py-2 rounded-t"
             style={{ background: CAT_BG[visualOf(selectedBlock)], borderLeft: `3px solid ${CAT_BORDER[visualOf(selectedBlock)]}` }}
           >
-            <span className={`text-xs font-medium ${CAT_LABEL[visualOf(selectedBlock)]}`}>
+            <span className={`text-xs font-medium ${CAT_LABEL[visualOf(selectedBlock)]} truncate min-w-0`}>
               {blockLabel(selectedBlock)}
             </span>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 shrink-0">
+              <LinkChips block={selectedBlock} onJump={jumpToId} />
               <span className="text-[10px] text-gray-500 tabular-nums">
                 {selectedBlock.token_count.toLocaleString()} tokens
               </span>
@@ -230,21 +273,39 @@ function ContextOverview({
 // ---------------------------------------------------------------------------
 // Block component — shows tokenized text with colored spans
 // ---------------------------------------------------------------------------
-function TokenBlock({ block, tokens }: { block: RequestBlock; tokens: string[] | null }) {
-  const [collapsed, setCollapsed] = useState(true)
+function TokenBlock({
+  block, tokens, collapsed, onToggleCollapsed, highlighted, onJump,
+}: {
+  block: RequestBlock
+  tokens: string[] | null
+  collapsed: boolean
+  onToggleCollapsed: () => void
+  highlighted: boolean
+  onJump: (targetId: number) => void
+}) {
   const visual = visualOf(block)
 
   return (
-    <div className="border border-gray-700 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setCollapsed(c => !c)}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-750 text-left"
-      >
-        <span className={`w-1 self-stretch rounded-full shrink-0 ${CAT_BAR[visual]}`} />
-        <span className={`text-xs font-medium ${CAT_LABEL[visual]} flex-1`}>{blockLabel(block)}</span>
+    <div
+      id={`block-${block.id}`}
+      className={`border rounded-lg overflow-hidden transition-shadow ${
+        highlighted ? 'border-indigo-400 ring-2 ring-indigo-400/60' : 'border-gray-700'
+      }`}
+    >
+      <div className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800">
+        <button
+          onClick={onToggleCollapsed}
+          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+        >
+          <span className={`w-1 self-stretch rounded-full shrink-0 ${CAT_BAR[visual]}`} />
+          <span className={`text-xs font-medium ${CAT_LABEL[visual]} truncate`}>{blockLabel(block)}</span>
+        </button>
+        <LinkChips block={block} onJump={onJump} />
         <span className="text-xs text-gray-500 tabular-nums">{block.token_count.toLocaleString()} tokens</span>
-        <span className="text-gray-600 text-xs ml-1">{collapsed ? '▶' : '▼'}</span>
-      </button>
+        <button onClick={onToggleCollapsed} className="text-gray-600 text-xs ml-1">
+          {collapsed ? '▶' : '▼'}
+        </button>
+      </div>
       {!collapsed && (
         <div className="px-3 py-2.5 bg-gray-900 text-xs font-mono leading-relaxed overflow-auto max-h-[400px]">
           {block.content_purged ? (
@@ -287,10 +348,26 @@ export function ParsedViewer({ requestId, rawBody, totalInputTokens }: Props) {
   const [loading, setLoading] = useState(false)
   const [showHighlight, setShowHighlight] = useState(true)
   const [colorizeOverview, setColorizeOverview] = useState(false)
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
+  const [highlightedId, setHighlightedId] = useState<number | null>(null)
 
   const blocksQuery = useRequestBlocks(requestId)
   const allBlocks = blocksQuery.data?.blocks
   const blocks = allBlocks ? allBlocks.filter(b => b.direction === 'input') : []
+
+  const jumpToBlock = useCallback((targetId: number) => {
+    setTab('parsed')
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      next.add(targetId)
+      return next
+    })
+    setHighlightedId(targetId)
+    setTimeout(() => {
+      document.getElementById(`block-${targetId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 50)
+    setTimeout(() => setHighlightedId(id => (id === targetId ? null : id)), 1500)
+  }, [])
 
   const fetchTokens = useCallback(async () => {
     if (blocks.length === 0) return
@@ -397,9 +474,18 @@ export function ParsedViewer({ requestId, rawBody, totalInputTokens }: Props) {
           ) : (
             blocks.map((block, i) => (
               <TokenBlock
-                key={blockKey(block, i)}
+                key={blockKey(block)}
                 block={block}
                 tokens={showHighlight && tokenized ? tokenized[i] ?? null : null}
+                collapsed={!expandedIds.has(block.id)}
+                onToggleCollapsed={() => setExpandedIds(prev => {
+                  const next = new Set(prev)
+                  if (next.has(block.id)) next.delete(block.id)
+                  else next.add(block.id)
+                  return next
+                })}
+                highlighted={highlightedId === block.id}
+                onJump={jumpToBlock}
               />
             ))
           )}

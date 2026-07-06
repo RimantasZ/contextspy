@@ -224,8 +224,16 @@ class BlockRecord(Base):
     tool_call_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     attrs: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
 
-    def to_dict(self, content: str | None, content_purged: bool) -> dict:
+    def to_dict(
+        self,
+        content: str | None,
+        content_purged: bool,
+        linked_call_id: int | None = None,
+        linked_definition_id: int | None = None,
+        linked_previous_message_id: int | None = None,
+    ) -> dict:
         return {
+            "id": self.id,
             "direction": self.direction,
             "position": self.position,
             "message_index": self.message_index,
@@ -237,6 +245,9 @@ class BlockRecord(Base):
             "tool_name": self.tool_name,
             "tool_call_id": self.tool_call_id,
             "attrs": json.loads(self.attrs) if self.attrs else {},
+            "linked_call_id": linked_call_id,
+            "linked_definition_id": linked_definition_id,
+            "linked_previous_message_id": linked_previous_message_id,
         }
 
 

@@ -138,6 +138,7 @@ export interface ToolStat {
 }
 
 export interface RequestBlock {
+  id: number
   direction: 'input' | 'output'
   position: number
   message_index: number | null
@@ -149,6 +150,9 @@ export interface RequestBlock {
   tool_name: string | null
   tool_call_id: string | null
   attrs: Record<string, unknown>
+  linked_call_id: number | null
+  linked_definition_id: number | null
+  linked_previous_message_id: number | null
 }
 
 export interface ProxyStatus {
