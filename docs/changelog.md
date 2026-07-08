@@ -2,30 +2,23 @@
 
 ## v0.3.0
 
-### Architecture
-- **All context analysis moved to the backend** — request/response bodies are now decomposed
-  into structured *blocks* (system prompt, tool definitions, individual tool calls/results, text
-  and thinking segments) directly in Python, replacing the old approach where the frontend
-  re-parsed raw JSON in the browser to build the request/response breakdown views. This makes the
-  breakdown UI work correctly even after raw bodies have been purged by retention, and lays the
-  groundwork for tracking how context evolves across requests in a session.
-- **New provider adapter layer** — `analysis/providers.py` has been replaced by
-  `analysis/adapters/` (Anthropic, OpenAI Chat Completions, OpenAI Responses, Ollama), making it
-  straightforward to add support for new providers or wire formats going forward.
-- **Reasoning/thinking tokens tracked separately** — Anthropic extended-thinking blocks and
-  OpenAI reasoning-token usage are now broken out from regular generated output tokens instead of
-  being lumped into a single output count.
+### New features
+- **Block linking** — tool calls link to their definitions, tool results link to their calls and
+  definitions, and user/assistant messages link to the previous conversational turn (skipping
+  tool-only turns). Shown as jump links in the request breakdown view.
+- **Context analysis moved to the backend** — requests/responses are decomposed into structured
+  blocks (system prompt, tool definitions, tool calls/results, text, thinking) in Python and
+  persisted, replacing client-side JSON parsing for the breakdown views.
+- **New provider adapter layer** (`analysis/adapters/`) replaces `analysis/providers.py` —
+  Anthropic, OpenAI Chat Completions, OpenAI Responses, Ollama.
+
 
 ### Fixes & improvements
-- **Startup now blocks on pending DB migrations** — if a database schema upgrade requires a data
-  backfill, `contextspy start`/`start-local` now refuse to start and print instructions
-  (`contextspy db-upgrade` or `contextspy reset-db`) instead of running against a partially
-  migrated database.
-- **Breakdown view reordering** — the token composition view now shows tokens before labels for
-  easier scanning.
-- Font fix in the request breakdown view.
-- Expanded [Troubleshooting](install.md#troubleshooting) section covering more install/cert
-  edge cases.
+- `contextspy start`/`start-local` now refuse to start if a DB schema upgrade needs a data
+  backfill (run `contextspy db-upgrade` or `contextspy reset-db` first).
+- Breakdown view shows tokens before labels.
+- Font fix in the breakdown view.
+- Expanded [Troubleshooting](install.md#troubleshooting) section.
 - README fixes.
 
 ---
