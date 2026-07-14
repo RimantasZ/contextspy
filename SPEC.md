@@ -1,6 +1,6 @@
 # ContextSpy — Technical Specification v0.3
 
-> **Status:** Implemented — May 2026  
+> **Status:** Implemented — July 2026  
 > **Purpose:** Living specification — reflects the currently running codebase.
 
 ---
@@ -214,49 +214,96 @@ All three local server types expose an OpenAI-compatible `/v1/chat/completions` 
 
 ### 5.2 Context Analyser
 
-Runs synchronously after each captured response. Parses the JSON request body according to the provider's API schema and classifies message content into categories.
+Runs synchronously after each captured response, entirely in the backend (the frontend does no
+JSON parsing — it only renders what the backend already classified and persisted). The pipeline
+is provider-agnostic: a **wire-format adapter** turns provider-specific JSON into a small set of
+domain types, and a single classifier operates on those types regardless of which provider or
+wire format produced them.
 
-#### Supported Request Formats
+#### Domain Model (`analysis/blocks.py`)
 
-| Provider | Endpoint | Format | Streaming |
-|---|---|---|---|
-| OpenAI | `POST /v1/chat/completions` | OpenAI Chat Completions | ✅ SSE |
-| Anthropic | `POST /v1/messages` | Anthropic Messages API | ✅ SSE |
-| Ollama | `POST /api/chat` | Ollama chat format | — |
-| Copilot | `POST /v1/chat/completions` | OpenAI-compatible | ✅ SSE |
+- **`Block`** — one content-addressable unit of context: a system prompt, a tool definition, a
+  message, a tool call, a tool result, or a thinking/reasoning segment. Fields: `direction`
+  (`input`/`output`), `block_type` (see `BlockType` below), `content`, `position` (order within
+  its direction), `message_index` (order of the conversational turn it belongs to, or `-1`/`None`
+  for turn-independent blocks like the system prompt), `category` (assigned by the classifier,
+  input blocks only), `content_hash` (sha256, auto-computed by `Block.make()`), `token_count`
+  (auto-computed via the tokenizer unless a provider-reported count is passed explicitly),
+  `tool_name`, `tool_call_id`, and a free-form `attrs` dict (e.g. `{"is_prefill": true}`).
+- **`BlockType`**: `system_prompt`, `tool_definition`, `user_message`, `assistant_message`,
+  `tool_call`, `tool_result`, `assistant_prefill` (reserved — prefill is currently expressed via
+  `attrs["is_prefill"]` on an `assistant_message` block, not this type), `thinking`, `other`.
+- **`Usage`** — provider-reported token counts when available: `input_tokens`, `output_tokens`,
+  `reasoning_tokens`, `cache_read_tokens`, `cache_creation_tokens`, plus a free-form `extra` dict
+  for provider-specific usage fields that don't map to the others.
+- **`AnalyzedRequest`** — the adapter's output: `model`, `input_blocks: list[Block]`,
+  `output_blocks: list[Block]`, `usage: Usage`, `tool_call_map` (tool_call_id → tool_name, used to
+  attribute tool-result tokens back to a tool name for per-tool stats). Replaces the old
+  monolithic `ParsedRequest`.
 
-Requests to unrecognised endpoints for a known host are recorded with `tokens_uncategorized = total_input_tokens` and all other category fields = 0.
+#### Wire-Format Adapters (`analysis/adapters/`)
 
-#### SSE Streaming Parsing (`providers.py`)
+Each supported wire format is one `WireFormatAdapter` subclass implementing
+`parse_request(req_body) -> (input_blocks, tool_call_map)`,
+`parse_response(resp_body) -> (output_blocks, usage)` (buffered/non-streaming), and
+`parse_sse(raw_bytes) -> (output_blocks, usage)` (streaming). `get_adapter(endpoint)` dispatches
+by matching the request **path** (not host) against each adapter's `endpoint_patterns`, first
+match wins:
 
-Because Claude Code and most modern LLM clients use streaming responses (`Content-Type: text/event-stream`), the `response()` mitmproxy hook does not fire for these flows. Instead:
+| Adapter | `format_id` | `endpoint_patterns` |
+|---|---|---|
+| `anthropic.py` | `anthropic` | `/messages` |
+| `openai_chat.py` | `openai_chat` | `/chat/completions`, `/completions` |
+| `openai_responses.py` | `openai_responses` | `/responses` |
+| `ollama.py` | `ollama` | `/api/chat`, `/api/generate` |
 
-- `responseheaders()` detects `text/event-stream` and attaches `flow.response.stream = _collect_callback`.
-- The callback accumulates raw SSE bytes in `sse_chunks`.
-- On stream end (empty-bytes sentinel), `parse_sse_request(provider, endpoint, req_body, raw_sse_bytes)` is called.
-- `_sse_to_anthropic_resp(raw)` parses Anthropic SSE events (`message_start`, `content_block_delta`, `message_delta`) into a `resp_body` dict compatible with `parse_anthropic()`.
-- `_sse_to_openai_resp(raw)` parses OpenAI SSE events (`choices[].delta.content`, `usage`) into a dict compatible with `parse_openai()`.
-- Token counts, category breakdown, and raw SSE text are then stored normally.
+Adapters are registered in this order in `analysis/adapters/__init__.py`; order matters where
+patterns could otherwise overlap. There is no adapter per *provider* — OpenAI-compatible
+providers (Azure OpenAI, GitHub Copilot, opencode's cloud API) are detected separately by host
+(`proxy/addon.py`'s `_HOST_PROVIDER`, used only to label `provider`/`agent` on the stored
+request) but parsed by the same `openai_chat`/`openai_responses` adapter, since they speak the
+same wire format. Adding a genuinely new wire format is a new adapter module and a `register()`
+call — nothing else in the pipeline changes.
 
-#### Content Categories
+Requests to unrecognised endpoints (`get_adapter` returns `None`) are recorded with
+`tokens_uncategorized = tokens_total_input` and no `Block` rows.
 
-| Category key | Detection Logic |
-|---|---|
-| `system_prompt` | Messages with `role == "system"` |
-| `tool_definitions` | Top-level `tools` or `functions` array; or content blocks containing JSON objects with `"name"` + `"description"` + (`"input_schema"` or `"parameters"`) keys |
-| `tool_results` | Messages with `role == "tool"`, or content blocks with `"type": "tool_result"` (Anthropic), or messages with a `tool_call_id` field |
-| `file_contents` | User/assistant messages matched by file-content heuristics (see below) |
-| `conversation_history` | All `role == "user"` or `role == "assistant"` turns **except** the last user turn |
-| `current_user_message` | The final `role == "user"` message in the array |
-| `assistant_prefill` | Any trailing `role == "assistant"` message (Anthropic prompt-caching / prefill pattern) |
-| `uncategorized` | Anything not matched by the above |
+#### SSE Streaming
 
-Classification priority (highest wins when a message could match multiple):  
-`tool_results` > `tool_definitions` > `system_prompt` > `assistant_prefill` > `file_contents` > `current_user_message` > `conversation_history` > `uncategorized`
+Because Claude Code and most modern LLM clients use streaming responses
+(`Content-Type: text/event-stream`), the `response()` mitmproxy hook never fires for these flows.
+Instead `responseheaders()` detects `text/event-stream` and attaches a streaming callback that
+accumulates raw SSE bytes; on stream end, `proxy/addon.py`'s `_handle_sse_response` decompresses
+the body, resolves the adapter via `get_adapter(endpoint)`, and calls `adapter.parse_sse(raw)`
+instead of `parse_response()`. A clean JSON response body is synthesized from the resulting
+`AnalyzedRequest.response_text`/`usage` for storage. Everything downstream (classification,
+persistence) is identical to the non-streaming path.
+
+#### Content Categories (`analysis/classifier.py`)
+
+`classify_blocks(input_blocks)` assigns each **input** block a `category`, in priority order
+(first match wins):
+
+1. `tool_result` block → `tool_results`
+2. `system_prompt` block → `system_prompt`
+3. `attrs["is_prefill"]` set → `assistant_prefill`
+4. `user_message` block → `file_contents` (if `_is_file_content` matches), else
+   `current_user_message` if it's the last non-prefill user turn, else `conversation_history`
+5. `tool_definition` block → `tool_definitions`
+6. `assistant_message` / `tool_call` / `thinking` / `other` → `file_contents` (if
+   `_is_file_content` matches) else `conversation_history`
+7. anything else → `uncategorized`
+
+`classify(analyzed)` sums block `token_count`s per category into a `CategoryBreakdown`, adds a
+small ChatML-style overhead estimate to `total_input`, and splits **output** blocks into
+`tokens_output_thinking` (`thinking` blocks) vs. `tokens_output_text` (everything else), summed
+into `total_output`. `per_tool_tokens(analyzed)` produces one row per `tool_definition` block
+(`tool_name`, `definition_tokens`, `result_tokens`), attributing each `tool_result` block's tokens
+back to its tool via `tool_call_map`; unattributable result tokens are evenly split across rows.
 
 #### File Content Detection Heuristics
 
-A message content string is classified as `file_contents` if **any** of the following match:
+A block's content is classified as `file_contents` if **any** of the following match:
 
 1. Contains XML-like tags: `<file_contents>`, `<file>`, `<source>`, `<document_content>` (common in Anthropic prompt patterns).
 2. Contains a fenced code block (``` or ~~~) with a filename hint on the opening fence (e.g., ` ```typescript src/foo.ts `).
@@ -264,9 +311,26 @@ A message content string is classified as `file_contents` if **any** of the foll
 4. Contains lines starting with a comment that looks like a filename path:  
    - `// relative/path/to/file.ext` or `# relative/path/to/file.ext`  
    - followed immediately by code.
-5. Message text starts with a path-like string (contains `/` or `\` and a file extension) on its own line, followed by a code block.
+5. Content starts with a path-like string (contains `/` or `\` and a file extension) on its own line, followed by a code block.
 
-These heuristics are intentionally broad. False positives are acceptable in v1; the goal is useful approximation, not perfect categorisation.
+These heuristics are intentionally broad. False positives are acceptable; the goal is useful approximation, not perfect categorisation.
+
+#### Block Linking
+
+Blocks are linked to related blocks **at read time** (in `db/crud.py: get_blocks()`), not via a
+stored foreign key — the join keys (`tool_name`, `tool_call_id`, `message_index`) already exist
+on every block, and both sides of each link always live in the same request's block set (the
+agent resends full history each turn), so no extra migration is needed:
+
+- `tool_call` blocks → `linked_definition_id` (matching `tool_definition` by `tool_name`).
+- `tool_result` blocks → `linked_call_id` (matching `tool_call` by `tool_call_id`) and
+  `linked_definition_id`.
+- `user_message`/`assistant_message` blocks → `linked_previous_message_id`, chaining by
+  `message_index` to the previous conversational turn, skipping over tool-only turns
+  (calls/results) and the system prompt in between.
+
+The UI (`ContextOverview`, `ParsedViewer`'s `TokenBlock`) renders these as clickable "jump to"
+chips that scroll to and highlight the linked block.
 
 ---
 
@@ -286,13 +350,19 @@ All token count records include a `tokenizer` field set to `"tiktoken/cl100k_bas
 When the `cl100k_base` encoder is first loaded, tiktoken downloads the encoding data file from the internet. If proxy environment variables (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and their lowercase variants) are set — which they will be when ContextSpy routes traffic through itself — the download attempt is routed through the proxy, resulting in a `ProxyError`. To prevent this, `_get_encoder()` strips all proxy env vars from `os.environ` before calling `tiktoken.get_encoding()`, then restores them in a `finally` block. The encoder is cached globally so this only happens once per process.
 
 **What is counted:**
-- Tokens per category in the **input** (prompt) — each category counted separately.
-- `tokens_total_input` — sum of all category token counts.
-- `tokens_total_output` — token count of the response's `choices[0].message.content` (or Anthropic equivalent).
-- If the provider returns a `usage` object in the response body, store `provider_input_tokens` and `provider_output_tokens` alongside estimated counts.
+- Each `Block`'s `token_count` is computed individually (`Block.make()` calls `tiktoken.encode()`
+  on its content, unless a provider-reported count is passed explicitly — e.g. OpenAI Responses'
+  hidden reasoning summaries, which have no visible content but a known token count).
+- `tokens_total_input`/`tokens_total_output` and the 8 category columns are sums over blocks,
+  computed by `classify()` — see §5.2.
+- If the provider returns a `usage` object in the response body, it's stored verbatim alongside
+  the estimated counts: `provider_input_tokens`, `provider_output_tokens`,
+  `provider_reasoning_tokens`, `cache_read_tokens`, `cache_creation_tokens`, and any remaining
+  fields in `usage_extra` (JSON).
 
 **Counting method:**  
-Each category's text is concatenated (preserving JSON structure for tool definitions) and passed to `tiktoken.encode()`. The length of the resulting token list is the count.
+Per-block token counts, not per-category concatenation — this is what makes block-level
+persistence and per-tool/per-block drill-down possible.
 
 ---
 
@@ -300,7 +370,9 @@ Each category's text is concatenated (preserving JSON structure for tool definit
 
 **Database:** SQLite at `~/.contextspy/contextspy.db`  
 **ORM:** SQLAlchemy 2.0 (using `mapped_column` / `DeclarativeBase`)  
-**Schema initialisation:** SQLAlchemy `create_all()` on startup (no external migration tool in v1).
+**Schema initialisation:** SQLAlchemy `create_all()` on startup creates any *missing tables*, but
+does **not** add columns to existing tables — see "Schema Migrations" below for how column/data
+changes are applied.
 
 #### Schema
 
@@ -324,9 +396,10 @@ CREATE TABLE requests (
         -- detected agent name or 'unknown'
     endpoint                        TEXT NOT NULL,      -- e.g. '/v1/chat/completions'
     duration_ms                     INTEGER,
+    ttft_ms                         INTEGER,            -- time to first streamed token, if measurable
     status_code                     INTEGER,
 
-    -- Estimated token counts by category
+    -- Estimated token counts by category (aggregated from `blocks`, see below)
     tokens_system_prompt            INTEGER NOT NULL DEFAULT 0,
     tokens_tool_definitions         INTEGER NOT NULL DEFAULT 0,
     tokens_tool_results             INTEGER NOT NULL DEFAULT 0,
@@ -337,14 +410,22 @@ CREATE TABLE requests (
     tokens_uncategorized            INTEGER NOT NULL DEFAULT 0,
     tokens_total_input              INTEGER NOT NULL DEFAULT 0,
     tokens_total_output             INTEGER NOT NULL DEFAULT 0,
+    tokens_output_text              INTEGER NOT NULL DEFAULT 0,
+    tokens_output_thinking          INTEGER NOT NULL DEFAULT 0,
 
     -- Provider-reported usage (from response body, may be NULL)
     provider_input_tokens           INTEGER,
     provider_output_tokens          INTEGER,
+    provider_reasoning_tokens       INTEGER,
+    cache_read_tokens               INTEGER,
+    cache_creation_tokens           INTEGER,
+    usage_extra                     TEXT,               -- JSON: leftover provider usage fields
+
+    session_seq                     INTEGER,            -- this request's ordinal within its session
 
     tokenizer                       TEXT NOT NULL DEFAULT 'tiktoken/cl100k_base',
 
-    -- Raw content — NULLed out when session ends
+    -- Raw content — purged per [retention] settings
     raw_request_body                TEXT,
     raw_response_body               TEXT
 );
@@ -352,18 +433,97 @@ CREATE TABLE requests (
 CREATE INDEX idx_requests_session ON requests(session_id);
 CREATE INDEX idx_requests_timestamp ON requests(timestamp);
 CREATE INDEX idx_requests_provider ON requests(provider);
+
+CREATE TABLE tool_stats (
+    id                TEXT PRIMARY KEY,
+    request_id        TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+    tool_name         TEXT NOT NULL,
+    definition_tokens INTEGER NOT NULL DEFAULT 0,
+    result_tokens     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_tool_stats_request ON tool_stats(request_id);
+CREATE INDEX idx_tool_stats_name ON tool_stats(tool_name);
+
+-- Content-addressed block text, shared/deduplicated across every request in a session
+CREATE TABLE block_contents (
+    hash        TEXT PRIMARY KEY,   -- sha256 hex of `content`
+    content     TEXT NOT NULL,
+    created_at  DATETIME NOT NULL
+);
+
+-- One row per content-part-level Block (system prompt, tool def, message, tool call/result,
+-- thinking segment) produced by an adapter for a given request, on either direction.
+CREATE TABLE blocks (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id    TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+    direction     TEXT NOT NULL,      -- 'input' | 'output'
+    position      INTEGER NOT NULL DEFAULT 0,   -- order within (request_id, direction)
+    message_index INTEGER,            -- conversational turn ordinal; NULL/-1 for turn-independent blocks
+    block_type    TEXT NOT NULL,      -- see BlockType in §5.2
+    category      TEXT,               -- classifier output; input blocks only
+    content_hash  TEXT,               -- FK (by value, not enforced) → block_contents.hash
+    token_count   INTEGER NOT NULL DEFAULT 0,
+    tool_name     TEXT,
+    tool_call_id  TEXT,
+    attrs         TEXT                -- JSON, e.g. {"is_prefill": true}
+);
+
+CREATE INDEX idx_blocks_request ON blocks(request_id);
+CREATE INDEX idx_blocks_content_hash ON blocks(content_hash);
+CREATE INDEX idx_blocks_type ON blocks(block_type);
+
+-- Tracks the schema/data-migration state (see "Schema Migrations" below)
+CREATE TABLE schema_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 ```
+
+`tool_call`/`tool_result`/previous-message links (`linked_call_id`, `linked_definition_id`,
+`linked_previous_message_id`) are **not** stored columns — they're resolved at read time in
+`db/crud.py: get_blocks()` from `tool_name`/`tool_call_id`/`message_index`. See §5.2 "Block
+Linking".
 
 #### Data Lifecycle
 
-- **During an active session:** `raw_request_body` and `raw_response_body` are populated for every request. This data is used for per-request drill-down in the UI.
-- **On session end:** A background task runs:  
-  ```sql
-  UPDATE requests SET raw_request_body = NULL, raw_response_body = NULL
-  WHERE session_id = ?
-  ```
-- **Requests with no active session:** `session_id = NULL`. Raw bodies are still stored temporarily, but a periodic vacuum (on startup) NULLs out raw bodies for any request older than 24 hours that has no session.
-- **Token stats and metadata** are kept indefinitely.
+- **During capture:** every request writes a `Request` row with the aggregated per-category
+  token counts, one `BlockRecord` per content part (deduplicated into `block_contents` by
+  content hash), and (if any tools were used) one `ToolStat` row per tool.
+- **Retention (configurable, see §10):** on server startup only (no background timer),
+  `startup_vacuum()`:
+  - NULLs `raw_request_body`/`raw_response_body` on `Request` rows older than
+    `retention.raw_body_days` (default 7; `0` = keep forever).
+  - Deletes `block_contents` rows whose hash is no longer referenced by any `blocks` row from a
+    request newer than `retention.block_content_days` (default 7; `0` = keep forever) — content
+    shared by multiple requests in a session is only garbage-collected once every referencing
+    request has aged out. `blocks` rows themselves (and their token counts/categories) are never
+    purged, only the `block_contents` text.
+- **Token stats, block metadata (types/categories/token counts/links), and tool stats** are kept
+  indefinitely.
+
+#### Schema Migrations
+
+Because `create_all()` only creates missing tables, any change to `db/models.py` needs one or
+both of:
+
+1. **New column on an existing table** — added to the `new_columns` list in
+   `db/database.py: _migrate()`, an additive `ALTER TABLE` applied automatically on every
+   startup. No version bump needed for this alone.
+2. **New derived/backfillable data** (e.g. a new column whose values must be computed from
+   existing rows) — bumps `SCHEMA_VERSION` in `db/migrations.py` and registers a new
+   `_migrate_to_vN` function in `_DATA_MIGRATIONS`. This does **not** run automatically; it only
+   runs when the user explicitly invokes `contextspy db-upgrade`. `schema_meta` tracks the
+   applied version and any pending migration IDs. `contextspy start`/`start-local` call
+   `_abort_if_migrations_pending()` before booting and refuse to start (exit code 1, pointing the
+   user at `db-upgrade` or `reset-db`) if any data migration is pending — this prevents the app
+   from running against a DB with stale/missing derived data.
+
+Currently `SCHEMA_VERSION = 2`; `_migrate_to_v2` backfills `session_seq` (per-session request
+ordinal, assigned by `timestamp` order) and reconstructs `blocks`/`block_contents` rows for
+pre-existing requests from their still-present `raw_request_body`/`raw_response_body` (re-running
+the adapter → classify → insert_blocks pipeline), skipping requests whose raw bodies have already
+been purged by retention.
 
 ---
 
@@ -379,16 +539,18 @@ CREATE INDEX idx_requests_provider ON requests(provider);
 |---|---|---|
 | `POST` | `/api/sessions` | Create and start a new session. Body: `{ "name": "string" }`. Returns session object. If another session is active, it is automatically ended first (warning included in response). |
 | `GET` | `/api/sessions` | List all sessions (newest first). |
-| `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session. |
-| `POST` | `/api/sessions/{id}/end` | End a session. Triggers async raw content purge. |
-| `DELETE` | `/api/sessions/{id}` | Delete session and all associated request records. |
+| `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session. 404 if missing. |
+| `PATCH` | `/api/sessions/{id}` | Rename a session. Body: `{ "name": "string" }`. 422 if blank, 404 if missing. |
+| `POST` | `/api/sessions/{id}/end` | End a session. Triggers async raw content purge. 404 if missing. |
+| `DELETE` | `/api/sessions/{id}?delete_requests=bool` | Delete session, optionally cascading its request records. 404 if missing. |
 
 #### Requests
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/requests` | List requests. Query params: `session_id`, `provider`, `agent`, `limit` (default 50), `offset` (default 0). |
-| `GET` | `/api/requests/{id}` | Full request detail including raw bodies (if available). |
+| `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
+| `GET` | `/api/requests/{id}` | Full request detail including raw bodies (if not yet purged). 404 if missing. |
+| `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, linked_call_id, linked_definition_id, linked_previous_message_id`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. 404 if request missing. |
 
 #### Stats
 
@@ -397,6 +559,8 @@ CREATE INDEX idx_requests_provider ON requests(provider);
 | `GET` | `/api/stats/overview` | Aggregated totals across all recorded requests. |
 | `GET` | `/api/stats/session/{id}` | Aggregated breakdown for a specific session. |
 | `GET` | `/api/stats/timeline` | Time-series data. Query params: `session_id` (optional), `bucket` = `minute` \| `hour` \| `day`. |
+| `GET` | `/api/stats/tools` | Per-tool token breakdown (`tool_name`, `definition_tokens`, `result_tokens`). Query params: `session_id`, `request_id` (both optional; live-aggregated from `tool_stats`, not materialized separately). |
+| `GET` | `/api/stats/sessions-summary` | Chronological list of session/gap entries (each session's token totals + idle gaps between sessions), used by the Sessions page. |
 
 Stats response shape (shared by overview and per-session):
 ```json
@@ -426,6 +590,14 @@ Stats response shape (shared by overview and per-session):
 | `GET` | `/api/proxy/status` | `{ "running": bool, "port": 8888, "cert_installed": bool }` |
 | `POST` | `/api/proxy/start` | Start the proxy (no-op if already running). |
 | `POST` | `/api/proxy/stop` | Stop the proxy. |
+| `POST` | `/api/proxy/install-cert` | Install the mitmproxy CA cert into the OS trust store. |
+| `GET` | `/proxy.pac` | PAC file (`text/plain`) routing known LLM hostnames through the proxy, `DIRECT` otherwise — an alternative to setting `HTTPS_PROXY` for clients that support PAC. |
+
+#### Tokenize
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/tokenize` | Body: `{ "texts": string[] }`. Returns `{ "results": string[][] }` — per-text token strings, used by the UI for token-level highlighting. |
 
 #### WebSocket
 
@@ -520,6 +692,12 @@ contextspy start-local [--web-port 5173] [--no-browser]
     No CA certificate required.
     Ctrl+C for clean shutdown.
 
+contextspy run <tool> [args...]
+    Run a command with the proxy env vars (and, for known tools, the right
+    cert variable) pre-set, so you don't need to export them manually.
+    Requires contextspy to already be running; aborts if the CA cert is
+    missing for tools that need it.
+
 contextspy help
     Print a table of all available commands with descriptions.
 
@@ -530,16 +708,24 @@ contextspy install-cert
     Run OS-specific CA cert trust-store installation.
 
 contextspy reset-db [--yes]
-    Delete ALL requests and sessions from the local SQLite database.
-    Prompts for confirmation unless --yes is passed.
+    Delete ALL rows from tool_stats, blocks, block_contents, requests,
+    sessions, and schema_meta (in that order; missing tables are ignored,
+    for compatibility with older DBs). Prompts for confirmation unless
+    --yes is passed.
+
+contextspy db-upgrade
+    Apply any pending data migrations (see §5.4 "Schema Migrations").
+    Prints "already up to date" if nothing is pending. `start`/`start-local`
+    refuse to boot until this (or reset-db) has been run against a DB with
+    pending migrations.
 
 contextspy db-stats
     Print row counts for each table in the database (offline — no server needed).
 
 contextspy report
     Print aggregate stats: total requests, input/output tokens (estimated and
-    provider-reported), and an input token category breakdown table with
-    percentages and a bar indicator.
+    provider-reported), an input token category breakdown table with
+    percentages and a bar indicator, and a per-tool token breakdown table.
 
 contextspy setup-claude
     Print the exact PowerShell and Bash env-var commands needed to route
@@ -551,6 +737,15 @@ contextspy setup-copilot
 
 contextspy setup-opencode
     Print env-var commands to route opencode through the proxy.
+
+contextspy setup-python
+    Print httpx/OpenAI-SDK cert setup instructions, including the fix for
+    SDKs that verify against certifi's bundled CA store directly and so
+    ignore SSL_CERT_FILE/REQUESTS_CA_BUNDLE.
+
+contextspy inject-cert
+    Append the mitmproxy CA cert into certifi's bundled CA store (the
+    one-shot fix referenced by setup-python).
 
 contextspy setup-llamaserver
     Print config.toml snippet and client base-URL change for llama.cpp / llama-server.
@@ -572,7 +767,7 @@ contextspy session list
     Print a table of sessions.
 ```
 
-`session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-stats`, `report`, and all `setup-*` commands work offline.
+`session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-upgrade`, `db-stats`, `report`, and all `setup-*`/`inject-cert` commands work offline.
 
 ---
 
@@ -671,23 +866,32 @@ contextspy/                         # repo root
 │   │   └── runner.py               # Starts mitmproxy in a background thread
 │   ├── analysis/
 │   │   ├── __init__.py
-│   │   ├── classifier.py           # Context classification logic
-│   │   ├── tokenizer.py            # tiktoken wrapper (with proxy bypass)
-│   │   └── providers.py            # Per-provider request/response parsers
+│   │   ├── blocks.py               # Block / Direction / BlockType / Usage / AnalyzedRequest
+│   │   ├── adapters/                # One WireFormatAdapter subclass per wire format
+│   │   │   ├── __init__.py         # Registers adapters (dispatch priority order)
+│   │   │   ├── base.py             # WireFormatAdapter ABC, REGISTRY, get_adapter()
+│   │   │   ├── anthropic.py
+│   │   │   ├── openai_chat.py
+│   │   │   ├── openai_responses.py
+│   │   │   └── ollama.py
+│   │   ├── classifier.py           # classify_blocks / classify / per_tool_tokens
+│   │   └── tokenizer.py            # tiktoken wrapper (with proxy bypass)
 │   ├── db/
 │   │   ├── __init__.py
-│   │   ├── models.py               # SQLAlchemy ORM models
-│   │   ├── database.py             # Engine + session factory
-│   │   └── crud.py                 # Database read/write helpers
+│   │   ├── models.py               # SQLAlchemy ORM models (incl. BlockRecord, BlockContent, SchemaMeta)
+│   │   ├── database.py             # Engine + session factory + additive column migration + startup_vacuum
+│   │   ├── migrations.py           # SCHEMA_VERSION + data migrations (contextspy db-upgrade)
+│   │   └── crud.py                 # Database read/write helpers (incl. block link resolution)
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── main.py                 # FastAPI app factory
 │   │   ├── websocket.py            # WebSocket manager
 │   │   └── routers/
 │   │       ├── sessions.py
-│   │       ├── requests.py
+│   │       ├── requests.py         # incl. GET /requests/{id}/blocks
 │   │       ├── stats.py
-│   │       └── proxy.py
+│   │       ├── proxy.py
+│   │       └── tokenize.py
 │   └── _web/                       # Built React assets (gitignored, generated by Vite)
 ├── ui/                             # React frontend source
 │   ├── src/
@@ -737,7 +941,7 @@ contextspy/                         # repo root
 ```toml
 [project]
 name = "contextspy"
-version = "0.1.1"
+version = "0.3.0"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
 dependencies = [
@@ -788,6 +992,14 @@ bind_addr = "127.0.0.1"
 [storage]
 db_path = "~/.contextspy/contextspy.db"
 
+[retention]
+# Raw request/response bodies and block content text are purged at server
+# startup only (no background timer) once they're older than these many
+# days. 0 = keep forever. Block/category/type metadata is never purged,
+# only the underlying text.
+raw_body_days = 7
+block_content_days = 7
+
 [intercepted_hosts]
 # Add extra hosts if needed (besides the built-in list)
 extra_hosts = []
@@ -815,12 +1027,13 @@ When `contextspy start` is called:
 
 1. Load and validate config.
 2. Ensure `~/.contextspy/` directory exists.
-3. Initialise SQLite DB (create tables if not exists, run startup vacuum).
-4. Check CA cert; if absent, generate via mitmproxy and attempt trust-store installation. If install fails, print instructions.
-5. Start mitmproxy `DumpMaster` with `ContextSpyAddon` (no `provider_override`) in a daemon thread.
-6. Start FastAPI/Uvicorn in the main asyncio event loop on `127.0.0.1:5173`.
-7. Open `http://127.0.0.1:5173` in the default browser.
-8. On `Ctrl+C`: send shutdown signal to mitmproxy thread, wait for it to stop, close DB connections, exit.
+3. Initialise SQLite DB (create tables if not exists, apply additive column migrations, run startup vacuum).
+4. Check for pending data migrations (`_abort_if_migrations_pending`); if any are pending, print an error pointing at `db-upgrade`/`reset-db` and exit(1) without starting anything else.
+5. Check CA cert; if absent, generate via mitmproxy and attempt trust-store installation. If install fails, print instructions.
+6. Start mitmproxy `DumpMaster` with `ContextSpyAddon` (no `provider_override`) in a daemon thread.
+7. Start FastAPI/Uvicorn in the main asyncio event loop on `127.0.0.1:5173`.
+8. Open `http://127.0.0.1:5173` in the default browser.
+9. On `Ctrl+C`: send shutdown signal to mitmproxy thread, wait for it to stop, close DB connections, exit.
 
 ### 11.2 Local Mode (`contextspy start-local`)
 
@@ -828,12 +1041,13 @@ When `contextspy start-local` is called:
 
 1. Load and validate config; abort if `reverse_targets` is empty (print helpful config snippet).
 2. Ensure `~/.contextspy/` directory exists.
-3. Initialise SQLite DB (create tables if not exists, run startup vacuum).
-4. **Skip CA cert check** — no TLS interception needed.
-5. For each `[[reverse_targets]]` entry: start a mitmproxy `DumpMaster` in `reverse:` mode with `ContextSpyAddon(provider_override=target.provider)` in a daemon thread.
-6. Start FastAPI/Uvicorn in the main asyncio event loop on `127.0.0.1:5173`.
-7. Open `http://127.0.0.1:5173` in the default browser.
-8. On `Ctrl+C`: send shutdown signal to all reverse-proxy threads, wait for them to stop, close DB connections, exit.
+3. Initialise SQLite DB (create tables if not exists, apply additive column migrations, run startup vacuum).
+4. Check for pending data migrations (`_abort_if_migrations_pending`); exit(1) with the same message as cloud mode if any are pending.
+5. **Skip CA cert check** — no TLS interception needed.
+6. For each `[[reverse_targets]]` entry: start a mitmproxy `DumpMaster` in `reverse:` mode with `ContextSpyAddon(provider_override=target.provider)` in a daemon thread.
+7. Start FastAPI/Uvicorn in the main asyncio event loop on `127.0.0.1:5173`.
+8. Open `http://127.0.0.1:5173` in the default browser.
+9. On `Ctrl+C`: send shutdown signal to all reverse-proxy threads, wait for them to stop, close DB connections, exit.
 
 ---
 
@@ -842,7 +1056,10 @@ When `contextspy start-local` is called:
 - **Native tokenizer support:** Anthropic provides a token-counting API endpoint; Ollama has `/api/tokenize`. These could be used for exact counts per provider.
 - **Cost estimation:** Add a `models_pricing.json` lookup table (input/output price per 1K tokens per model) to compute estimated cost per request.
 - **Export:** CSV / JSON export of session data from the UI.
-- **Prompt diffing:** Visual diff of the context window between consecutive requests in the same session.
+- **Prompt diffing:** Visual diff of the context window between consecutive requests in the same
+  session. Groundwork laid: every `Request` has a `session_seq` ordinal and every `Block` a
+  `content_hash`, so unchanged blocks across consecutive requests can already be identified by
+  hash equality — the diffing UI/logic itself is not yet built.
 - **opencode User-Agent:** Confirm the User-Agent string once opencode is available for testing.
 - **Re-tokenisation:** Add an API endpoint to re-count tokens for historical requests using a different tokenizer, without re-capturing.
 - **Claude Code agent detection:** Claude Code does not set a distinctive `User-Agent`; requests currently show `agent = "unknown"`. A future heuristic (e.g. header fingerprinting or process-level detection) could improve this.
@@ -858,3 +1075,4 @@ When `contextspy start-local` is called:
 | Hooks not firing for Claude Code requests | Claude Code uses SSE streaming; `response()` hook never fires for `text/event-stream` | Added `responseheaders()` hook + streaming callback that collects SSE chunks |
 | `tiktoken` `ProxyError` on first run | tiktoken downloads `cl100k_base` data at first use; with `HTTPS_PROXY` set, the download is routed through the local proxy which can't handle it | `_get_encoder()` strips all proxy env vars from `os.environ` before calling `tiktoken.get_encoding()`, restores them in `finally` |
 | macOS cert install: `SecCertificateCreateFromData: Unknown format in import` | `cert.py` Darwin branch passes `mitmproxy-ca.pem` (key + cert bundle) to `security add-trusted-cert`; macOS requires the cert-only file | **Fixed.** `cert.py` now uses `mitmproxy-ca-cert.pem` (cert-only PEM) on all platforms. |
+| `contextspy db-upgrade` crashed with `OperationalError: no such column: requests.session_seq` on a pre-refactor DB | New `Request` columns (`tokens_output_text`, `tokens_output_thinking`, `provider_reasoning_tokens`, `usage_extra`, `session_seq`) were added to `db/models.py` but not to `db/database.py: _migrate()`'s `new_columns` list — `create_all()` only creates missing *tables*, not missing *columns* on existing ones | **Fixed.** Added the missing entries to `new_columns`. Rule going forward: every new/changed column on an existing table must be added there (see §5.4 "Schema Migrations"). |
