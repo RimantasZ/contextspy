@@ -601,6 +601,10 @@ def help_cmd() -> None:
             "Print env-var commands to route opencode through the proxy",
         ),
         (
+            "setup-codex",
+            "Print env-var commands to route Codex CLI through the proxy",
+        ),
+        (
             "setup-python",
             "Print instructions for Python scripts using OpenAI SDK / httpx",
         ),
@@ -1082,6 +1086,66 @@ def setup_opencode() -> None:
     )
     console.print(
         "[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# setup-codex
+# ---------------------------------------------------------------------------
+
+
+@app.command("setup-codex")
+def setup_codex() -> None:
+    """Print commands to route Codex CLI through the ContextSpy proxy."""
+    from contextspy.config import Settings
+
+    settings = Settings.load()
+    port = settings.proxy.port
+
+    console.print("\n[bold cyan]Codex CLI — proxy setup[/bold cyan]\n")
+    console.print(
+        "[dim]This covers Codex CLI (the terminal tool) only — the ChatGPT desktop "
+        "app is a separate application and is not supported.[/dim]\n"
+    )
+    console.print("Preferred — launch through the ContextSpy runner:\n")
+    console.print("  contextspy run codex .\n")
+    console.print("Or set the env vars manually:\n")
+    console.print("[bold yellow]PowerShell:[/bold yellow]")
+    console.print(f'  $env:HTTPS_PROXY = "http://127.0.0.1:{port}"')
+    console.print('  $env:NO_PROXY = "github.com,localhost,127.0.0.1,::1"')
+    console.print()
+    console.print("[bold yellow]Bash / Zsh:[/bold yellow]")
+    console.print(f"  export HTTPS_PROXY=http://127.0.0.1:{port}")
+    console.print('  export NO_PROXY="github.com,localhost,127.0.0.1,::1"')
+    console.print('  export no_proxy="github.com,localhost,127.0.0.1,::1"')
+    console.print()
+    console.print(
+        "[dim]Codex doesn't read ~/.codex/.env for this — it only inherits whatever's "
+        "in the process environment when it starts, so the vars above must be exported "
+        "in the actual shell (or use contextspy run) rather than placed in that file.[/dim]"
+    )
+    console.print(
+        "[dim]Run [bold]contextspy install-cert[/bold] first if you see TLS/certificate errors.[/dim]\n"
+    )
+    console.print(
+        "[bold]If logged in via a ChatGPT plan[/bold] (not an API key), Codex may default to a "
+        "WebSocket transport for its private chatgpt.com/backend-api/codex/responses endpoint, "
+        "which ContextSpy cannot currently inspect (no WebSocket support yet — see FAQ). "
+        "If requests show status 101 or are missing token data, add this to "
+        "[bold]~/.codex/config.toml[/bold] to force plain HTTPS instead:\n"
+    )
+    console.print('  model_provider = "chatgpt_http"')
+    console.print()
+    console.print("  [model_providers.chatgpt_http]", markup=False)
+    console.print('  name = "ChatGPT HTTP"')
+    console.print('  base_url = "https://chatgpt.com/backend-api/codex"')
+    console.print('  wire_api = "responses"')
+    console.print("  requires_openai_auth = true")
+    console.print("  supports_websockets = false")
+    console.print()
+    console.print(
+        "[dim]This keeps your existing ChatGPT-plan login (no API key needed). It's a "
+        "community workaround, not an officially documented Codex option, so results may vary.[/dim]\n"
     )
 
 

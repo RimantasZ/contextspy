@@ -53,6 +53,7 @@ they don't modify any config files.
 contextspy setup-copilot       VS Code / GitHub Copilot proxy settings
 contextspy setup-claude        Claude CLI / Claude Code env vars
 contextspy setup-opencode      opencode env vars
+contextspy setup-codex         Codex CLI env vars (terminal tool only, not the ChatGPT desktop app)
 contextspy setup-llamaserver   config.toml snippet + client URL for llama-server
 contextspy setup-ollama        config.toml snippet + client URL for Ollama
 contextspy setup-vllm          config.toml snippet + client URL for vLLM

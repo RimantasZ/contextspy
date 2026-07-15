@@ -50,6 +50,12 @@ _HOST_PROVIDER: list[tuple[str, str]] = [
     # Anthropic/OpenAI wire format. Dispatch is endpoint-based, so the gateway path
     # (/zen/v1/messages, /zen/v1/chat/completions) is parsed by the right parser.
     ("opencode.ai", "opencode_zen"),
+    # Codex CLI authenticated via a ChatGPT plan (rather than an OPENAI_API_KEY)
+    # sends its actual completions to the undocumented chatgpt.com/backend-api/codex/responses
+    # endpoint instead of api.openai.com. Host mapping is broad (chatgpt.com serves lots of
+    # non-LLM traffic — analytics-events, wham/usage, otlp/metrics) but that's fine: the
+    # endpoint-pattern gate in _save_request/get_adapter still filters those out.
+    ("chatgpt.com", "openai_chatgpt"),
 ]
 _OLLAMA_PORTS = {11434}
 
@@ -108,7 +114,7 @@ class ContextSpyAddon:
     def responseheaders(self, flow: http.HTTPFlow) -> None:
         if flow.response is None:
             return
-        ct = flow.response.headers.get("content-type", "")
+        ct = flow.response.headers.get("content-type", "").lower()
         if "text/event-stream" not in ct:
             return
         # SSE streaming response — buffer all chunks, process when stream ends
@@ -210,26 +216,33 @@ class ContextSpyAddon:
                 logger.warning("Adapter parse error (sse): %s", exc, exc_info=True)
 
         # Store a clean synthetic JSON response (not raw SSE with all data: lines)
-        if analyzed is not None:
-            synthetic: dict = {
-                "choices": [{
-                    "message": {"role": "assistant", "content": analyzed.response_text},
-                    "finish_reason": "stop",
-                }],
-            }
-            if analyzed.model:
-                synthetic["model"] = analyzed.model
-            if analyzed.usage.input_tokens is not None or analyzed.usage.output_tokens is not None:
-                synthetic["usage"] = {
-                    "prompt_tokens": analyzed.usage.input_tokens,
-                    "completion_tokens": analyzed.usage.output_tokens,
-                }
-            raw_resp_text: str = json.dumps(synthetic, ensure_ascii=False)
-        else:
-            raw_resp_text = raw_sse.decode("utf-8", errors="replace")
+        raw_resp_text = self._synthetic_response_text(
+            analyzed, raw_sse.decode("utf-8", errors="replace")
+        )
 
         self._save_request(flow, provider, agent, endpoint, req_body, analyzed,
                            duration_ms, raw_resp_text, ttft_ms=ttft_ms)
+
+    @staticmethod
+    def _synthetic_response_text(analyzed: AnalyzedRequest | None, fallback: str) -> str:
+        """Build a clean synthetic JSON response from parsed SSE output (not raw
+        SSE with all ``data:`` lines), falling back to the raw text if parsing failed."""
+        if analyzed is None:
+            return fallback
+        synthetic: dict = {
+            "choices": [{
+                "message": {"role": "assistant", "content": analyzed.response_text},
+                "finish_reason": "stop",
+            }],
+        }
+        if analyzed.model:
+            synthetic["model"] = analyzed.model
+        if analyzed.usage.input_tokens is not None or analyzed.usage.output_tokens is not None:
+            synthetic["usage"] = {
+                "prompt_tokens": analyzed.usage.input_tokens,
+                "completion_tokens": analyzed.usage.output_tokens,
+            }
+        return json.dumps(synthetic, ensure_ascii=False)
 
     def _handle_response(self, flow: http.HTTPFlow) -> None:
         if flow.response is None:
@@ -248,10 +261,20 @@ class ContextSpyAddon:
             req_body = json.loads(flow.request.get_text() or "{}")
         except json.JSONDecodeError:
             req_body = {}
-        try:
-            resp_body = json.loads(flow.response.get_text() or "{}")
-        except json.JSONDecodeError:
-            resp_body = {}
+
+        resp_text = flow.response.get_text() or ""
+        # Some providers (e.g. Codex's chatgpt.com/backend-api/codex backend) send
+        # SSE-formatted bodies without a recognizable "text/event-stream" content-type,
+        # so responseheaders() never routes them through the streaming buffer path —
+        # falling back to json.loads() here would silently drop all output/usage data.
+        resp_head = resp_text.lstrip()
+        is_sse = resp_head.startswith("data:") or resp_head.startswith("event:")
+        resp_body: dict = {}
+        if not is_sse:
+            try:
+                resp_body = json.loads(resp_text or "{}")
+            except json.JSONDecodeError:
+                resp_body = {}
 
         duration_ms: int | None = None
         if "ts_start" in flow.metadata:
@@ -262,7 +285,10 @@ class ContextSpyAddon:
         if adapter is not None:
             try:
                 input_blocks, tool_call_map = adapter.parse_request(req_body)
-                output_blocks, usage = adapter.parse_response(resp_body)
+                if is_sse:
+                    output_blocks, usage = adapter.parse_sse(resp_text.encode("utf-8"))
+                else:
+                    output_blocks, usage = adapter.parse_response(resp_body)
                 analyzed = AnalyzedRequest(
                     model=req_body.get("model"),
                     input_blocks=input_blocks,
@@ -273,8 +299,11 @@ class ContextSpyAddon:
             except Exception as exc:
                 logger.warning("Adapter parse error: %s", exc, exc_info=True)
 
+        raw_resp_text = (
+            self._synthetic_response_text(analyzed, resp_text) if is_sse else resp_text
+        )
         self._save_request(flow, provider, agent, endpoint, req_body, analyzed,
-                           duration_ms, flow.response.get_text() if flow.response else None)
+                           duration_ms, raw_resp_text)
 
     def _save_request(self, flow: http.HTTPFlow, provider: str, agent: str,
                       endpoint: str, req_body: dict, analyzed: AnalyzedRequest | None,

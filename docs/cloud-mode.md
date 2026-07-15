@@ -136,6 +136,52 @@ $env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
 contextspy setup-opencode
 ```
 
+### Codex CLI
+
+> This section covers **Codex CLI** (the terminal tool) only. The ChatGPT desktop app is a
+> separate application and is not supported by ContextSpy.
+
+```bash
+# Preferred
+contextspy run codex .
+
+# Or manually (macOS / Linux)
+export HTTPS_PROXY=http://127.0.0.1:8888
+export NO_PROXY="github.com,localhost,127.0.0.1,::1"
+
+# PowerShell
+$env:HTTPS_PROXY = "http://127.0.0.1:8888"
+$env:NO_PROXY = "github.com,localhost,127.0.0.1,::1"
+```
+
+> Codex does not read `~/.codex/.env` for proxy settings — it only inherits whatever is
+> already in the process environment when it starts. Export the variables in the shell
+> that launches `codex` (or use `contextspy run codex`), not a dotfile.
+
+If you're logged in via a **ChatGPT plan** (rather than an API key), Codex may default to a
+WebSocket transport for its private `chatgpt.com/backend-api/codex/responses` endpoint.
+ContextSpy does not currently inspect WebSocket traffic (see the [FAQ](faq.md)), so requests
+over that transport show up with status `101` and no token data. To force Codex onto plain
+HTTPS instead, add this to `~/.codex/config.toml`:
+
+```toml
+model_provider = "chatgpt_http"
+
+[model_providers.chatgpt_http]
+name = "ChatGPT HTTP"
+base_url = "https://chatgpt.com/backend-api/codex"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = false
+```
+
+This keeps your existing ChatGPT-plan login (no API key needed). It's a community workaround,
+not an officially documented Codex option, so results may vary.
+
+```bash
+contextspy setup-codex
+```
+
 ### Python / OpenAI SDK / httpx scripts
 
 ```python

@@ -49,6 +49,7 @@ contextspy start
 contextspy run opencode <path to your project>
 # contextspy run code <path to your project>
 # contextspy run claude # run in the drectory of your project
+# contextspy run codex  # run in the directory of your project (Codex CLI, not the desktop app)
 ```
 Open http://127.0.0.1:5173 in your browser for the ContextSpy dashboard.
 

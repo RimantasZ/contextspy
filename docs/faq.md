@@ -65,6 +65,24 @@ Some agents batch or internally deduplicate requests before sending them to the 
 - For VS Code extensions, the proxy must be set in VS Code's own settings (`"http.proxy"`), not just a shell variable — extensions don't inherit shell environment reliably.
 - For local mode, confirm the agent's `base_url` points to the reverse proxy port (default `http://127.0.0.1:8889`), not directly to the LLM server.
 
+### Does ContextSpy support WebSocket-based traffic?
+
+Not yet. ContextSpy's proxy addon only hooks mitmproxy's `request`/`responseheaders`/`response`
+events — there's no `websocket_message` handler, so once a connection upgrades to a WebSocket
+(HTTP status `101`), none of the frames exchanged over it are inspected or stored. If an agent
+or provider uses WebSockets for its actual completion calls, those requests will show up with
+status `101` and no token data (or won't show up at all).
+
+The concrete case we've seen this affect: **Codex CLI**, when authenticated via a ChatGPT plan
+(rather than an API key), can default to a WebSocket transport for its private
+`chatgpt.com/backend-api/codex/responses` endpoint. `contextspy setup-codex` documents a
+config.toml workaround that forces Codex onto plain HTTPS instead, which ContextSpy captures
+normally. This is scoped to **Codex CLI specifically** — it has nothing to do with, and doesn't
+extend support to, the separate ChatGPT desktop app, which ContextSpy does not target at all.
+
+Proper WebSocket capture is a real gap (worth fixing generally, not just for Codex) but isn't
+implemented yet.
+
 ### Port 8888 (or 5173) is already in use
 
 Use the `--proxy-port` and `--web-port` flags:
@@ -146,6 +164,9 @@ ContextSpy has tested setup helpers for:
 - Claude CLI / Claude Code (`contextspy setup-claude`)
 - GitHub Copilot in VS Code (`contextspy setup-copilot`)
 - opencode (`contextspy setup-opencode`)
+- Codex CLI (`contextspy setup-codex`) — terminal tool only, not the ChatGPT desktop app;
+  see [WebSocket support](#does-contextspy-support-websocket-based-traffic) for a caveat on
+  ChatGPT-plan auth
 - llama-server / llama.cpp (`contextspy setup-llamaserver`)
 - Ollama (`contextspy setup-ollama`)
 - vLLM (`contextspy setup-vllm`)
