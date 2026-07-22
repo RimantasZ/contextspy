@@ -80,6 +80,11 @@ _UA_AGENTS: list[tuple[str, str]] = [
     ("openai-python", "openai_sdk"),
     ("opencode", "opencode"),
     ("cursor", "cursor"),
+    ("codex-tui", "codex"),
+    ("codex desktop", "codex"),
+    ("codex_cli_rs", "codex"),
+    ("claude-code", "claude_code"),
+    ("claude-cli", "claude_code")
 ]
 
 
@@ -88,6 +93,7 @@ def _detect_agent(user_agent: str) -> str:
     for pattern, agent in _UA_AGENTS:
         if pattern in ua_lower:
             return agent
+    print(f"lower agent: {ua_lower}")
     return "unknown"
 
 
