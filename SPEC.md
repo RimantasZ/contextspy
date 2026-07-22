@@ -797,6 +797,8 @@ Determined by partial case-insensitive matching against the `User-Agent` request
 | `openai-python` | `openai_sdk` |
 | `opencode` | `opencode` |
 | `cursor` | `cursor` |
+| `codex-tui`, `codex desktop`, or `codex_cli_rs` | `codex` |
+| `claude-code` or `claude-cli` | `claude_code` |
 | no match | `unknown` |
 
 **Drawbacks:** User-Agent is not guaranteed to be set, is not authenticated, and multiple tools using the same SDK will share the same `agent` label. The `agent` field is informational only; it does not affect analysis or storage logic.
@@ -1062,7 +1064,6 @@ When `contextspy start-local` is called:
   hash equality — the diffing UI/logic itself is not yet built.
 - **opencode User-Agent:** Confirm the User-Agent string once opencode is available for testing.
 - **Re-tokenisation:** Add an API endpoint to re-count tokens for historical requests using a different tokenizer, without re-capturing.
-- **Claude Code agent detection:** Claude Code does not set a distinctive `User-Agent`; requests currently show `agent = "unknown"`. A future heuristic (e.g. header fingerprinting or process-level detection) could improve this.
 
 ## 13. Known Issues & Resolved Bugs
 
