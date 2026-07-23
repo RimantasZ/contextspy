@@ -93,7 +93,7 @@ def _detect_agent(user_agent: str) -> str:
     for pattern, agent in _UA_AGENTS:
         if pattern in ua_lower:
             return agent
-    print(f"lower agent: {ua_lower}")
+    logger.debug("unmatched user-agent: %r", ua_lower)
     return "unknown"
 
 
@@ -121,6 +121,11 @@ class ContextSpyAddon:
         if flow.response is None:
             return
         ct = flow.response.headers.get("content-type", "").lower()
+        logger.debug(
+            "HOOK responseheaders: %s %s status=%s content-type=%r",
+            flow.request.pretty_host, flow.request.path[:60],
+            flow.response.status_code, ct,
+        )
         if "text/event-stream" not in ct:
             return
         # SSE streaming response — buffer all chunks, process when stream ends
@@ -256,6 +261,10 @@ class ContextSpyAddon:
         host = flow.request.pretty_host
         port = flow.request.port
         provider = self._get_provider(host, port)
+        logger.debug(
+            "HOOK response: %s %s status=%s provider=%s",
+            host, flow.request.path[:60], flow.response.status_code, provider,
+        )
         if provider is None:
             return
 
@@ -287,6 +296,11 @@ class ContextSpyAddon:
             duration_ms = int((time.monotonic() - flow.metadata["ts_start"]) * 1000)
 
         adapter = get_adapter(endpoint)
+        logger.debug(
+            "response body: len=%d is_sse=%s head=%r adapter=%s",
+            len(resp_text), is_sse, resp_head[:80],
+            type(adapter).__name__ if adapter else None,
+        )
         analyzed: AnalyzedRequest | None = None
         if adapter is not None:
             try:
