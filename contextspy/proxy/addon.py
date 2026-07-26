@@ -297,9 +297,8 @@ class ContextSpyAddon:
 
         adapter = get_adapter(endpoint)
         logger.debug(
-            "response body: len=%d is_sse=%s head=%r adapter=%s",
-            len(resp_text), is_sse, resp_head[:80],
-            type(adapter).__name__ if adapter else None,
+            "response body: len=%d is_sse=%s adapter=%s",
+            len(resp_text), is_sse, type(adapter).__name__ if adapter else None,
         )
         analyzed: AnalyzedRequest | None = None
         if adapter is not None:
