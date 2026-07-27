@@ -158,25 +158,15 @@ $env:NO_PROXY = "github.com,localhost,127.0.0.1,::1"
 > already in the process environment when it starts. Export the variables in the shell
 > that launches `codex` (or use `contextspy run codex`), not a dotfile.
 
-If you're logged in via a **ChatGPT plan** (rather than an API key), Codex may default to a
+If you're logged in via a **ChatGPT plan** (rather than an API key), Codex defaults to a
 WebSocket transport for its private `chatgpt.com/backend-api/codex/responses` endpoint.
-ContextSpy does not currently inspect WebSocket traffic (see the [FAQ](faq.md)), so requests
-over that transport show up with status `101` and no token data. To force Codex onto plain
-HTTPS instead, add this to `~/.codex/config.toml`:
+ContextSpy captures this natively (see the [FAQ](faq.md)) — those turns show up in the dashboard
+with a **WS** badge instead of an HTTP status code, with token counts and category breakdown
+populated the same as any other request. No config changes are needed.
 
-```toml
-model_provider = "chatgpt_http"
-
-[model_providers.chatgpt_http]
-name = "ChatGPT HTTP"
-base_url = "https://chatgpt.com/backend-api/codex"
-wire_api = "responses"
-requires_openai_auth = true
-supports_websockets = false
-```
-
-This keeps your existing ChatGPT-plan login (no API key needed). It's a community workaround,
-not an officially documented Codex option, so results may vary.
+> If you previously added a `chatgpt_http` `model_provider` block to `~/.codex/config.toml` to
+> force plain HTTPS (a community workaround for the earlier lack of WebSocket support), it's no
+> longer needed and can be removed. It still works if left in place.
 
 ```bash
 contextspy setup-codex

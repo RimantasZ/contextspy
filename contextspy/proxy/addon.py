@@ -17,6 +17,7 @@ import json
 import gzip
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 import uuid
@@ -24,10 +25,11 @@ import uuid
 from mitmproxy import http
 
 from contextspy.analysis.adapters import get_adapter
-from contextspy.analysis.blocks import AnalyzedRequest
+from contextspy.analysis.blocks import AnalyzedRequest, Usage
 from contextspy.analysis.classifier import CategoryBreakdown, classify, per_tool_tokens
 from contextspy.db import crud
 from contextspy.db.database import get_db
+from contextspy.proxy.ws_protocols import CompletedExchange, WsSession, get_ws_protocol
 
 if TYPE_CHECKING:
     from contextspy.api.websocket import ConnectionManager
@@ -101,12 +103,26 @@ def _detect_agent(user_agent: str) -> str:
 # Addon
 # ---------------------------------------------------------------------------
 
+@dataclass
+class _WsFlowState:
+    """Per-connection state for the lifetime of one WebSocket flow."""
+
+    session: WsSession
+    provider: str
+    agent: str
+    endpoint: str
+
+
 class ContextSpyAddon:
     def __init__(self, provider_override: str | None = None) -> None:
         self.ws_manager: ConnectionManager | None = None
         # When set, skip host-based detection and always use this provider.
         # Used by reverse-proxy mode where the upstream is a known local server.
         self._provider_override = provider_override
+        # Keyed by flow.id — hooks run on the addon's own DumpMaster event loop
+        # (single-threaded), so no locking is needed around this dict.
+        self._ws_flows: dict[str, _WsFlowState] = {}
+        self._warned_no_parse_events: set[str] = set()
 
     def _get_provider(self, host: str, port: int) -> str | None:
         if self._provider_override is not None:
@@ -155,6 +171,8 @@ class ContextSpyAddon:
         flow.response.stream = _collect
 
     def response(self, flow: http.HTTPFlow) -> None:
+        if flow.websocket is not None:
+            return  # the 101 upgrade response itself — real traffic goes through the ws_* hooks
         if flow.metadata.get("is_sse"):
             return  # handled by the SSE stream callback
         try:
@@ -231,8 +249,12 @@ class ContextSpyAddon:
             analyzed, raw_sse.decode("utf-8", errors="replace")
         )
 
-        self._save_request(flow, provider, agent, endpoint, req_body, analyzed,
-                           duration_ms, raw_resp_text, ttft_ms=ttft_ms)
+        self._save_request(
+            provider=provider, agent=agent, endpoint=endpoint, req_body=req_body,
+            analyzed=analyzed, duration_ms=duration_ms, raw_resp_text=raw_resp_text,
+            status_code=flow.response.status_code if flow.response else None,
+            raw_request_body=flow.request.get_text(), ttft_ms=ttft_ms,
+        )
 
     @staticmethod
     def _synthetic_response_text(analyzed: AnalyzedRequest | None, fallback: str) -> str:
@@ -321,13 +343,18 @@ class ContextSpyAddon:
         raw_resp_text = (
             self._synthetic_response_text(analyzed, resp_text) if is_sse else resp_text
         )
-        self._save_request(flow, provider, agent, endpoint, req_body, analyzed,
-                           duration_ms, raw_resp_text)
+        self._save_request(
+            provider=provider, agent=agent, endpoint=endpoint, req_body=req_body,
+            analyzed=analyzed, duration_ms=duration_ms, raw_resp_text=raw_resp_text,
+            status_code=flow.response.status_code if flow.response else None,
+            raw_request_body=flow.request.get_text(),
+        )
 
-    def _save_request(self, flow: http.HTTPFlow, provider: str, agent: str,
-                      endpoint: str, req_body: dict, analyzed: AnalyzedRequest | None,
-                      duration_ms: int | None, raw_resp_text: str | None,
-                      ttft_ms: int | None = None) -> None:
+    def _save_request(self, *, provider: str, agent: str, endpoint: str, req_body: dict,
+                      analyzed: AnalyzedRequest | None, duration_ms: int | None,
+                      raw_resp_text: str | None, status_code: int | None,
+                      raw_request_body: str | None, ttft_ms: int | None = None,
+                      transport: str = "http") -> None:
         # Skip non-LLM endpoints (telemetry, auth, health checks, etc.)
         # Only persist requests that we could actually parse OR that look like
         # known LLM API paths so telemetry traffic is not stored as empty rows.
@@ -371,14 +398,15 @@ class ContextSpyAddon:
                 "endpoint": endpoint,
                 "duration_ms": duration_ms,
                 "ttft_ms": ttft_ms,
-                "status_code": flow.response.status_code if flow.response else None,
+                "status_code": status_code,
+                "transport": transport,
                 "provider_input_tokens": provider_input,
                 "provider_output_tokens": provider_output,
                 "provider_reasoning_tokens": provider_reasoning,
                 "cache_read_tokens": cache_read,
                 "cache_creation_tokens": cache_creation,
                 "usage_extra": usage_extra,
-                "raw_request_body": flow.request.get_text(),
+                "raw_request_body": raw_request_body,
                 "raw_response_body": raw_resp_text,
             }
             data.update(breakdown.to_db_fields())
@@ -419,3 +447,147 @@ class ContextSpyAddon:
                 )
             except Exception as exc:
                 logger.debug("WebSocket broadcast error: %s", exc)
+
+    # -------------------------------------------------------------------
+    # WebSocket transport (e.g. Codex CLI over chatgpt.com)
+    # -------------------------------------------------------------------
+
+    def websocket_start(self, flow: http.HTTPFlow) -> None:
+        host = flow.request.pretty_host
+        port = flow.request.port
+        provider = self._get_provider(host, port)
+        if provider is None:
+            return  # not an LLM host
+
+        protocol = get_ws_protocol(host, flow.request.path)
+        if protocol is None:
+            logger.info(
+                "WS connection to known provider %s has no registered WS protocol: %s%s",
+                provider, host, flow.request.path,
+            )
+            return
+
+        user_agent = flow.request.headers.get("user-agent", "")
+        originator = flow.request.headers.get("originator", "")
+        agent = _detect_agent(f"{user_agent} {originator}".strip())
+        self._ws_flows[flow.id] = _WsFlowState(
+            session=protocol.new_session(), provider=provider, agent=agent,
+            endpoint=flow.request.path,
+        )
+        logger.debug(
+            "HOOK websocket_start: %s %s provider=%s agent=%s protocol=%s",
+            host, flow.request.path[:60], provider, agent, protocol.protocol_id,
+        )
+
+    def websocket_message(self, flow: http.HTTPFlow) -> None:
+        state = self._ws_flows.get(flow.id)
+        if state is None or flow.websocket is None or not flow.websocket.messages:
+            return
+
+        message = flow.websocket.messages[-1]
+        try:
+            exchanges = state.session.on_message(
+                from_client=message.from_client,
+                content=message.content,
+                is_text=message.is_text,
+                timestamp=message.timestamp,
+            )
+        except Exception as exc:
+            logger.warning("WS session.on_message error: %s", exc, exc_info=True)
+            exchanges = []
+
+        # Bound memory on long-lived, pooled connections — forwarding already
+        # happened via a local variable inside mitmproxy's websocket layer, so
+        # trimming the flow's own message history here is safe.
+        del flow.websocket.messages[:-1]
+
+        for exchange in exchanges:
+            try:
+                self._handle_ws_exchange(state, exchange)
+            except Exception as exc:
+                logger.warning("WS exchange handling error: %s", exc, exc_info=True)
+
+    def websocket_end(self, flow: http.HTTPFlow) -> None:
+        state = self._ws_flows.pop(flow.id, None)
+        if state is None:
+            return
+        try:
+            exchanges = state.session.on_close()
+        except Exception as exc:
+            logger.warning("WS session.on_close error: %s", exc, exc_info=True)
+            exchanges = []
+        for exchange in exchanges:
+            try:
+                self._handle_ws_exchange(state, exchange)
+            except Exception as exc:
+                logger.warning("WS exchange handling error: %s", exc, exc_info=True)
+
+    def error(self, flow: http.HTTPFlow) -> None:
+        # Belt-and-braces: mitmproxy errors (e.g. connection reset mid-turn) don't
+        # always fire websocket_end for a tracked flow — flush any dangling exchange.
+        if flow.id in self._ws_flows:
+            self.websocket_end(flow)
+
+    def _handle_ws_exchange(self, state: _WsFlowState, ex: CompletedExchange) -> None:
+        adapter = get_adapter(state.endpoint)
+        analyzed: AnalyzedRequest | None = None
+
+        if adapter is not None:
+            try:
+                input_blocks, tool_call_map = adapter.parse_request(ex.request_body)
+            except Exception as exc:
+                logger.warning("WS adapter parse_request error: %s", exc, exc_info=True)
+                input_blocks, tool_call_map = [], {}
+
+            try:
+                output_blocks, usage = adapter.parse_events(ex.events)
+            except NotImplementedError:
+                if adapter.format_id not in self._warned_no_parse_events:
+                    self._warned_no_parse_events.add(adapter.format_id)
+                    logger.warning(
+                        "WS: %s adapter has no event-level parser; output tokens unavailable",
+                        adapter.format_id,
+                    )
+                output_blocks, usage = [], Usage()
+            except Exception as exc:
+                logger.warning("WS adapter parse_events error: %s", exc, exc_info=True)
+                output_blocks, usage = [], Usage()
+
+            if ex.error:
+                usage.extra["ws_error"] = ex.error
+            if not ex.complete:
+                usage.extra["ws_incomplete"] = True
+
+            analyzed = AnalyzedRequest(
+                model=ex.request_body.get("model"),
+                input_blocks=input_blocks,
+                output_blocks=output_blocks,
+                usage=usage,
+                tool_call_map=tool_call_map,
+            )
+
+        duration_ms: int | None = None
+        if ex.request_ts is not None and ex.last_event_ts is not None:
+            duration_ms = int((ex.last_event_ts - ex.request_ts) * 1000)
+
+        ttft_ms: int | None = None
+        if ex.request_ts is not None and ex.first_event_ts is not None:
+            ttft_ms = int((ex.first_event_ts - ex.request_ts) * 1000)
+
+        raw_resp_text = self._synthetic_response_text(
+            analyzed, json.dumps(ex.events, ensure_ascii=False)
+        )
+
+        self._save_request(
+            provider=state.provider,
+            agent=state.agent,
+            endpoint=state.endpoint,
+            req_body=ex.request_body,
+            analyzed=analyzed,
+            duration_ms=duration_ms,
+            raw_resp_text=raw_resp_text,
+            status_code=(ex.error or {}).get("status"),
+            raw_request_body=ex.raw_request_text,
+            ttft_ms=ttft_ms,
+            transport="websocket",
+        )

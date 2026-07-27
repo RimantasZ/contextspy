@@ -1,5 +1,17 @@
 # What's New
 
+## Unreleased
+
+### New features
+- **Native WebSocket capture** — Codex CLI's ChatGPT-plan auth uses a WebSocket transport for its
+  private `chatgpt.com/backend-api/codex/responses` endpoint; ContextSpy now inspects it directly
+  instead of requiring the `chatgpt_http` config.toml workaround (see `contextspy setup-codex`).
+  WS turns are recorded with a new `transport` column and show a **WS** badge in the dashboard.
+  Adding a new WS-speaking provider is a one-module addition (`proxy/ws_protocols/`), mirroring
+  how wire-format adapters work for HTTP.
+- Codex agent detection now also covers the WebSocket transport (via the `originator` header),
+  alongside the existing User-Agent-based detection over HTTP.
+
 ## v0.3.0
 
 ### New features

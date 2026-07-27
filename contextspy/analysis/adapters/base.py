@@ -44,6 +44,17 @@ class WireFormatAdapter(ABC):
     def parse_sse(self, raw: bytes) -> tuple[list[Block], Usage]:
         """Return (output_blocks, usage) reconstructed from a raw streaming response."""
 
+    def parse_events(self, events: list[dict]) -> tuple[list[Block], Usage]:
+        """Return (output_blocks, usage) from already-decoded events (no SSE framing).
+
+        Used by transports that deliver discrete event objects directly (e.g.
+        WebSocket text frames) rather than an SSE byte stream. Not abstract —
+        adapters without an event-level parser (Anthropic, OpenAI Chat, Ollama)
+        don't need a stub; callers should catch NotImplementedError and degrade
+        gracefully (e.g. the WS addon path).
+        """
+        raise NotImplementedError(f"{self.format_id} has no event-level parser")
+
 
 REGISTRY: list[WireFormatAdapter] = []
 
@@ -62,6 +73,26 @@ def get_adapter(endpoint: str) -> WireFormatAdapter | None:
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+def extract_sse_events(raw: bytes) -> list[dict]:
+    """Decode an SSE byte stream's ``data: `` lines into a list of event dicts.
+
+    Tolerant of blank lines, ``[DONE]`` sentinels, and malformed JSON (skipped).
+    """
+    text_data = raw.decode("utf-8", errors="replace")
+    events: list[dict] = []
+    for line in text_data.splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            events.append(json.loads(payload))
+        except json.JSONDecodeError:
+            continue
+    return events
+
 
 def flatten_content(content: Any) -> str:
     """Flatten a provider content value (str, or list of content-part dicts) to text.

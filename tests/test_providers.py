@@ -28,6 +28,7 @@ import pytest
 
 from contextspy.analysis.adapters import get_adapter
 from contextspy.analysis.adapters.anthropic import AnthropicAdapter
+from contextspy.analysis.adapters.base import extract_sse_events
 from contextspy.analysis.adapters.ollama import OllamaAdapter
 from contextspy.analysis.adapters.openai_chat import OpenAIChatAdapter
 from contextspy.analysis.adapters.openai_responses import OpenAIResponsesAdapter
@@ -325,6 +326,40 @@ def _make_openai_responses_sse(
     lines = ["data: " + json.dumps(e, separators=(",", ":")) for e in events]
     lines.append("data: [DONE]")
     return "\n".join(lines).encode()
+
+
+# ---------------------------------------------------------------------------
+# extract_sse_events (shared SSE-framing helper, used by parse_sse + WS parse_events)
+# ---------------------------------------------------------------------------
+
+class TestExtractSseEvents:
+    def test_data_lines_parsed(self):
+        raw = b'data: {"type": "a"}\n\ndata: {"type": "b"}\n\n'
+        events = extract_sse_events(raw)
+        assert events == [{"type": "a"}, {"type": "b"}]
+
+    def test_done_sentinel_skipped(self):
+        raw = b'data: {"type": "a"}\n\ndata: [DONE]\n\n'
+        events = extract_sse_events(raw)
+        assert events == [{"type": "a"}]
+
+    def test_blank_lines_skipped(self):
+        raw = b'\n\ndata: {"type": "a"}\n\n\n'
+        events = extract_sse_events(raw)
+        assert events == [{"type": "a"}]
+
+    def test_bad_json_skipped(self):
+        raw = b'data: not json\n\ndata: {"type": "a"}\n\n'
+        events = extract_sse_events(raw)
+        assert events == [{"type": "a"}]
+
+    def test_empty_input(self):
+        assert extract_sse_events(b"") == []
+
+    def test_non_data_lines_ignored(self):
+        raw = b'event: message_start\n\ndata: {"type": "a"}\n\n'
+        events = extract_sse_events(raw)
+        assert events == [{"type": "a"}]
 
 
 # ---------------------------------------------------------------------------
@@ -745,6 +780,15 @@ class TestOpenAIResponsesAdapter:
         assert blocks == []
         assert usage.input_tokens is None
 
+    def test_parse_events_equivalent_to_parse_sse(self):
+        raw = _make_openai_responses_sse(text="Hello world", input_tokens=20, output_tokens=42)
+        sse_blocks, sse_usage = self.adapter.parse_sse(raw)
+        events = extract_sse_events(raw)
+        event_blocks, event_usage = self.adapter.parse_events(events)
+        assert [b.content for b in sse_blocks] == [b.content for b in event_blocks]
+        assert [b.block_type for b in sse_blocks] == [b.block_type for b in event_blocks]
+        assert sse_usage == event_usage
+
     def test_opencode_zen_responses_path(self):
         raw = _make_openai_responses_sse(text="Hi", input_tokens=10, output_tokens=3)
         adapter = get_adapter("/zen/v1/responses")
@@ -1087,6 +1131,49 @@ class TestBlockPersistence:
 
 
 # ---------------------------------------------------------------------------
+# transport column (native WS capture)
+# ---------------------------------------------------------------------------
+
+class TestTransportColumn:
+    def test_websocket_transport_round_trips(self, tmp_path):
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+
+        init_db(tmp_path / "transport.db")
+        with get_db() as db:
+            req = crud.create_request(db, {
+                "id": "req-ws", "timestamp": datetime.now(timezone.utc),
+                "provider": "openai_chatgpt", "endpoint": "/backend-api/codex/responses",
+                "transport": "websocket",
+            })
+            assert req.transport == "websocket"
+
+        with get_db() as db:
+            fetched = crud.get_request(db, "req-ws")
+            assert fetched.transport == "websocket"
+            assert fetched.to_dict()["transport"] == "websocket"
+
+    def test_transport_defaults_to_http_when_omitted(self, tmp_path):
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+
+        init_db(tmp_path / "transport_default.db")
+        with get_db() as db:
+            req = crud.create_request(db, {
+                "id": "req-http", "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            assert req.transport == "http"
+
+    def test_init_db_twice_is_idempotent(self, tmp_path):
+        from contextspy.db.database import init_db
+
+        db_path = tmp_path / "reopen.db"
+        init_db(db_path)
+        init_db(db_path)  # migration must not raise on a DB that already has the column
+
+
+# ---------------------------------------------------------------------------
 # Provider and agent detection  (addon routing) — unchanged by this refactor
 # ---------------------------------------------------------------------------
 
@@ -1148,6 +1235,61 @@ class TestAgentDetection:
     def test_cursor(self):
         assert _detect_agent("cursor/0.42.0") == "cursor"
 
+    def test_codex_cli_rs(self):
+        assert _detect_agent("codex_cli_rs/0.46.0") == "codex"
+
     def test_unknown(self):
         assert _detect_agent("curl/7.88.1") == "unknown"
         assert _detect_agent("") == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Addon-level WS exchange persistence (no mitmproxy master needed)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not _HAS_ADDON, reason="mitmproxy not installed")
+class TestHandleWsExchange:
+    def test_persists_websocket_request(self, tmp_path):
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+        from contextspy.proxy.addon import ContextSpyAddon, _WsFlowState
+        from contextspy.proxy.ws_protocols import CompletedExchange
+
+        init_db(tmp_path / "ws_exchange.db")
+
+        request_body = {
+            "type": "response.create",
+            "model": "gpt-5-codex",
+            "input": [{"role": "user", "content": "Say hello"}],
+        }
+        events = [
+            {"type": "response.output_text.delta", "output_index": 0, "delta": "Hello world"},
+            {"type": "response.completed", "response": {
+                "model": "gpt-5-codex", "usage": {"input_tokens": 20, "output_tokens": 42},
+            }},
+        ]
+        exchange = CompletedExchange(
+            request_body=request_body,
+            raw_request_text=json.dumps(request_body),
+            events=events,
+            request_ts=1.0, first_event_ts=1.2, last_event_ts=1.5,
+        )
+        state = _WsFlowState(
+            session=None, provider="openai_chatgpt", agent="codex",
+            endpoint="/backend-api/codex/responses",
+        )
+
+        addon = ContextSpyAddon()
+        addon._handle_ws_exchange(state, exchange)
+
+        with get_db() as db:
+            rows = crud.list_requests(db)
+            assert len(rows) == 1
+            row = rows[0]
+            assert row.transport == "websocket"
+            assert row.provider == "openai_chatgpt"
+            assert row.agent == "codex"
+            assert row.status_code is None
+            assert row.duration_ms == 500
+            assert row.ttft_ms in (199, 200)
+            assert row.tokens_total_output > 0

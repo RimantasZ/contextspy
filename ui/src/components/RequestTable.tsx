@@ -26,6 +26,7 @@ const AGENT_COLORS: Record<string, string> = {
   copilot: 'bg-purple-900 text-purple-300',
   claude: 'bg-orange-900 text-orange-300',
   cursor: 'bg-blue-900 text-blue-300',
+  codex: 'bg-teal-900 text-teal-300',
   unknown: 'bg-gray-700 text-gray-400',
 };
 
@@ -78,6 +79,14 @@ function statusBadge(code: number | null) {
   return (
     <span className={`px-1.5 py-0.5 rounded text-xs font-mono font-medium ${cls}`}>
       {code}
+    </span>
+  );
+}
+
+function wsBadge() {
+  return (
+    <span className="px-1.5 py-0.5 rounded text-xs font-mono font-medium bg-indigo-900 text-indigo-300">
+      WS
     </span>
   );
 }
@@ -224,7 +233,10 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortK
                 {formatDuration(req.duration_ms)}
               </td>
               <td className="py-2 pr-3 text-right">
-                {statusBadge(req.status_code)}
+                <span className="inline-flex items-center gap-1">
+                  {req.transport === 'websocket' && wsBadge()}
+                  {statusBadge(req.status_code)}
+                </span>
               </td>
               <td className="py-2 pr-3">
                 {req.session_id && sessionMap.has(req.session_id) ? (

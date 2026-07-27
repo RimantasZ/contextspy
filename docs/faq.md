@@ -67,21 +67,23 @@ Some agents batch or internally deduplicate requests before sending them to the 
 
 ### Does ContextSpy support WebSocket-based traffic?
 
-Not yet. ContextSpy's proxy addon only hooks mitmproxy's `request`/`responseheaders`/`response`
-events — there's no `websocket_message` handler, so once a connection upgrades to a WebSocket
-(HTTP status `101`), none of the frames exchanged over it are inspected or stored. If an agent
-or provider uses WebSockets for its actual completion calls, those requests will show up with
-status `101` and no token data (or won't show up at all).
+For registered WS protocols, yes. ContextSpy's proxy addon hooks mitmproxy's
+`websocket_start`/`websocket_message`/`websocket_end` events and dispatches each connection to a
+per-provider protocol module (`proxy/ws_protocols/`) that reassembles the frame stream into the
+same request/response shape the HTTP path already produces — token counts, category breakdown,
+and dashboard broadcast all work the same way regardless of transport.
 
-The concrete case we've seen this affect: **Codex CLI**, when authenticated via a ChatGPT plan
-(rather than an API key), can default to a WebSocket transport for its private
-`chatgpt.com/backend-api/codex/responses` endpoint. `contextspy setup-codex` documents a
-config.toml workaround that forces Codex onto plain HTTPS instead, which ContextSpy captures
-normally. This is scoped to **Codex CLI specifically** — it has nothing to do with, and doesn't
-extend support to, the separate ChatGPT desktop app, which ContextSpy does not target at all.
+The concrete case this was built for: **Codex CLI**, when authenticated via a ChatGPT plan
+(rather than an API key), defaults to a WebSocket transport for its private
+`chatgpt.com/backend-api/codex/responses` endpoint. Those turns show a **WS** badge in the
+dashboard instead of an HTTP status code (WebSocket connections don't carry one per turn) — an
+error envelope from the provider is still reflected via the status field. This is scoped to
+**Codex CLI specifically** — it has nothing to do with, and doesn't extend support to, the
+separate ChatGPT desktop app, which ContextSpy does not target at all.
 
-Proper WebSocket capture is a real gap (worth fixing generally, not just for Codex) but isn't
-implemented yet.
+A WS-speaking provider with no registered protocol still shows up as an unsupported connection
+(logged, upgrade row suppressed) rather than a phantom `101` row — support for a new provider is
+a one-module addition, not a redesign. If you hit one, please open an issue.
 
 ### Port 8888 (or 5173) is already in use
 
@@ -165,8 +167,8 @@ ContextSpy has tested setup helpers for:
 - GitHub Copilot in VS Code (`contextspy setup-copilot`)
 - opencode (`contextspy setup-opencode`)
 - Codex CLI (`contextspy setup-codex`) — terminal tool only, not the ChatGPT desktop app;
-  see [WebSocket support](#does-contextspy-support-websocket-based-traffic) for a caveat on
-  ChatGPT-plan auth
+  see [WebSocket support](#does-contextspy-support-websocket-based-traffic) for how ChatGPT-plan
+  auth (WebSocket transport) is captured
 - llama-server / llama.cpp (`contextspy setup-llamaserver`)
 - Ollama (`contextspy setup-ollama`)
 - vLLM (`contextspy setup-vllm`)

@@ -1128,24 +1128,17 @@ def setup_codex() -> None:
         "[dim]Run [bold]contextspy install-cert[/bold] first if you see TLS/certificate errors.[/dim]\n"
     )
     console.print(
-        "[bold]If logged in via a ChatGPT plan[/bold] (not an API key), Codex may default to a "
-        "WebSocket transport for its private chatgpt.com/backend-api/codex/responses endpoint, "
-        "which ContextSpy cannot currently inspect (no WebSocket support yet — see FAQ). "
-        "If requests show status 101 or are missing token data, add this to "
-        "[bold]~/.codex/config.toml[/bold] to force plain HTTPS instead:\n"
+        "[bold]If logged in via a ChatGPT plan[/bold] (not an API key), Codex defaults to a "
+        "WebSocket transport for its private chatgpt.com/backend-api/codex/responses endpoint. "
+        "ContextSpy now captures this natively — those turns show a [bold]WS[/bold] badge in the "
+        "dashboard instead of an HTTP status code.\n"
     )
-    console.print('  model_provider = "chatgpt_http"')
-    console.print()
-    console.print("  [model_providers.chatgpt_http]", markup=False)
-    console.print('  name = "ChatGPT HTTP"')
-    console.print('  base_url = "https://chatgpt.com/backend-api/codex"')
-    console.print('  wire_api = "responses"')
-    console.print("  requires_openai_auth = true")
-    console.print("  supports_websockets = false")
-    console.print()
     console.print(
-        "[dim]This keeps your existing ChatGPT-plan login (no API key needed). It's a "
-        "community workaround, not an officially documented Codex option, so results may vary.[/dim]\n"
+        "[dim]Legacy fallback: if you previously added a [bold]chatgpt_http[/bold] "
+        "model_provider block to ~/.codex/config.toml to force plain HTTPS, it's no longer "
+        "needed and can be removed. It still works if you keep it (plain HTTPS is captured the "
+        "same way HTTP requests always were), but native WS capture means WebSocket transport "
+        "no longer needs a workaround.[/dim]\n"
     )
 
 

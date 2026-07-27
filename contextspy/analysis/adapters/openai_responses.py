@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import json
 
-from contextspy.analysis.adapters.base import WireFormatAdapter
+from contextspy.analysis.adapters.base import WireFormatAdapter, extract_sse_events
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
 
 
@@ -167,7 +167,9 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
     # -- SSE ---------------------------------------------------------------
 
     def parse_sse(self, raw: bytes) -> tuple[list[Block], Usage]:
-        text_data = raw.decode("utf-8", errors="replace")
+        return self.parse_events(extract_sse_events(raw))
+
+    def parse_events(self, events: list[dict]) -> tuple[list[Block], Usage]:
         input_tokens: int | None = None
         output_tokens: int | None = None
         reasoning_tokens: int | None = None
@@ -175,16 +177,7 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
         fc_by_index: dict[int, dict] = {}
         reasoning_by_index: dict[int, dict] = {}
 
-        for line in text_data.splitlines():
-            if not line.startswith("data: "):
-                continue
-            payload = line[6:].strip()
-            if not payload or payload == "[DONE]":
-                continue
-            try:
-                event = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
+        for event in events:
             etype = event.get("type", "")
 
             if etype == "response.output_text.delta":

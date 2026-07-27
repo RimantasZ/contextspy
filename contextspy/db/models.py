@@ -71,6 +71,9 @@ class Request(Base):
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ttft_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    transport: Mapped[str] = mapped_column(
+        String, nullable=False, default="http", server_default="http"
+    )
 
     # Token counts by category
     tokens_system_prompt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -122,6 +125,7 @@ class Request(Base):
             "duration_ms": self.duration_ms,
             "ttft_ms": self.ttft_ms,
             "status_code": self.status_code,
+            "transport": self.transport,
             "tokens_system_prompt": self.tokens_system_prompt,
             "tokens_tool_definitions": self.tokens_tool_definitions,
             "tokens_tool_results": self.tokens_tool_results,

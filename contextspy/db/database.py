@@ -51,6 +51,7 @@ def _migrate(engine) -> None:
         ("provider_reasoning_tokens", "INTEGER"),
         ("usage_extra", "TEXT"),
         ("session_seq", "INTEGER"),
+        ("transport", "TEXT NOT NULL DEFAULT 'http'"),
     ]
     with engine.connect() as conn:
         for col, col_type in new_columns:

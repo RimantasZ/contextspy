@@ -87,6 +87,7 @@ export default function RequestDetail() {
     { label: 'Agent', value: req.agent ?? '—' },
     { label: 'Model', value: req.model ?? '—' },
     { label: 'Status', value: req.status_code ?? '—' },
+    ...(req.transport === 'websocket' ? [{ label: 'Transport', value: 'WebSocket' as React.ReactNode }] : []),
     { label: 'Time', value: new Date(req.timestamp).toLocaleString() },
     { label: 'Duration', value: req.duration_ms != null ? `${req.duration_ms}ms` : '—' },
     { label: 'TTFT', value: req.ttft_ms != null ? `${req.ttft_ms}ms` : <span className="text-gray-500">N/A</span> },

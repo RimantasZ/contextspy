@@ -47,6 +47,7 @@ export interface Request {
   duration_ms: number | null
   ttft_ms: number | null
   status_code: number | null
+  transport: string
   tokens_system_prompt: number
   tokens_tool_definitions: number
   tokens_tool_results: number
