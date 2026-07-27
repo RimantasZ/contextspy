@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/contextspy)](https://pypi.org/project/contextspy)
 ![PyPI - Downloads](https://static.pepy.tech/badge/contextspy?period=month)
 [![license](https://img.shields.io/github/license/RimantasZ/contextspy.svg)](https://github.com/RimantasZ/contextspy/tree/main/LICENSE)
-[![issue resolution](https://img.shields.io/github/issues-closed-raw/RimantasZ/contextspy)](https://github.com/RimantasZ/contextspy/issues)
+[![issue resolution](https://img.shields.io/github/issues-closed-raw/RimantasZ/contextspy)](https://github.com/RimantasZ/contextspy/issues?q=is%3Aissue%20state%3Aclosed)
 [![open issues](https://img.shields.io/github/issues-raw/RimantasZ/contextspy)](https://github.com/RimantasZ/contextspy/issues)
 
 </div>
