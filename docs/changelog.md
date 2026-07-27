@@ -1,16 +1,26 @@
 # What's New
 
-## Unreleased
+## v0.3.2
 
 ### New features
-- **Native WebSocket capture** — Codex CLI's ChatGPT-plan auth uses a WebSocket transport for its
-  private `chatgpt.com/backend-api/codex/responses` endpoint; ContextSpy now inspects it directly
-  instead of requiring the `chatgpt_http` config.toml workaround (see `contextspy setup-codex`).
-  WS turns are recorded with a new `transport` column and show a **WS** badge in the dashboard.
-  Adding a new WS-speaking provider is a one-module addition (`proxy/ws_protocols/`), mirroring
-  how wire-format adapters work for HTTP.
+- **Native WebSocket capture** (`#17`) — Codex CLI's ChatGPT-plan auth uses a WebSocket transport
+  for its private `chatgpt.com/backend-api/codex/responses` endpoint; ContextSpy now inspects it
+  directly instead of requiring the `chatgpt_http` config.toml workaround (see
+  `contextspy setup-codex`). WS turns are recorded with a new `transport` column and show a
+  **WS** badge in the dashboard. Adding a new WS-speaking provider is a one-module addition
+  (`proxy/ws_protocols/`), mirroring how wire-format adapters work for HTTP.
 - Codex agent detection now also covers the WebSocket transport (via the `originator` header),
   alongside the existing User-Agent-based detection over HTTP.
+
+---
+
+## v0.3.1
+
+### Fixes & improvements
+- **Agent detection fixed** (`#20`) — Claude Code and Codex CLI are now correctly reported as
+  their own agents instead of falling through to `unknown`.
+- **Logging improvements** (`#21`) — more debug-level visibility into request routing and
+  response handling to make provider/agent detection issues easier to diagnose.
 
 ## v0.3.0
 
