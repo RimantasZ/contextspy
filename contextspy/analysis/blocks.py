@@ -127,3 +127,11 @@ class AnalyzedRequest:
             b.content for b in self.output_blocks
             if b.block_type == BlockType.ASSISTANT_MESSAGE and b.content
         )
+
+    @property
+    def thinking_text(self) -> str:
+        """Concatenated thinking output blocks (empty for hidden/redacted thinking)."""
+        return "\n".join(
+            b.content for b in self.output_blocks
+            if b.block_type == BlockType.THINKING and b.content
+        )

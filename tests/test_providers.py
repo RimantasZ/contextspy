@@ -691,6 +691,50 @@ class TestOpenAIChatAdapter:
         assert blocks == []
         assert tool_call_map == {}
 
+    def test_response_reasoning_content(self):
+        resp = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello world",
+                    "reasoning_content": "The user said hello, I should greet back.",
+                },
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 42},
+        }
+        blocks, _ = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert thinking and thinking[0].content == "The user said hello, I should greet back."
+
+    def test_response_hidden_reasoning_tokens_synthesized(self):
+        resp = {
+            "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 20, "completion_tokens": 42,
+                "completion_tokens_details": {"reasoning_tokens": 30},
+            },
+        }
+        blocks, usage = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert thinking and thinking[0].content == "" and thinking[0].token_count == 30
+        assert usage.reasoning_tokens == 30
+
+    def test_sse_reasoning_content_delta(self):
+        chunks = [
+            {"choices": [{"index": 0, "delta": {"reasoning_content": "Thinking "}}]},
+            {"choices": [{"index": 0, "delta": {"reasoning_content": "it over."}}]},
+            {"choices": [{"index": 0, "delta": {"content": "Hello world"}}]},
+        ]
+        lines = ["data: " + json.dumps(c) for c in chunks]
+        lines.append("data: [DONE]")
+        raw = "\n".join(lines).encode()
+        blocks, _ = self.adapter.parse_sse(raw)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        text = [b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]
+        assert thinking and thinking[0].content == "Thinking it over."
+        assert text and text[0].content == "Hello world"
+
 
 # ---------------------------------------------------------------------------
 # OpenAI Responses API adapter
@@ -865,6 +909,31 @@ class TestOllamaAdapter:
         assert blocks[0].content == "Hello world"
         assert usage.input_tokens == 20
         assert usage.output_tokens == 42
+
+    def test_response_thinking_field(self):
+        resp = {
+            "message": {"role": "assistant", "content": "Hello world", "thinking": "Let me think..."},
+            "prompt_eval_count": 20, "eval_count": 42,
+        }
+        blocks, _ = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        text = [b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]
+        assert thinking and thinking[0].content == "Let me think..."
+        assert text and text[0].content == "Hello world"
+
+    def test_sse_ndjson_thinking(self):
+        lines = [
+            json.dumps({"message": {"role": "assistant", "content": "", "thinking": "Let me "}, "done": False}),
+            json.dumps({"message": {"role": "assistant", "content": "", "thinking": "think..."}, "done": False}),
+            json.dumps({"message": {"role": "assistant", "content": "Hello world"}, "done": False}),
+            json.dumps({"done": True, "prompt_eval_count": 20, "eval_count": 42}),
+        ]
+        raw = "\n".join(lines).encode()
+        blocks, _ = self.adapter.parse_sse(raw)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        text = [b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]
+        assert thinking and thinking[0].content == "Let me think..."
+        assert text and text[0].content == "Hello world"
 
 
 # ---------------------------------------------------------------------------

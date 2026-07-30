@@ -262,9 +262,12 @@ class ContextSpyAddon:
         SSE with all ``data:`` lines), falling back to the raw text if parsing failed."""
         if analyzed is None:
             return fallback
+        message: dict = {"role": "assistant", "content": analyzed.response_text}
+        if analyzed.thinking_text:
+            message["reasoning_content"] = analyzed.thinking_text
         synthetic: dict = {
             "choices": [{
-                "message": {"role": "assistant", "content": analyzed.response_text},
+                "message": message,
                 "finish_reason": "stop",
             }],
         }

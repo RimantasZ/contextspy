@@ -47,7 +47,11 @@ class OllamaAdapter(WireFormatAdapter):
 
     def parse_response(self, resp_body: dict) -> tuple[list[Block], Usage]:
         blocks: list[Block] = []
-        content = flatten_content((resp_body.get("message") or {}).get("content", ""))
+        message = resp_body.get("message") or {}
+        thinking = flatten_content(message.get("thinking", ""))
+        if thinking:
+            blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, thinking))
+        content = flatten_content(message.get("content", ""))
         if content:
             blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, content))
         usage = Usage(
@@ -59,6 +63,7 @@ class OllamaAdapter(WireFormatAdapter):
     def parse_sse(self, raw: bytes) -> tuple[list[Block], Usage]:
         text_data = raw.decode("utf-8", errors="replace")
         content_parts: list[str] = []
+        thinking_parts: list[str] = []
         prompt_eval_count: int | None = None
         eval_count: int | None = None
         for line in text_data.splitlines():
@@ -69,15 +74,20 @@ class OllamaAdapter(WireFormatAdapter):
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            msg_content = (event.get("message") or {}).get("content")
-            if msg_content:
-                content_parts.append(msg_content)
+            message = event.get("message") or {}
+            if message.get("thinking"):
+                thinking_parts.append(message["thinking"])
+            if message.get("content"):
+                content_parts.append(message["content"])
             if event.get("prompt_eval_count") is not None:
                 prompt_eval_count = event["prompt_eval_count"]
             if event.get("eval_count") is not None:
                 eval_count = event["eval_count"]
 
         blocks: list[Block] = []
+        thinking = "".join(thinking_parts)
+        if thinking:
+            blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, thinking))
         content = "".join(content_parts)
         if content:
             blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, content))

@@ -103,8 +103,13 @@ class OpenAIChatAdapter(WireFormatAdapter):
     def parse_response(self, resp_body: dict) -> tuple[list[Block], Usage]:
         blocks: list[Block] = []
         choices = resp_body.get("choices", [])
+        saw_reasoning = False
         if choices:
             msg = choices[0].get("message") or choices[0].get("delta") or {}
+            reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
+            if reasoning:
+                saw_reasoning = True
+                blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, reasoning))
             text = flatten_content(msg.get("content", ""))
             if text:
                 blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, text))
@@ -118,10 +123,18 @@ class OpenAIChatAdapter(WireFormatAdapter):
 
         usage = resp_body.get("usage", {}) or {}
         details = usage.get("completion_tokens_details") or {}
+        reasoning_tokens = details.get("reasoning_tokens")
+        if reasoning_tokens and not saw_reasoning:
+            # Some backends report reasoning tokens in usage without ever
+            # returning the reasoning text itself — keep the tokens visible.
+            blocks.append(Block.make(
+                Direction.OUTPUT, BlockType.THINKING, "",
+                attrs={"hidden": True}, token_count=reasoning_tokens,
+            ))
         return blocks, Usage(
             input_tokens=usage.get("prompt_tokens") or usage.get("input_tokens"),
             output_tokens=usage.get("completion_tokens") or usage.get("output_tokens"),
-            reasoning_tokens=details.get("reasoning_tokens"),
+            reasoning_tokens=reasoning_tokens,
         )
 
     # -- SSE -------------------------------------------------------------------
@@ -132,6 +145,7 @@ class OpenAIChatAdapter(WireFormatAdapter):
         completion_tokens: int | None = None
         reasoning_tokens: int | None = None
         content_parts: list[str] = []
+        reasoning_parts: list[str] = []
         tool_calls_acc: dict[int, dict] = {}
 
         for line in text_data.splitlines():
@@ -149,6 +163,9 @@ class OpenAIChatAdapter(WireFormatAdapter):
                 delta = choice.get("delta", {})
                 if delta.get("content"):
                     content_parts.append(delta["content"])
+                reasoning_delta = delta.get("reasoning_content") or delta.get("reasoning")
+                if reasoning_delta:
+                    reasoning_parts.append(reasoning_delta)
                 for tc in delta.get("tool_calls") or []:
                     idx = tc.get("index", 0)
                     entry = tool_calls_acc.setdefault(idx, {"id": None, "name": None, "arguments": ""})
@@ -170,6 +187,10 @@ class OpenAIChatAdapter(WireFormatAdapter):
                 reasoning_tokens = details["reasoning_tokens"]
 
         blocks: list[Block] = []
+        response_reasoning = "".join(reasoning_parts)
+        saw_reasoning = bool(response_reasoning)
+        if response_reasoning:
+            blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, response_reasoning))
         response_content = "".join(content_parts)
         if response_content:
             blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, response_content))
@@ -178,6 +199,11 @@ class OpenAIChatAdapter(WireFormatAdapter):
             blocks.append(Block.make(
                 Direction.OUTPUT, BlockType.TOOL_CALL, entry["arguments"],
                 tool_name=entry["name"] or "", tool_call_id=entry["id"],
+            ))
+        if reasoning_tokens and not saw_reasoning:
+            blocks.append(Block.make(
+                Direction.OUTPUT, BlockType.THINKING, "",
+                attrs={"hidden": True}, token_count=reasoning_tokens,
             ))
 
         usage_obj = Usage(
