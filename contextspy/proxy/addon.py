@@ -274,10 +274,16 @@ class ContextSpyAddon:
         if analyzed.model:
             synthetic["model"] = analyzed.model
         if analyzed.usage.input_tokens is not None or analyzed.usage.output_tokens is not None:
-            synthetic["usage"] = {
+            usage: dict = {
                 "prompt_tokens": analyzed.usage.input_tokens,
                 "completion_tokens": analyzed.usage.output_tokens,
             }
+            if analyzed.usage.reasoning_tokens is not None:
+                # Surfaced even when there's no reasoning_content text to show
+                # (e.g. thinking.display: "omitted") — the token cost is real
+                # either way and would otherwise vanish from the stored JSON.
+                usage["completion_tokens_details"] = {"reasoning_tokens": analyzed.usage.reasoning_tokens}
+            synthetic["usage"] = usage
         return json.dumps(synthetic, ensure_ascii=False)
 
     def _handle_response(self, flow: http.HTTPFlow) -> None:
