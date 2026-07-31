@@ -29,6 +29,22 @@ def _cache_attrs(part: dict) -> dict:
     return {"cache_control": cc} if cc else {}
 
 
+def _attribute_hidden_thinking_tokens(blocks: list[Block], reasoning_tokens: int | None) -> None:
+    """Anthropic bills thinking tokens even when the text is withheld: redacted
+    (safety) or omitted (``thinking.display: "omitted"``, the default on the
+    newest models). Either way the block's own content is "" so Block.make
+    gives it token_count=0 — attribute the provider-reported total onto one
+    such block so it survives into the breakdown instead of reading as free.
+    """
+    if not reasoning_tokens:
+        return
+    hidden = [b for b in blocks if b.block_type == BlockType.THINKING and not b.content]
+    if not hidden or sum(b.token_count for b in hidden):
+        return
+    hidden[0].token_count = reasoning_tokens
+    hidden[0].attrs["hidden"] = True
+
+
 class AnthropicAdapter(WireFormatAdapter):
     format_id = "anthropic"
     endpoint_patterns = ("/messages",)
@@ -118,10 +134,13 @@ class AnthropicAdapter(WireFormatAdapter):
                     blocks.append(b)
                     pending_tool_results.append(b)
                 elif ptype == "thinking":
+                    thinking_text = part.get("thinking", "")
                     if part.get("signature"):
                         attrs["signature"] = part["signature"]
+                    if not thinking_text:
+                        attrs["hidden"] = True  # thinking.display: "omitted" (default on newest models)
                     blocks.append(Block.make(
-                        Direction.INPUT, BlockType.THINKING, part.get("thinking", ""),
+                        Direction.INPUT, BlockType.THINKING, thinking_text,
                         message_index=i, attrs=attrs,
                     ))
                 elif ptype == "redacted_thinking":
@@ -155,9 +174,11 @@ class AnthropicAdapter(WireFormatAdapter):
                 continue
             blocks.append(self._output_block_from_part(part))
 
+        blocks = [b for b in blocks if b is not None]
         usage_raw = resp_body.get("usage", {}) or {}
         usage = self._usage_from_dict(usage_raw)
-        return [b for b in blocks if b is not None], usage
+        _attribute_hidden_thinking_tokens(blocks, usage.reasoning_tokens)
+        return blocks, usage
 
     def _output_block_from_part(self, part: dict) -> Block | None:
         ptype = part.get("type")
@@ -171,8 +192,11 @@ class AnthropicAdapter(WireFormatAdapter):
                 tool_name=name, tool_call_id=part.get("id"),
             )
         if ptype == "thinking":
+            text = part.get("thinking", "")
             attrs = {"signature": part["signature"]} if part.get("signature") else {}
-            return Block.make(Direction.OUTPUT, BlockType.THINKING, part.get("thinking", ""), attrs=attrs)
+            if not text:
+                attrs["hidden"] = True  # thinking.display: "omitted" (default on newest models)
+            return Block.make(Direction.OUTPUT, BlockType.THINKING, text, attrs=attrs)
         if ptype == "redacted_thinking":
             return Block.make(Direction.OUTPUT, BlockType.THINKING, "", attrs={"redacted": True})
         return Block.make(Direction.OUTPUT, BlockType.OTHER, json.dumps(part), attrs={"content_type": ptype})
@@ -185,9 +209,11 @@ class AnthropicAdapter(WireFormatAdapter):
         cache_creation = raw_creation if raw_creation is not None else None
         billed = usage.get("input_tokens") or 0
         input_tokens = billed + (cache_read or 0) + (cache_creation or 0) if usage else None
+        output_details = usage.get("output_tokens_details") or {}
         return Usage(
             input_tokens=input_tokens,
             output_tokens=usage.get("output_tokens"),
+            reasoning_tokens=output_details.get("thinking_tokens"),
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
         )
@@ -198,6 +224,7 @@ class AnthropicAdapter(WireFormatAdapter):
         text_data = raw.decode("utf-8", errors="replace")
         input_tokens: int | None = None
         output_tokens: int | None = None
+        reasoning_tokens: int | None = None
         cache_read: int | None = None
         cache_creation: int | None = None
         parts_by_index: dict[int, dict] = {}
@@ -265,6 +292,10 @@ class AnthropicAdapter(WireFormatAdapter):
                     cache_read = usage["cache_read_input_tokens"]
                 if "cache_creation_input_tokens" in usage and cache_creation is None:
                     cache_creation = usage["cache_creation_input_tokens"]
+                # Only ever reported on the final message_delta event.
+                details = usage.get("output_tokens_details") or {}
+                if details.get("thinking_tokens") is not None:
+                    reasoning_tokens = details["thinking_tokens"]
 
         blocks: list[Block] = []
         for idx in sorted(parts_by_index):
@@ -275,8 +306,11 @@ class AnthropicAdapter(WireFormatAdapter):
                 if text:
                     blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, text, message_index=idx))
             elif btype == "thinking":
+                text = entry.get("thinking", "")
                 attrs = {"signature": entry["signature"]} if entry.get("signature") else {}
-                blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, entry.get("thinking", ""),
+                if not text:
+                    attrs["hidden"] = True  # thinking.display: "omitted" (default on newest models)
+                blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, text,
                                           message_index=idx, attrs=attrs))
             elif btype == "redacted_thinking":
                 blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, "",
@@ -296,7 +330,9 @@ class AnthropicAdapter(WireFormatAdapter):
         usage = Usage(
             input_tokens=total_input,
             output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
         )
+        _attribute_hidden_thinking_tokens(blocks, reasoning_tokens)
         return blocks, usage

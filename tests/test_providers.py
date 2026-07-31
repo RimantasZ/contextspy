@@ -554,6 +554,63 @@ class TestAnthropicThinking:
         assert thinking[0].attrs.get("signature") == "abc"
         assert text and text[0].content == "final answer"
 
+    def test_response_omitted_display_thinking_tokens_attributed(self):
+        # thinking.display: "omitted" (default on newest models) returns a real
+        # thinking block with an empty text field; the true cost is only in
+        # usage.output_tokens_details.thinking_tokens.
+        resp = {
+            "content": [
+                {"type": "thinking", "thinking": "", "signature": "sig"},
+                {"type": "text", "text": "answer"},
+            ],
+            "usage": {
+                "input_tokens": 5, "output_tokens": 50,
+                "output_tokens_details": {"thinking_tokens": 40},
+            },
+        }
+        blocks, usage = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert thinking and thinking[0].content == ""
+        assert thinking[0].token_count == 40
+        assert thinking[0].attrs.get("hidden") is True
+        assert usage.reasoning_tokens == 40
+
+    def test_redacted_thinking_tokens_attributed(self):
+        resp = {
+            "content": [
+                {"type": "redacted_thinking", "data": "encrypted-blob"},
+                {"type": "text", "text": "answer"},
+            ],
+            "usage": {
+                "input_tokens": 5, "output_tokens": 50,
+                "output_tokens_details": {"thinking_tokens": 30},
+            },
+        }
+        blocks, usage = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert thinking and thinking[0].token_count == 30
+        assert thinking[0].attrs.get("redacted") is True
+
+    def test_sse_omitted_display_thinking_tokens_attributed(self):
+        events = [
+            {"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "abc"}},
+            {"type": "content_block_stop", "index": 0},
+            {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
+            {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "final answer"}},
+            {"type": "message_delta", "usage": {
+                "output_tokens": 50, "output_tokens_details": {"thinking_tokens": 40},
+            }},
+        ]
+        raw = b"\n".join(b"data: " + json.dumps(e).encode() for e in events)
+        blocks, usage = self.adapter.parse_sse(raw)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert thinking and thinking[0].content == ""
+        assert thinking[0].token_count == 40
+        assert thinking[0].attrs.get("hidden") is True
+        assert usage.reasoning_tokens == 40
+
     def test_cache_control_captured(self):
         req = {
             "model": "claude-sonnet-4-6",
