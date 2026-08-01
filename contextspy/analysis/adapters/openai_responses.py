@@ -20,15 +20,20 @@ Key differences from Chat Completions:
   - usage.input_tokens / output_tokens, usage.output_tokens_details.reasoning_tokens
 
 Reasoning content is usually hidden by the provider (summary omitted unless
-requested): when no "reasoning" item is present in the output but
-usage reports reasoning_tokens > 0, a synthetic hidden THINKING block is
-emitted so those tokens are still visible in the breakdown.
+requested), and even when a summary is returned it is far shorter than the
+reasoning actually billed. Either way the reported reasoning_tokens is the
+figure that counts — reconcile_thinking() puts it on the THINKING block
+(synthesising one when the output carried no reasoning item at all).
 """
 from __future__ import annotations
 
 import json
 
-from contextspy.analysis.adapters.base import WireFormatAdapter, extract_sse_events
+from contextspy.analysis.adapters.base import (
+    WireFormatAdapter,
+    extract_sse_events,
+    reconcile_thinking,
+)
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
 
 
@@ -120,7 +125,6 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
 
     def parse_response(self, resp_body: dict) -> tuple[list[Block], Usage]:
         blocks: list[Block] = []
-        saw_reasoning_item = False
 
         for item in resp_body.get("output", []):
             if not isinstance(item, dict):
@@ -143,25 +147,17 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                     tool_name=name, tool_call_id=call_id,
                 ))
             elif itype == "reasoning":
-                saw_reasoning_item = True
                 text = _reasoning_summary_text(item)
-                attrs = {} if text else {"hidden": True}
-                blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, text, attrs=attrs))
+                blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, text))
 
         usage_raw = resp_body.get("usage", {}) or {}
         details = usage_raw.get("output_tokens_details") or {}
-        reasoning_tokens = details.get("reasoning_tokens")
-        if reasoning_tokens and not saw_reasoning_item:
-            blocks.append(Block.make(
-                Direction.OUTPUT, BlockType.THINKING, "",
-                attrs={"hidden": True}, token_count=reasoning_tokens,
-            ))
-
         usage = Usage(
             input_tokens=usage_raw.get("input_tokens"),
             output_tokens=usage_raw.get("output_tokens"),
-            reasoning_tokens=reasoning_tokens,
+            reasoning_tokens=details.get("reasoning_tokens"),
         )
+        reconcile_thinking(blocks, usage)
         return blocks, usage
 
     # -- SSE ---------------------------------------------------------------
@@ -226,21 +222,14 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                 Direction.OUTPUT, BlockType.TOOL_CALL, "".join(fc["args"]),
                 message_index=idx, tool_name=fc["name"], tool_call_id=fc["call_id"] or None,
             ))
-        saw_reasoning = False
         for idx in sorted(reasoning_by_index):
             text = "".join(reasoning_by_index[idx]["summary"])
-            saw_reasoning = True
             blocks.append(Block.make(
-                Direction.OUTPUT, BlockType.THINKING, text,
-                message_index=idx, attrs={} if text else {"hidden": True},
-            ))
-        if reasoning_tokens and not saw_reasoning:
-            blocks.append(Block.make(
-                Direction.OUTPUT, BlockType.THINKING, "",
-                attrs={"hidden": True}, token_count=reasoning_tokens,
+                Direction.OUTPUT, BlockType.THINKING, text, message_index=idx,
             ))
 
         usage_obj = Usage(
             input_tokens=input_tokens, output_tokens=output_tokens, reasoning_tokens=reasoning_tokens,
         ) if (input_tokens is not None or output_tokens is not None) else Usage()
+        reconcile_thinking(blocks, usage_obj)
         return blocks, usage_obj

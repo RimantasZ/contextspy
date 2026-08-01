@@ -21,7 +21,11 @@ from __future__ import annotations
 
 import json
 
-from contextspy.analysis.adapters.base import WireFormatAdapter, flatten_content
+from contextspy.analysis.adapters.base import (
+    WireFormatAdapter,
+    flatten_content,
+    reconcile_thinking,
+)
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
 
 _BLOCK_TYPE_FOR_ROLE = {
@@ -58,6 +62,7 @@ class OllamaAdapter(WireFormatAdapter):
             input_tokens=resp_body.get("prompt_eval_count"),
             output_tokens=resp_body.get("eval_count"),
         )
+        reconcile_thinking(blocks, usage)
         return blocks, usage
 
     def parse_sse(self, raw: bytes) -> tuple[list[Block], Usage]:
@@ -91,4 +96,6 @@ class OllamaAdapter(WireFormatAdapter):
         content = "".join(content_parts)
         if content:
             blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, content))
-        return blocks, Usage(input_tokens=prompt_eval_count, output_tokens=eval_count)
+        usage = Usage(input_tokens=prompt_eval_count, output_tokens=eval_count)
+        reconcile_thinking(blocks, usage)
+        return blocks, usage

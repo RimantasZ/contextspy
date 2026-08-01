@@ -110,6 +110,26 @@ Token counts are **estimates** using tiktoken `cl100k_base` encoding.
 When the provider reports exact token counts in the API response, those are stored
 alongside the estimate and shown on the request detail page for comparison.
 
+### Thinking / reasoning tokens
+
+Reasoning is billed by every provider but disclosed by only some, so
+`analysis/adapters/base.py: reconcile_thinking()` normalises all of them onto the same
+carriers — `thinking` blocks for the text, `provider_reasoning_tokens` for the provider's
+own figure — and tags each block with `attrs["token_source"]` recording how it was arrived at:
+
+| `token_source` | When | Accuracy |
+|----------------|------|----------|
+| `provider` | The API reports a reasoning count (OpenAI `reasoning_tokens`) | Exact — it is what was billed |
+| `estimated` | No count, but the text came back (Anthropic `display: "summarized"`, Ollama `thinking`, DeepSeek/vLLM `reasoning_content`) | Same band as the table above |
+| `derived` | Neither count nor text (Anthropic `display: "omitted"` — the default on current Claude models — and `redacted_thinking`) | Residual of `output_tokens` minus the estimated visible output |
+| `unknown` | Nothing to go on (no count, no text, no `output_tokens`) | Reported as 0 |
+
+The `derived` case matters most in practice: Anthropic's Messages API bills thinking inside
+`output_tokens` and never breaks it out under any `thinking.display` setting, so subtraction is
+the only signal available. Because the visible side of that subtraction is a tiktoken estimate
+against a different tokenizer, **all of its error lands on the thinking figure** — and since
+tiktoken tends to undercount Claude's tokenizer, `derived` thinking skews high.
+
 ---
 
 ## Contributing

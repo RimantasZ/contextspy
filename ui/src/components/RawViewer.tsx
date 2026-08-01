@@ -134,14 +134,79 @@ function JsonNode({ value, depth = 0, searchLower }: NodeProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Tokenized text pane — shared by the response Text and Thinking tabs
+// ---------------------------------------------------------------------------
+
+function TextPane({
+  text,
+  tokens,
+  showHighlight,
+  onToggleHighlight,
+  note,
+}: {
+  text: string;
+  tokens: string[] | null;
+  showHighlight: boolean;
+  onToggleHighlight: (v: boolean) => void;
+  note?: React.ReactNode;
+}) {
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3 px-3 py-1.5 border-b border-gray-800">
+        <span className="text-xs text-gray-500 min-w-0 truncate">{note}</span>
+        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none shrink-0">
+          <input
+            type="checkbox"
+            checked={showHighlight}
+            onChange={e => onToggleHighlight(e.target.checked)}
+            className="accent-indigo-500"
+          />
+          Highlight tokens
+        </label>
+      </div>
+      <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
+        {showHighlight && tokens !== null ? (
+          <span className="whitespace-pre-wrap break-words leading-6">
+            {tokens.map((tok, i) => (
+              <span
+                key={i}
+                style={{ background: TOKEN_COLORS[i % TOKEN_COLORS.length] }}
+                className="rounded-[2px] text-gray-100"
+              >
+                {tok}
+              </span>
+            ))}
+          </span>
+        ) : (
+          <pre className="text-gray-300 whitespace-pre-wrap break-words">{text}</pre>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main RawViewer
 // ---------------------------------------------------------------------------
+
+type RespTab = 'text' | 'thinking' | 'json' | 'raw';
+type TextTab = Extract<RespTab, 'text' | 'thinking'>;
+
+/** How far to trust a thinking block's token count — set by the adapters'
+ *  shared reconcile_thinking(); see analysis/adapters/base.py. */
+const THINKING_SOURCE_NOTE: Record<string, string> = {
+  provider: 'Token count reported by the API.',
+  estimated: 'Token count estimated from the returned text.',
+  derived:
+    'This API reports no separate thinking count — derived from the output tokens the visible response does not account for.',
+  unknown: 'The provider returned neither the reasoning text nor a token count for it.',
+};
 
 interface Props {
   title: string;
   requestId: string;
   content: string | null | undefined;
-  /** When true shows 3-tab output view: JSON tree / Raw text / Response text */
+  /** When true shows the output view: Text / Thinking / JSON / Raw tabs */
   responseMode?: boolean;
   totalInputTokens?: number | null;
   /** Increment to toggle open/close; scroll into view when opening */
@@ -151,24 +216,43 @@ interface Props {
 export function RawViewer({ title, requestId, content, responseMode, totalInputTokens, expandToggle }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [respTab, setRespTab] = useState<'json' | 'raw' | 'text'>('text');
+  const [respTab, setRespTab] = useState<RespTab>('text');
   const [search, setSearch] = useState('');
   const searchLower = search.toLowerCase();
 
-  // Response "Text" tab — token highlight state
+  // Response "Text"/"Thinking" tabs — token highlight state, cached per pane
   const [showHighlight, setShowHighlight] = useState(true);
-  const [respTokens, setRespTokens] = useState<string[] | null>(null);
+  const [paneTokens, setPaneTokens] = useState<Partial<Record<TextTab, string[]>>>({});
   const [loadingText, setLoadingText] = useState(false);
 
-  // Output blocks power the response "Text" tab even when the raw body has
-  // been purged by retention — block contents/token counts persist longer.
+  // Output blocks power the response "Text" and "Thinking" tabs even when the
+  // raw body has been purged by retention — block contents/token counts persist
+  // longer, and hidden thinking never appears in the raw body at all.
   const blocksQuery = useRequestBlocks(requestId, !!responseMode);
-  const textBlocks = (blocksQuery.data?.blocks ?? []).filter(
-    b => b.direction === 'output' && b.block_type === 'assistant_message'
-  );
+  const outputBlocks = (blocksQuery.data?.blocks ?? []).filter(b => b.direction === 'output');
+
+  const textBlocks = outputBlocks.filter(b => b.block_type === 'assistant_message');
   const respText = textBlocks.map(b => b.content ?? '').join('\n');
   const respTextPurged = textBlocks.length > 0 && textBlocks.every(b => b.content_purged);
   const respTokenCount = textBlocks.reduce((s, b) => s + b.token_count, 0);
+
+  const thinkingBlocks = outputBlocks.filter(b => b.block_type === 'thinking');
+  const thinkingText = thinkingBlocks.map(b => b.content ?? '').filter(Boolean).join('\n\n');
+  const thinkingTokens = thinkingBlocks.reduce((s, b) => s + b.token_count, 0);
+  const thinkingPurged =
+    thinkingBlocks.length > 0 && thinkingBlocks.some(b => b.content_purged) && !thinkingText;
+  const thinkingRedacted = thinkingBlocks.some(b => b.attrs?.redacted === true);
+  const thinkingSource = thinkingBlocks
+    .map(b => b.attrs?.token_source)
+    .find(s => typeof s === 'string') as string | undefined;
+  const hasThinking = thinkingBlocks.length > 0;
+
+  const respTabs: Array<{ key: RespTab; label: string }> = [
+    { key: 'text', label: 'Text' },
+    ...(hasThinking ? [{ key: 'thinking' as RespTab, label: 'Thinking' }] : []),
+    { key: 'json', label: 'JSON' },
+    { key: 'raw', label: 'Raw' },
+  ];
 
   const { parsed, isJson } = useMemo(() => {
     if (!content) return { parsed: null, isJson: false };
@@ -184,7 +268,12 @@ export function RawViewer({ title, requestId, content, responseMode, totalInputT
   }, [content]);
 
   // Reset tokens when the underlying text changes
-  useEffect(() => { setRespTokens(null); }, [respText]);
+  useEffect(() => { setPaneTokens({}); }, [respText, thinkingText]);
+
+  // A request with no thinking must not stay parked on a tab that isn't there
+  useEffect(() => {
+    if (respTab === 'thinking' && !hasThinking) setRespTab('text');
+  }, [respTab, hasThinking]);
 
   // Respond to external toggle requests (expandToggle prop)
   useEffect(() => {
@@ -201,16 +290,19 @@ export function RawViewer({ title, requestId, content, responseMode, totalInputT
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandToggle]);
 
-  // Fetch tokens for response "Text" tab
+  // Fetch tokens for whichever text pane is showing
   useEffect(() => {
-    if (!responseMode || respTab !== 'text' || respTokens !== null || loadingText) return;
-    if (!respText || respTextPurged) return;
+    if (!responseMode || loadingText) return;
+    if (respTab !== 'text' && respTab !== 'thinking') return;
+    const pane: TextTab = respTab;
+    const body = pane === 'text' ? respText : thinkingText;
+    if (!body || paneTokens[pane] !== undefined) return;
     setLoadingText(true);
-    tokenizeApi.tokenize([respText])
-      .then(r => setRespTokens(r.results[0] ?? []))
-      .catch(() => setRespTokens([]))
+    tokenizeApi.tokenize([body])
+      .then(r => setPaneTokens(t => ({ ...t, [pane]: r.results[0] ?? [] })))
+      .catch(() => setPaneTokens(t => ({ ...t, [pane]: [] })))
       .finally(() => setLoadingText(false));
-  }, [responseMode, respTab, respText, respTextPurged, respTokens, loadingText]);
+  }, [responseMode, respTab, respText, thinkingText, paneTokens, loadingText]);
 
   const purged = content === null || content === undefined;
 
@@ -256,11 +348,7 @@ export function RawViewer({ title, requestId, content, responseMode, totalInputT
             ---------------------------------------------------------------- */
             <>
               <div className="flex border-b border-gray-800">
-                {([
-                  ['text', 'Text'],
-                  ['json', 'JSON'],
-                  ['raw',  'Raw'],
-                ] as const).map(([key, label]) => (
+                {respTabs.map(({ key, label }) => (
                   <button
                     key={key}
                     onClick={() => setRespTab(key)}
@@ -271,6 +359,11 @@ export function RawViewer({ title, requestId, content, responseMode, totalInputT
                     }`}
                   >
                     {label}
+                    {key === 'thinking' && thinkingTokens > 0 && (
+                      <span className="ml-1.5 text-[10px] text-violet-400 font-mono">
+                        {thinkingTokens.toLocaleString()}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -326,36 +419,53 @@ export function RawViewer({ title, requestId, content, responseMode, totalInputT
                     No response text found.
                   </p>
                 ) : (
-                  <>
-                    <div className="flex items-center justify-end px-3 py-1.5 border-b border-gray-800">
-                      <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={showHighlight}
-                          onChange={e => setShowHighlight(e.target.checked)}
-                          className="accent-indigo-500"
-                        />
-                        Highlight tokens
-                      </label>
-                    </div>
-                    <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
-                      {showHighlight && respTokens !== null ? (
-                        <span className="whitespace-pre-wrap break-words leading-6">
-                          {respTokens.map((tok, i) => (
-                            <span
-                              key={i}
-                              style={{ background: TOKEN_COLORS[i % TOKEN_COLORS.length] }}
-                              className="rounded-[2px] text-gray-100"
-                            >
-                              {tok}
-                            </span>
-                          ))}
-                        </span>
-                      ) : (
-                        <pre className="text-gray-300 whitespace-pre-wrap break-words">{respText}</pre>
-                      )}
-                    </div>
-                  </>
+                  <TextPane
+                    text={respText}
+                    tokens={paneTokens.text ?? null}
+                    showHighlight={showHighlight}
+                    onToggleHighlight={setShowHighlight}
+                    note={`${respTokenCount.toLocaleString()} tokens`}
+                  />
+                )
+              )}
+
+              {/* Thinking tab — reasoning the model generated, when the
+                  provider returns it. The tokens are charged either way, so
+                  the pane still reports the count when the text is withheld. */}
+              {respTab === 'thinking' && (
+                thinkingPurged ? (
+                  <p className="px-4 py-3 text-sm text-gray-500 italic">
+                    Thinking text has been purged ({thinkingTokens.toLocaleString()} tokens).
+                  </p>
+                ) : thinkingText ? (
+                  <TextPane
+                    text={thinkingText}
+                    tokens={paneTokens.thinking ?? null}
+                    showHighlight={showHighlight}
+                    onToggleHighlight={setShowHighlight}
+                    note={`${thinkingTokens.toLocaleString()} tokens · ${
+                      THINKING_SOURCE_NOTE[thinkingSource ?? ''] ?? ''
+                    }`}
+                  />
+                ) : (
+                  <div className="px-4 py-4 space-y-1.5">
+                    <p className="text-sm text-gray-300">
+                      <span className="font-mono text-violet-300">
+                        {thinkingTokens.toLocaleString()}
+                      </span>{' '}
+                      thinking tokens — the provider did not return the reasoning text.
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {thinkingRedacted
+                        ? 'The reasoning was redacted by the provider’s safety systems.'
+                        : 'The model reasoned before answering but the text was withheld (e.g. thinking.display: "omitted", or encrypted reasoning).'}
+                    </p>
+                    {thinkingSource && (
+                      <p className="text-xs text-gray-600">
+                        {THINKING_SOURCE_NOTE[thinkingSource] ?? ''}
+                      </p>
+                    )}
+                  </div>
                 )
               )}
             </>

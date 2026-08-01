@@ -20,29 +20,17 @@ from __future__ import annotations
 
 import json
 
-from contextspy.analysis.adapters.base import WireFormatAdapter, flatten_content
+from contextspy.analysis.adapters.base import (
+    WireFormatAdapter,
+    flatten_content,
+    reconcile_thinking,
+)
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
 
 
 def _cache_attrs(part: dict) -> dict:
     cc = part.get("cache_control")
     return {"cache_control": cc} if cc else {}
-
-
-def _attribute_hidden_thinking_tokens(blocks: list[Block], reasoning_tokens: int | None) -> None:
-    """Anthropic bills thinking tokens even when the text is withheld: redacted
-    (safety) or omitted (``thinking.display: "omitted"``, the default on the
-    newest models). Either way the block's own content is "" so Block.make
-    gives it token_count=0 — attribute the provider-reported total onto one
-    such block so it survives into the breakdown instead of reading as free.
-    """
-    if not reasoning_tokens:
-        return
-    hidden = [b for b in blocks if b.block_type == BlockType.THINKING and not b.content]
-    if not hidden or sum(b.token_count for b in hidden):
-        return
-    hidden[0].token_count = reasoning_tokens
-    hidden[0].attrs["hidden"] = True
 
 
 class AnthropicAdapter(WireFormatAdapter):
@@ -177,7 +165,7 @@ class AnthropicAdapter(WireFormatAdapter):
         blocks = [b for b in blocks if b is not None]
         usage_raw = resp_body.get("usage", {}) or {}
         usage = self._usage_from_dict(usage_raw)
-        _attribute_hidden_thinking_tokens(blocks, usage.reasoning_tokens)
+        reconcile_thinking(blocks, usage)
         return blocks, usage
 
     def _output_block_from_part(self, part: dict) -> Block | None:
@@ -209,11 +197,12 @@ class AnthropicAdapter(WireFormatAdapter):
         cache_creation = raw_creation if raw_creation is not None else None
         billed = usage.get("input_tokens") or 0
         input_tokens = billed + (cache_read or 0) + (cache_creation or 0) if usage else None
-        output_details = usage.get("output_tokens_details") or {}
+        # No reasoning_tokens: the Messages API bills thinking inside
+        # output_tokens and never breaks it out, whatever thinking.display is
+        # set to. reconcile_thinking() derives it from the residual instead.
         return Usage(
             input_tokens=input_tokens,
             output_tokens=usage.get("output_tokens"),
-            reasoning_tokens=output_details.get("thinking_tokens"),
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
         )
@@ -224,7 +213,6 @@ class AnthropicAdapter(WireFormatAdapter):
         text_data = raw.decode("utf-8", errors="replace")
         input_tokens: int | None = None
         output_tokens: int | None = None
-        reasoning_tokens: int | None = None
         cache_read: int | None = None
         cache_creation: int | None = None
         parts_by_index: dict[int, dict] = {}
@@ -292,10 +280,6 @@ class AnthropicAdapter(WireFormatAdapter):
                     cache_read = usage["cache_read_input_tokens"]
                 if "cache_creation_input_tokens" in usage and cache_creation is None:
                     cache_creation = usage["cache_creation_input_tokens"]
-                # Only ever reported on the final message_delta event.
-                details = usage.get("output_tokens_details") or {}
-                if details.get("thinking_tokens") is not None:
-                    reasoning_tokens = details["thinking_tokens"]
 
         blocks: list[Block] = []
         for idx in sorted(parts_by_index):
@@ -330,9 +314,8 @@ class AnthropicAdapter(WireFormatAdapter):
         usage = Usage(
             input_tokens=total_input,
             output_tokens=output_tokens,
-            reasoning_tokens=reasoning_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
         )
-        _attribute_hidden_thinking_tokens(blocks, reasoning_tokens)
+        reconcile_thinking(blocks, usage)
         return blocks, usage

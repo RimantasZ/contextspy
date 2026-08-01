@@ -17,7 +17,7 @@ import json
 from abc import ABC, abstractmethod
 from typing import Any
 
-from contextspy.analysis.blocks import Block, Usage
+from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
 
 
 class WireFormatAdapter(ABC):
@@ -92,6 +92,108 @@ def extract_sse_events(raw: bytes) -> list[dict]:
         except json.JSONDecodeError:
             continue
     return events
+
+
+def reconcile_thinking(blocks: list[Block], usage: Usage) -> None:
+    """Give a response's thinking a token count, whatever the provider disclosed.
+
+    Providers expose reasoning in three mutually exclusive ways, and every one
+    of them has to land on the same two carriers: ``BlockType.THINKING`` blocks
+    for the text, ``Usage.reasoning_tokens`` for the provider's own figure.
+    Called by every adapter at the end of ``parse_response``/``parse_sse`` so
+    the rules live in one place rather than four.
+
+    Each thinking block comes out tagged with ``attrs["token_source"]``,
+    recording how much its ``token_count`` can be trusted:
+
+    ``provider``
+        The API reported a reasoning-token count for the turn (OpenAI's
+        ``completion_tokens_details``/``output_tokens_details.reasoning_tokens``).
+        Authoritative — it is what was billed — and it is used even when the
+        text is withheld, or when the visible text is only a short summary of
+        much longer hidden reasoning.
+    ``estimated``
+        No count was reported but the text came back (Anthropic
+        ``thinking.display: "summarized"``, Ollama ``thinking``, DeepSeek/vLLM
+        ``reasoning_content``). The tokenizer estimate on the text stands.
+    ``derived``
+        Neither a count nor any text — the provider says only "thinking
+        happened here" (Anthropic ``thinking.display: "omitted"``, the default
+        on current Claude models, and ``redacted_thinking``). Anthropic bills
+        thinking inside ``output_tokens`` but never breaks it out, so the
+        residual left after subtracting the visible output is the only signal
+        available. Note the visible side is a tiktoken estimate against a
+        different tokenizer, so error there lands wholly on this figure.
+
+    Blocks whose text the provider withheld are also tagged ``hidden``.
+    ``usage.reasoning_tokens`` is deliberately left alone: it means "what the
+    provider reported" and nothing else, which is what makes the reported-vs-
+    estimated comparison in the UI meaningful.
+    """
+    thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+    reported = usage.reasoning_tokens
+
+    if reported:
+        if not thinking:
+            # Billed for reasoning that never appeared in the output in any form.
+            blocks.append(Block.make(
+                Direction.OUTPUT, BlockType.THINKING, "",
+                attrs={"hidden": True, "token_source": "provider"},
+                token_count=reported,
+            ))
+            return
+        _spread_tokens(thinking, reported)
+        source = "provider"
+    elif not thinking:
+        return
+    elif any(b.content for b in thinking):
+        source = "estimated"
+    else:
+        derived = _residual_output_tokens(blocks, usage)
+        if derived is not None:
+            thinking[0].token_count = derived
+        source = "derived" if derived is not None else "unknown"
+
+    for b in thinking:
+        b.attrs["token_source"] = source
+        if not b.content:
+            b.attrs["hidden"] = True
+
+
+def _spread_tokens(blocks: list[Block], total: int) -> None:
+    """Apportion one provider-reported total across n thinking blocks.
+
+    Split proportionally to what each block's text already estimated to, so
+    per-block numbers stay meaningful, with the remainder on the last block so
+    the parts always re-add to ``total``.
+    """
+    if len(blocks) == 1:
+        blocks[0].token_count = total
+        return
+    weights = [b.token_count for b in blocks]
+    weight_total = sum(weights)
+    if not weight_total:
+        for b in blocks:
+            b.token_count = 0
+        blocks[0].token_count = total
+        return
+    running = 0
+    for b, weight in zip(blocks[:-1], weights[:-1]):
+        b.token_count = total * weight // weight_total
+        running += b.token_count
+    blocks[-1].token_count = total - running
+
+
+def _residual_output_tokens(blocks: list[Block], usage: Usage) -> int | None:
+    """Output tokens the visible (non-thinking) response does not account for."""
+    if usage.output_tokens is None:
+        return None
+    visible = sum(
+        b.token_count for b in blocks
+        if b.direction == Direction.OUTPUT and b.block_type != BlockType.THINKING
+    )
+    residual = usage.output_tokens - visible
+    return residual if residual > 0 else None
 
 
 def flatten_content(content: Any) -> str:

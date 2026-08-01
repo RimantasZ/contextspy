@@ -168,7 +168,8 @@ export default function RequestDetail() {
             <p className="text-2xl font-semibold text-white">{req.tokens_total_output.toLocaleString()}</p>
             {req.tokens_output_thinking > 0 ? (
               <p className="text-xs text-gray-500 mt-1">
-                {req.tokens_output_text.toLocaleString()} text · {req.tokens_output_thinking.toLocaleString()} thinking
+                {req.tokens_output_text.toLocaleString()} text ·{' '}
+                <span className="text-violet-400">{req.tokens_output_thinking.toLocaleString()} thinking</span>
               </p>
             ) : (
               <p className="text-xs text-gray-500 mt-1">click to view response ↓</p>

@@ -34,6 +34,7 @@ from contextspy.analysis.adapters.openai_chat import OpenAIChatAdapter
 from contextspy.analysis.adapters.openai_responses import OpenAIResponsesAdapter
 from contextspy.analysis.blocks import AnalyzedRequest, BlockType, Direction, Usage
 from contextspy.analysis.classifier import classify, classify_blocks, per_tool_tokens
+from contextspy.analysis.tokenizer import count_tokens
 
 try:
     from contextspy.proxy.addon import _detect_agent, _detect_provider
@@ -554,44 +555,88 @@ class TestAnthropicThinking:
         assert thinking[0].attrs.get("signature") == "abc"
         assert text and text[0].content == "final answer"
 
-    def test_response_omitted_display_thinking_tokens_attributed(self):
-        # thinking.display: "omitted" (default on newest models) returns a real
-        # thinking block with an empty text field; the true cost is only in
-        # usage.output_tokens_details.thinking_tokens.
+    def test_response_omitted_display_thinking_tokens_derived(self):
+        # thinking.display: "omitted" (the default on current Claude models)
+        # returns a real thinking block with an empty text field. The Messages
+        # API reports no per-turn thinking count anywhere, so the only signal
+        # is the part of output_tokens the visible text does not account for.
         resp = {
             "content": [
                 {"type": "thinking", "thinking": "", "signature": "sig"},
                 {"type": "text", "text": "answer"},
             ],
-            "usage": {
-                "input_tokens": 5, "output_tokens": 50,
-                "output_tokens_details": {"thinking_tokens": 40},
-            },
+            "usage": {"input_tokens": 5, "output_tokens": 50},
         }
         blocks, usage = self.adapter.parse_response(resp)
+        visible = sum(
+            b.token_count for b in blocks if b.block_type != BlockType.THINKING
+        )
         thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
         assert thinking and thinking[0].content == ""
-        assert thinking[0].token_count == 40
+        assert thinking[0].token_count == 50 - visible
         assert thinking[0].attrs.get("hidden") is True
-        assert usage.reasoning_tokens == 40
+        assert thinking[0].attrs.get("token_source") == "derived"
+        # Usage stays strictly provider-reported — Anthropic reported nothing.
+        assert usage.reasoning_tokens is None
 
-    def test_redacted_thinking_tokens_attributed(self):
+    def test_redacted_thinking_tokens_derived(self):
         resp = {
             "content": [
                 {"type": "redacted_thinking", "data": "encrypted-blob"},
                 {"type": "text", "text": "answer"},
             ],
-            "usage": {
-                "input_tokens": 5, "output_tokens": 50,
-                "output_tokens_details": {"thinking_tokens": 30},
-            },
+            "usage": {"input_tokens": 5, "output_tokens": 50},
         }
-        blocks, usage = self.adapter.parse_response(resp)
+        blocks, _ = self.adapter.parse_response(resp)
+        visible = sum(
+            b.token_count for b in blocks if b.block_type != BlockType.THINKING
+        )
         thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
-        assert thinking and thinking[0].token_count == 30
+        assert thinking and thinking[0].token_count == 50 - visible
         assert thinking[0].attrs.get("redacted") is True
+        assert thinking[0].attrs.get("token_source") == "derived"
 
-    def test_sse_omitted_display_thinking_tokens_attributed(self):
+    def test_summarized_thinking_tokens_estimated(self):
+        # display: "summarized" returns real text — the tokenizer estimate on
+        # that text stands, rather than being overwritten by a derivation.
+        resp = {
+            "content": [
+                {"type": "thinking", "thinking": "a fairly long chain of reasoning"},
+                {"type": "text", "text": "answer"},
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 50},
+        }
+        blocks, _ = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert thinking and thinking[0].content == "a fairly long chain of reasoning"
+        assert thinking[0].token_count == count_tokens(thinking[0].content)
+        assert thinking[0].attrs.get("token_source") == "estimated"
+        assert thinking[0].attrs.get("hidden") is None
+
+    def test_no_thinking_block_leaves_output_alone(self):
+        resp = {
+            "content": [{"type": "text", "text": "answer"}],
+            "usage": {"input_tokens": 5, "output_tokens": 50},
+        }
+        blocks, _ = self.adapter.parse_response(resp)
+        assert not [b for b in blocks if b.block_type == BlockType.THINKING]
+
+    def test_derivation_skipped_when_visible_output_exceeds_total(self):
+        # Tokenizer estimate for the visible text already exceeds the reported
+        # output_tokens — there is no residual to attribute, so don't invent one.
+        resp = {
+            "content": [
+                {"type": "thinking", "thinking": ""},
+                {"type": "text", "text": "a much longer answer than the count suggests"},
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 2},
+        }
+        blocks, _ = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert thinking and thinking[0].token_count == 0
+        assert thinking[0].attrs.get("token_source") == "unknown"
+
+    def test_sse_omitted_display_thinking_tokens_derived(self):
         events = [
             {"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
             {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
@@ -599,17 +644,38 @@ class TestAnthropicThinking:
             {"type": "content_block_stop", "index": 0},
             {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
             {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "final answer"}},
-            {"type": "message_delta", "usage": {
-                "output_tokens": 50, "output_tokens_details": {"thinking_tokens": 40},
-            }},
+            {"type": "message_delta", "usage": {"output_tokens": 50}},
         ]
         raw = b"\n".join(b"data: " + json.dumps(e).encode() for e in events)
         blocks, usage = self.adapter.parse_sse(raw)
+        visible = sum(
+            b.token_count for b in blocks if b.block_type != BlockType.THINKING
+        )
         thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
         assert thinking and thinking[0].content == ""
-        assert thinking[0].token_count == 40
+        assert thinking[0].token_count == 50 - visible
         assert thinking[0].attrs.get("hidden") is True
-        assert usage.reasoning_tokens == 40
+        assert thinking[0].attrs.get("token_source") == "derived"
+        assert usage.reasoning_tokens is None
+
+    def test_derived_thinking_reaches_the_breakdown(self):
+        # End-to-end: the whole point of deriving is that tokens_output_thinking
+        # stops reading as zero, and the output side now fully accounts for
+        # what the provider billed.
+        resp = {
+            "content": [
+                {"type": "thinking", "thinking": ""},
+                {"type": "text", "text": "answer"},
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 50},
+        }
+        blocks, usage = self.adapter.parse_response(resp)
+        analyzed = AnalyzedRequest(
+            model="claude-opus-5", input_blocks=[], output_blocks=blocks, usage=usage,
+        )
+        breakdown = classify(analyzed)
+        assert breakdown.tokens_output_thinking > 0
+        assert breakdown.total_output == 50
 
     def test_cache_control_captured(self):
         req = {
@@ -934,6 +1000,29 @@ class TestOpenAIResponsesAdapter:
         thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
         assert len(thinking) == 1
         assert thinking[0].content == "because X"
+        # The summary is far shorter than the reasoning actually billed, so the
+        # reported count wins over the tokenizer estimate on the summary text.
+        assert thinking[0].token_count == 200
+        assert thinking[0].attrs.get("token_source") == "provider"
+
+    def test_empty_reasoning_item_still_gets_reported_tokens(self):
+        """An empty reasoning item used to swallow the reported count entirely:
+        it suppressed the synthetic block while contributing 0 tokens itself."""
+        resp = {
+            "model": "o3",
+            "output": [
+                {"type": "reasoning", "summary": []},
+                {"type": "message", "content": [{"type": "output_text", "text": "answer"}]},
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 50,
+                      "output_tokens_details": {"reasoning_tokens": 200}},
+        }
+        blocks, _ = self.adapter.parse_response(resp)
+        thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
+        assert len(thinking) == 1
+        assert thinking[0].token_count == 200
+        assert thinking[0].attrs.get("hidden") is True
+        assert thinking[0].attrs.get("token_source") == "provider"
 
 
 # ---------------------------------------------------------------------------

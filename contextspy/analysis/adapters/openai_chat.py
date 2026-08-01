@@ -21,7 +21,11 @@ from __future__ import annotations
 
 import json
 
-from contextspy.analysis.adapters.base import WireFormatAdapter, flatten_content
+from contextspy.analysis.adapters.base import (
+    WireFormatAdapter,
+    flatten_content,
+    reconcile_thinking,
+)
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
 
 
@@ -103,12 +107,10 @@ class OpenAIChatAdapter(WireFormatAdapter):
     def parse_response(self, resp_body: dict) -> tuple[list[Block], Usage]:
         blocks: list[Block] = []
         choices = resp_body.get("choices", [])
-        saw_reasoning = False
         if choices:
             msg = choices[0].get("message") or choices[0].get("delta") or {}
             reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
             if reasoning:
-                saw_reasoning = True
                 blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, reasoning))
             text = flatten_content(msg.get("content", ""))
             if text:
@@ -123,19 +125,13 @@ class OpenAIChatAdapter(WireFormatAdapter):
 
         usage = resp_body.get("usage", {}) or {}
         details = usage.get("completion_tokens_details") or {}
-        reasoning_tokens = details.get("reasoning_tokens")
-        if reasoning_tokens and not saw_reasoning:
-            # Some backends report reasoning tokens in usage without ever
-            # returning the reasoning text itself — keep the tokens visible.
-            blocks.append(Block.make(
-                Direction.OUTPUT, BlockType.THINKING, "",
-                attrs={"hidden": True}, token_count=reasoning_tokens,
-            ))
-        return blocks, Usage(
+        usage_obj = Usage(
             input_tokens=usage.get("prompt_tokens") or usage.get("input_tokens"),
             output_tokens=usage.get("completion_tokens") or usage.get("output_tokens"),
-            reasoning_tokens=reasoning_tokens,
+            reasoning_tokens=details.get("reasoning_tokens"),
         )
+        reconcile_thinking(blocks, usage_obj)
+        return blocks, usage_obj
 
     # -- SSE -------------------------------------------------------------------
 
@@ -188,7 +184,6 @@ class OpenAIChatAdapter(WireFormatAdapter):
 
         blocks: list[Block] = []
         response_reasoning = "".join(reasoning_parts)
-        saw_reasoning = bool(response_reasoning)
         if response_reasoning:
             blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, response_reasoning))
         response_content = "".join(content_parts)
@@ -200,15 +195,10 @@ class OpenAIChatAdapter(WireFormatAdapter):
                 Direction.OUTPUT, BlockType.TOOL_CALL, entry["arguments"],
                 tool_name=entry["name"] or "", tool_call_id=entry["id"],
             ))
-        if reasoning_tokens and not saw_reasoning:
-            blocks.append(Block.make(
-                Direction.OUTPUT, BlockType.THINKING, "",
-                attrs={"hidden": True}, token_count=reasoning_tokens,
-            ))
-
         usage_obj = Usage(
             input_tokens=prompt_tokens,
             output_tokens=completion_tokens,
             reasoning_tokens=reasoning_tokens,
         ) if (prompt_tokens is not None or completion_tokens is not None) else Usage()
+        reconcile_thinking(blocks, usage_obj)
         return blocks, usage_obj
