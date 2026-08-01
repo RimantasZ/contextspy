@@ -12,15 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStatsOverview, useRequests, useToolStats, useSessions, useSessionsSummary } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { RequestTable } from '../components/RequestTable';
 import { SessionControls } from '../components/SessionControls';
 import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
+import { OutputSplit } from '../components/OutputSplit';
 import type { SessionSummaryEntry, LatencyStats } from '../api/client';
 
-function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: ReactNode }) {
   return (
     <div className="bg-gray-800 rounded-lg p-4">
       <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>
@@ -257,7 +259,11 @@ export default function Overview() {
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Context tokens" value={s ? s.tokens_total_input.toLocaleString() : '—'} />
-        <StatCard label="Generated tokens" value={s ? s.tokens_total_output.toLocaleString() : '—'} />
+        <StatCard
+          label="Generated tokens"
+          value={s ? s.tokens_total_output.toLocaleString() : '—'}
+          sub={s && <OutputSplit text={s.tokens_output_text} thinking={s.tokens_output_thinking} />}
+        />
         <StatCard label="Total requests" value={s?.request_count ?? '—'} />
         <StatCard label="Providers" value={s ? Object.keys(s.by_provider).length : '—'} />
       </div>

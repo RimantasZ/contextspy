@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { useState, useRef, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
@@ -19,6 +20,7 @@ import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
 import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
+import { OutputSplit } from '../components/OutputSplit';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -150,6 +152,12 @@ export default function SessionDetail() {
         ['Requests', String(st?.request_count ?? 0)],
         ['Context tokens', (st?.tokens_total_input ?? 0).toLocaleString()],
         ['Generated tokens', (st?.tokens_total_output ?? 0).toLocaleString()],
+        ...(st && st.tokens_output_thinking > 0
+          ? [
+              ['   of which output', st.tokens_output_text.toLocaleString()],
+              ['   of which thinking', st.tokens_output_thinking.toLocaleString()],
+            ]
+          : []),
       ],
       theme: 'striped',
       headStyles: { fillColor: [55, 65, 81] },
@@ -343,14 +351,19 @@ export default function SessionDetail() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-3 gap-4">
-        {[
-          ['Context tokens', st ? st.tokens_total_input.toLocaleString() : '—'],
-          ['Generated tokens', st ? st.tokens_total_output.toLocaleString() : '—'],
-          ['Requests', st?.request_count ?? '—'],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="bg-gray-800 rounded-lg p-4">
+        {([
+          { label: 'Context tokens', value: st ? st.tokens_total_input.toLocaleString() : '—' },
+          {
+            label: 'Generated tokens',
+            value: st ? st.tokens_total_output.toLocaleString() : '—',
+            sub: st && <OutputSplit text={st.tokens_output_text} thinking={st.tokens_output_thinking} />,
+          },
+          { label: 'Requests', value: st?.request_count ?? '—' },
+        ] as Array<{ label: string; value: string | number; sub?: ReactNode }>).map(({ label, value, sub }) => (
+          <div key={label} className="bg-gray-800 rounded-lg p-4">
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>
             <p className="text-2xl font-semibold text-white">{value}</p>
+            {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
           </div>
         ))}
       </div>

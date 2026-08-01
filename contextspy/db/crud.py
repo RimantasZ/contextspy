@@ -228,6 +228,8 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
 
     total_input = sum(r.tokens_total_input for r in rows)
     total_output = sum(r.tokens_total_output for r in rows)
+    output_text = sum(r.tokens_output_text for r in rows)
+    output_thinking = sum(r.tokens_output_thinking for r in rows)
 
     by_category: dict[str, dict] = {}
     for col in _CATEGORY_COLS:
@@ -285,6 +287,8 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         "request_count": len(rows),
         "tokens_total_input": total_input,
         "tokens_total_output": total_output,
+        "tokens_output_text": output_text,
+        "tokens_output_thinking": output_thinking,
         "by_category": by_category,
         "by_provider": by_provider,
         "by_agent": by_agent,
@@ -302,6 +306,8 @@ def _empty_stats() -> dict:
         "request_count": 0,
         "tokens_total_input": 0,
         "tokens_total_output": 0,
+        "tokens_output_text": 0,
+        "tokens_output_thinking": 0,
         "by_category": {
             col[len("tokens_"):]: {"tokens": 0, "pct": 0.0}
             for col in _CATEGORY_COLS

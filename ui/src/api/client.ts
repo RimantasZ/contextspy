@@ -97,6 +97,9 @@ export interface Stats {
   request_count: number
   tokens_total_input: number
   tokens_total_output: number
+  /** Output split: generated text vs. reasoning. Both roll up into tokens_total_output. */
+  tokens_output_text: number
+  tokens_output_thinking: number
   by_category: Record<string, CategoryStats>
   by_provider: Record<string, number>
   by_agent: Record<string, number>

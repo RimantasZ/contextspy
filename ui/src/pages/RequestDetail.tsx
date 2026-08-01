@@ -17,6 +17,7 @@ import { useRequest, useRequestToolStats } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { RawViewer } from '../components/RawViewer';
 import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
+import { OutputSplit } from '../components/OutputSplit';
 
 const CATEGORY_LABELS: Record<string, string> = {
   system_prompt: 'System Prompt',
@@ -166,14 +167,13 @@ export default function RequestDetail() {
           >
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Generated tokens</p>
             <p className="text-2xl font-semibold text-white">{req.tokens_total_output.toLocaleString()}</p>
-            {req.tokens_output_thinking > 0 ? (
-              <p className="text-xs text-gray-500 mt-1">
-                {req.tokens_output_text.toLocaleString()} text ·{' '}
-                <span className="text-violet-400">{req.tokens_output_thinking.toLocaleString()} thinking</span>
-              </p>
-            ) : (
-              <p className="text-xs text-gray-500 mt-1">click to view response ↓</p>
-            )}
+            <p className="text-xs text-gray-500 mt-1">
+              <OutputSplit
+                text={req.tokens_output_text}
+                thinking={req.tokens_output_thinking}
+                fallback="click to view response ↓"
+              />
+            </p>
           </button>
         </div>
         {/* Right: metadata grid (~75%) */}
