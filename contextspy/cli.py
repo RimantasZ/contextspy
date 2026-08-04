@@ -898,6 +898,17 @@ def setup_claude() -> None:
     console.print(
         "[dim]Run [bold]contextspy install-cert[/bold] if SSL errors occur.[/dim]\n"
     )
+    # Claude withholds thinking text by default, so the Thinking tab would show
+    # only a (derived) token count unless the user opts into summaries.
+    console.print("[bold cyan]Optional — capture reasoning text[/bold cyan]\n")
+    console.print(
+        "Claude hides its thinking by default. To see it in ContextSpy's\n"
+        "Thinking tab, add to [bold]~/.claude/settings.json[/bold]:\n"
+    )
+    console.print('  { "showThinkingSummaries": true }\n')
+    console.print(
+        "[dim]Thinking token counts are captured either way — this adds the text.[/dim]\n"
+    )
 
 
 # ---------------------------------------------------------------------------

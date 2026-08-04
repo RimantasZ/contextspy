@@ -130,6 +130,11 @@ the only signal available. Because the visible side of that subtraction is a tik
 against a different tokenizer, **all of its error lands on the thinking figure** — and since
 tiktoken tends to undercount Claude's tokenizer, `derived` thinking skews high.
 
+Getting the reasoning *text* captured moves a request off `derived` and onto the more accurate
+`estimated` path. For Claude Code that means `"showThinkingSummaries": true` in
+`~/.claude/settings.json`; other agents expose it as a `thinking.display: "summarized"` request
+parameter. Either way ContextSpy only records what the provider chose to send.
+
 ---
 
 ## Contributing

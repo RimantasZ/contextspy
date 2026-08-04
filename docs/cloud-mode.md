@@ -115,6 +115,18 @@ $env:NODE_EXTRA_CA_CERTS = "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.pem"
 contextspy setup-claude
 ```
 
+**Optional — see the reasoning text.** Current Claude models withhold thinking text by
+default, so the request detail page's Thinking tab shows only a token count. To capture
+the text as well, add to `~/.claude/settings.json`:
+
+```json
+{
+  "showThinkingSummaries": true
+}
+```
+
+Thinking *tokens* are captured either way — see the [FAQ](faq.md#the-thinking-tab-shows-a-token-count-but-no-reasoning-text).
+
 ### opencode
 
 ```bash

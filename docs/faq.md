@@ -126,6 +126,22 @@ When the provider reports exact token counts in the API response (e.g. Anthropic
 
 The estimate is deterministic for a given input, so if counts differ, the request content changed — for example, the agent added a new tool result or the conversation history grew. Token counts grow with each turn as history accumulates.
 
+### The Thinking tab shows a token count but no reasoning text
+
+That is the provider withholding it, not ContextSpy dropping it. Current Claude models default to `thinking.display: "omitted"`, which returns a thinking block with an empty text field — the reasoning happened and was billed, but the text never leaves Anthropic's side.
+
+**For Claude Code**, add this to `~/.claude/settings.json` to get the reasoning text back:
+
+```json
+{
+  "showThinkingSummaries": true
+}
+```
+
+Claude Code then asks for summarized thinking, and the Thinking tab shows the actual text instead of just the count. Note this is a *summary* of the reasoning, not the raw chain of thought — no provider exposes that.
+
+The **token count appears either way**. When the text is withheld, ContextSpy derives the count from the part of `output_tokens` the visible response does not account for, so thinking never silently reads as free. The Thinking tab labels which of the two you are looking at; see [token estimation accuracy](development.md#token-estimation-accuracy) for the caveat on derived counts.
+
 ---
 
 ## Data and privacy
