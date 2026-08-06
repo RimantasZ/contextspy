@@ -1,5 +1,41 @@
 # What's New
 
+## v0.3.3
+
+### New features
+- **Thinking / reasoning token tracking** (`#18`) — reasoning tokens are now captured across
+  every supported provider and reported as their own slice of generated output. The request
+  detail page gains a **Thinking** tab showing the reasoning text when the provider returns it,
+  and the token count when it does not. Generated-token totals now break down as
+  *output · thinking* on the request detail, session detail and overview pages, and in the
+  session PDF export.
+- **Reasoning text from OpenAI-compatible backends** — `reasoning_content` / `reasoning` fields
+  (DeepSeek, vLLM, llama-server) and Ollama's `thinking` field are now recorded as thinking
+  blocks instead of being dropped.
+
+### Fixes & improvements
+- **Anthropic thinking tokens no longer read as zero** — current Claude models default to
+  `thinking.display: "omitted"`, which returns a thinking block with no text, and the Messages
+  API never breaks reasoning out of `output_tokens`. ContextSpy now derives the count from the
+  part of `output_tokens` the visible response does not account for, so reasoning stops
+  appearing free. Add `"showThinkingSummaries": true` to `~/.claude/settings.json` to capture
+  the reasoning text as well — see the
+  [FAQ](faq.md#the-thinking-tab-shows-a-token-count-but-no-reasoning-text).
+- **OpenAI Responses API** — a reasoning item with an empty summary no longer swallows the
+  reported `reasoning_tokens`, which previously made hidden reasoning read as zero.
+- Thinking-token reconciliation is now shared by all four wire-format adapters
+  (`analysis/adapters/base.py`) rather than reimplemented in each, and every thinking block
+  records how its count was obtained — reported by the provider, estimated from the returned
+  text, or derived — surfaced in the Thinking tab and documented under
+  [token estimation accuracy](development.md#token-estimation-accuracy).
+- `contextspy setup-claude` now prints the `showThinkingSummaries` opt-in.
+
+> Counts are computed at capture time, so requests recorded before this version keep the
+> thinking totals they were stored with; the breakdown applies to traffic captured from v0.3.3
+> onward. No database migration is required.
+
+---
+
 ## v0.3.2
 
 ### New features
