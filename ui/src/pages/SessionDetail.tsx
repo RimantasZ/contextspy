@@ -227,23 +227,73 @@ export default function SessionDetail() {
       doc.text('Requests', 40, y);
       y += 6;
 
-      autoTable(doc, {
-        startY: y,
-        head: [['Time', 'Provider', 'Model', 'Tokens in', 'Tokens out', 'Status']],
-        body: reqs.map(r => [
+      // Only widen the table with the output split when the session actually
+      // has reasoning — mirrors the Summary section above.
+      const anyThinking = reqs.some(r => r.tokens_output_thinking > 0);
+
+      const head = anyThinking
+        ? ['Time', 'Provider', 'Model', 'Tokens in', 'Output', 'Thinking', 'Total out', 'Status']
+        : ['Time', 'Provider', 'Model', 'Tokens in', 'Tokens out', 'Status'];
+
+      const body = reqs.map(r => {
+        const lead = [
           new Date(r.timestamp).toLocaleString(),
           r.provider,
           r.model ?? '—',
           r.tokens_total_input.toLocaleString(),
-          r.tokens_total_output.toLocaleString(),
-          String(r.status_code ?? '—'),
-        ]),
+        ];
+        const out = anyThinking
+          ? [
+              r.tokens_output_text.toLocaleString(),
+              r.tokens_output_thinking > 0 ? r.tokens_output_thinking.toLocaleString() : '—',
+              r.tokens_total_output.toLocaleString(),
+            ]
+          : [r.tokens_total_output.toLocaleString()];
+        return [...lead, ...out, String(r.status_code ?? '—')];
+      });
+
+      // Totals row, so the per-request numbers can be reconciled against the
+      // Summary section without adding them up by hand.
+      const sum = (pick: (r: (typeof reqs)[number]) => number) => reqs.reduce((a, r) => a + pick(r), 0);
+      const footLead = ['Total', '', '', sum(r => r.tokens_total_input).toLocaleString()];
+      const footOut = anyThinking
+        ? [
+            sum(r => r.tokens_output_text).toLocaleString(),
+            sum(r => r.tokens_output_thinking).toLocaleString(),
+            sum(r => r.tokens_total_output).toLocaleString(),
+          ]
+        : [sum(r => r.tokens_total_output).toLocaleString()];
+
+      autoTable(doc, {
+        startY: y,
+        head: [head],
+        body,
+        foot: [[...footLead, ...footOut, '']],
         theme: 'striped',
         headStyles: { fillColor: [55, 65, 81] },
+        footStyles: { fillColor: [229, 231, 235], textColor: [30, 30, 30], fontStyle: 'bold' },
         margin: { left: 40, right: 40 },
         tableWidth: pageW - 80,
         styles: { fontSize: 8 },
+        columnStyles: anyThinking
+          ? { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } }
+          : { 3: { halign: 'right' }, 4: { halign: 'right' } },
       });
+      y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
+
+      // The request list is capped at 500 rows while Summary covers the whole
+      // session — say so rather than letting the two silently disagree.
+      const totalReqs = st?.request_count ?? reqs.length;
+      if (totalReqs > reqs.length) {
+        doc.setFontSize(8);
+        doc.setTextColor(120, 120, 120);
+        doc.text(
+          `Showing the ${reqs.length.toLocaleString()} most recent of ${totalReqs.toLocaleString()} requests; ` +
+            'the Summary section above covers all of them.',
+          40,
+          y,
+        );
+      }
     }
 
     // ── Save ───────────────────────────────────────────────────────────
