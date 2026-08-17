@@ -1,6 +1,6 @@
 # What's New
 
-## v0.3.4 (unreleased)
+## v0.3.4
 
 ### Fixes & improvements
 - **Token counts now use the `o200k_base` encoder** — `cl100k_base` is native only to GPT-4 and
