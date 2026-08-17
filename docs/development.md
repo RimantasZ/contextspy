@@ -99,16 +99,67 @@ across requests) is subject to the retention window above.
 
 ## Token estimation accuracy
 
-Token counts are **estimates** using tiktoken `cl100k_base` encoding.
+Token counts are **estimates** using tiktoken `o200k_base` encoding
+(`analysis/tokenizer.py: ENCODING_NAME`).
 
 | Provider | Expected error |
 |----------|----------------|
-| OpenAI (GPT-4, GPT-4o) | ~2–5% |
-| Anthropic (Claude) | ~5–15% |
+| OpenAI (GPT-5.x, GPT-4.1, GPT-4o, o-series) | ~2% — `o200k_base` is these models' native encoder |
+| OpenAI (GPT-4, GPT-3.5-turbo) | ~2–5% — these predate `o200k_base` and use `cl100k_base` natively |
+| Anthropic (Claude) | ~15–30% — see below |
 | Ollama / llama.cpp / vLLM | ~10–20% |
 
 When the provider reports exact token counts in the API response, those are stored
 alongside the estimate and shown on the request detail page for comparison.
+
+### Encoder choice, and the 0.3.4 switch
+
+ContextSpy counted with `cl100k_base` up to 0.3.3 and with `o200k_base` from 0.3.4 onwards.
+`cl100k_base` is native only to GPT-4 and GPT-3.5-turbo; every OpenAI model released since
+GPT-4o — the whole GPT-5.x line, GPT-4.1, the o-series — uses `o200k_base`, so the old
+default was an approximation for essentially all current traffic.
+
+The switch was made for correctness, not accuracy: it changes which models the counts are
+exact for, not the counts themselves. Re-encoding the captured corpus (~200 KB of real
+system prompts, tool definitions, tool results and reasoning) under both encoders gives
+totals within **0.0%** of each other, with no category off by more than 3.6%:
+
+| Content kind | `cl100k_base` | `o200k_base` | Difference |
+|---|---|---|---|
+| Tool results | 17,228 | 17,234 | +0.0% |
+| Tool definitions | 10,706 | 10,726 | +0.2% |
+| System prompt | 8,228 | 8,221 | −0.1% |
+| Thinking | 7,925 | 7,860 | −0.8% |
+| Conversation history | 2,541 | 2,560 | +0.7% |
+| **All content** | **48,953** | **48,936** | **−0.0%** |
+
+The efficiency gap `o200k_base` is known for shows up on natural language, especially
+non-English — not on the English prose, code and JSON that dominate a coding agent's
+context. It does nothing for Anthropic, whose tokenizer matches neither encoder.
+
+Every `Request` records which encoder produced its counts in the `tokenizer` column
+(`tiktoken/o200k_base`, or `tiktoken/cl100k_base` for rows captured before 0.3.4). Existing
+rows are **not** recounted — there is no migration, because the raw bodies needed to redo the
+work are purged on the retention schedule. Sessions spanning the upgrade therefore mix both,
+which given the ~0.0% difference is immaterial in aggregate but is recorded per row should it
+ever matter.
+
+### Anthropic tokenizer drift
+
+Anthropic's tokenizer has diverged from `cl100k_base` and now produces materially more
+tokens for the same text. Recent Claude requests measured against the provider's own
+`usage` show ContextSpy's estimate running **roughly 13–39% low** (small sample of
+`claude-haiku-4-5` turns), well outside the ~5–15% this table used to quote. The estimate
+is always the low side — tiktoken undercounts, it does not overcount.
+
+This affects the *input* categories too, not just output: every category in the context
+breakdown is understated by roughly the same proportion, so the *shares* between categories
+stay meaningful even when the absolute numbers are low. Where an exact number matters, use
+the provider-reported figures on the request detail page.
+
+It compounds in the `derived` reasoning case below, where the estimate is subtracted from a
+provider-reported total — there the whole error is concentrated into the thinking figure
+rather than spread across the response.
 
 ### Thinking / reasoning tokens
 
@@ -119,7 +170,7 @@ own figure — and tags each block with `attrs["token_source"]` recording how it
 
 | `token_source` | When | Accuracy |
 |----------------|------|----------|
-| `provider` | The API reports a reasoning count (OpenAI `reasoning_tokens`) | Exact — it is what was billed |
+| `provider` | The API reports a reasoning count (OpenAI `reasoning_tokens`) | Usually exact — but see the Codex caveat below |
 | `estimated` | No count, but the text came back (Anthropic `display: "summarized"`, Ollama `thinking`, DeepSeek/vLLM `reasoning_content`) | Same band as the table above |
 | `derived` | Neither count nor text (Anthropic `display: "omitted"` — the default on current Claude models — and `redacted_thinking`) | Residual of `output_tokens` minus the estimated visible output |
 | `unknown` | Nothing to go on (no count, no text, no `output_tokens`) | Reported as 0 |
@@ -134,6 +185,17 @@ Getting the reasoning *text* captured moves a request off `derived` and onto the
 `estimated` path. For Claude Code that means `"showThinkingSummaries": true` in
 `~/.claude/settings.json`; other agents expose it as a `thinking.display: "summarized"` request
 parameter. Either way ContextSpy only records what the provider chose to send.
+
+**Codex on a ChatGPT plan — `reasoning_tokens` can describe only the summary.** On the
+`chatgpt.com/backend-api/codex/responses` endpoint, the reported `reasoning_tokens` sometimes
+covers just the short reasoning summary rather than the hidden reasoning that was actually
+billed. Because `provider` outranks every other source, that figure is taken at face value and
+the remainder is not attributed anywhere — the request's totals then fall short of
+`output_tokens` with no category to account for the difference. Most turns reconcile to within
+a few tokens; the failure mode is a turn with heavy hidden reasoning behind a one-line summary
+(one observed example: 29 visible + 444 reported reasoning against 2,535 billed output tokens,
+leaving 2,062 unaccounted). Compare **Tokens out** with the provider figure on the request
+detail page to spot it.
 
 ---
 

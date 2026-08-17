@@ -141,7 +141,7 @@ derived data for existing requests), `contextspy start` will print a warning —
 | CLI | [Typer](https://typer.tiangolo.com/) |
 | Proxy | [mitmproxy](https://mitmproxy.org/) — TLS-terminating forward proxy (cloud) and reverse proxy (local) |
 | Storage | SQLite via [SQLAlchemy](https://www.sqlalchemy.org/) — all data local in `~/.contextspy/` |
-| Tokenizer | [tiktoken](https://github.com/openai/tiktoken) (`cl100k_base`) for token estimation |
+| Tokenizer | [tiktoken](https://github.com/openai/tiktoken) (`o200k_base`) for token estimation |
 | Packaging | [uv](https://github.com/astral-sh/uv), Homebrew tap, `.deb`, standalone binary |
 
 ## Features

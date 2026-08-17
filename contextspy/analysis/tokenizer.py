@@ -19,6 +19,18 @@ import tiktoken
 
 _encoder: tiktoken.Encoding | None = None
 
+# The encoder every count is made with, and the identifier stamped on each
+# Request so counts made under different encoders stay distinguishable.
+#
+# o200k_base is native to every OpenAI model from GPT-4o onwards (the GPT-5.x
+# line, GPT-4.1, the o-series); cl100k_base, used until 0.3.4, is native only to
+# GPT-4 and GPT-3.5-turbo. The two agree to within ~0.0% on agent traffic
+# (English prose, code, tool JSON), so this changes which models the counts are
+# exact for, not the counts themselves. Neither matches Anthropic's tokenizer —
+# see docs/development.md for the error bands.
+ENCODING_NAME = "o200k_base"
+TOKENIZER_ID = f"tiktoken/{ENCODING_NAME}"
+
 # Proxy env vars that tiktoken inherits when downloading its BPE data file.
 _PROXY_VARS = (
     "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY",
@@ -27,7 +39,7 @@ _PROXY_VARS = (
 
 
 def _get_encoder() -> tiktoken.Encoding:
-    """Return the shared cl100k_base encoder, downloading it if necessary.
+    """Return the shared encoder, downloading it if necessary.
 
     Proxy env vars are stripped for the duration of the download so that
     tiktoken can reach openaipublic.blob.core.windows.net directly, even
@@ -38,14 +50,14 @@ def _get_encoder() -> tiktoken.Encoding:
     if _encoder is None:
         saved = {k: os.environ.pop(k) for k in _PROXY_VARS if k in os.environ}
         try:
-            _encoder = tiktoken.get_encoding("cl100k_base")
+            _encoder = tiktoken.get_encoding(ENCODING_NAME)
         finally:
             os.environ.update(saved)
     return _encoder
 
 
 def count_tokens(text: str) -> int:
-    """Count tokens using tiktoken cl100k_base (universal approximation)."""
+    """Count tokens using tiktoken o200k_base (universal approximation)."""
     if not text:
         return 0
     return len(_get_encoder().encode(text, disallowed_special=()))

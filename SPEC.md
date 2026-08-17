@@ -337,17 +337,20 @@ chips that scroll to and highlight the linked block.
 ### 5.3 Token Counter
 
 **Library:** `tiktoken`  
-**Encoder:** `cl100k_base` (used as a universal approximation for all providers and models).
+**Encoder:** `o200k_base` (used as a universal approximation for all providers and models; `cl100k_base` up to 0.3.3).
 
 **Expected accuracy:**
-- OpenAI models (`gpt-4`, `gpt-4o`, `o1`, etc.): exact (this is the native encoder).
-- Anthropic Claude models: ~5–15% error for English code/prose; up to ~20% for heavy tool JSON or non-English content.
+- OpenAI `gpt-5.x`, `gpt-4.1`, `gpt-4o`, o-series: exact (this is their native encoder).
+- OpenAI `gpt-4` / `gpt-3.5-turbo`: ~2–5%. These predate `o200k_base` and use `cl100k_base`
+  natively, but the two encoders agree to within ~0.0% on captured agent traffic (code, tool
+  JSON, English prose).
+- Anthropic Claude models: ~15–30% undercount — their tokenizer matches neither encoder and yields materially more tokens for the same text (measured 13–39% on recent `claude-haiku-4-5` turns against the provider's own `usage`). Always the low side, never high.
 - Ollama models: ~10–20% error depending on model family (LLaMA, Mistral, Qwen, etc.).
 
-All token count records include a `tokenizer` field set to `"tiktoken/cl100k_base"` so that future re-counting with native tokenizers is possible without schema changes.
+All token count records include a `tokenizer` field set to `"tiktoken/o200k_base"` (rows written before 0.3.4 carry `"tiktoken/cl100k_base"`) so that counts made under different encoders stay distinguishable, and so future re-counting with native tokenizers is possible without schema changes.
 
 **Proxy bypass during initialisation:**  
-When the `cl100k_base` encoder is first loaded, tiktoken downloads the encoding data file from the internet. If proxy environment variables (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and their lowercase variants) are set — which they will be when ContextSpy routes traffic through itself — the download attempt is routed through the proxy, resulting in a `ProxyError`. To prevent this, `_get_encoder()` strips all proxy env vars from `os.environ` before calling `tiktoken.get_encoding()`, then restores them in a `finally` block. The encoder is cached globally so this only happens once per process.
+When the encoder is first loaded, tiktoken downloads the encoding data file from the internet. If proxy environment variables (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and their lowercase variants) are set — which they will be when ContextSpy routes traffic through itself — the download attempt is routed through the proxy, resulting in a `ProxyError`. To prevent this, `_get_encoder()` strips all proxy env vars from `os.environ` before calling `tiktoken.get_encoding()`, then restores them in a `finally` block. The encoder is cached globally so this only happens once per process.
 
 **What is counted:**
 - Each `Block`'s `token_count` is computed individually (`Block.make()` calls `tiktoken.encode()`
@@ -423,7 +426,7 @@ CREATE TABLE requests (
 
     session_seq                     INTEGER,            -- this request's ordinal within its session
 
-    tokenizer                       TEXT NOT NULL DEFAULT 'tiktoken/cl100k_base',
+    tokenizer                       TEXT NOT NULL DEFAULT 'tiktoken/o200k_base',
 
     -- Raw content — purged per [retention] settings
     raw_request_body                TEXT,
@@ -1074,6 +1077,6 @@ When `contextspy start-local` is called:
 | `sys.exit(1)` killing uvicorn on port conflict | mitmproxy's built-in `ErrorCheck` addon calls `sys.exit` on any startup error | Remove `ErrorCheck` from `master.addons.chain` after construction |
 | `is_running()` returning `True` when proxy is not bound | Only checked thread liveness | Added `_bound` flag set via `_BindWatcher` log handler |
 | Hooks not firing for Claude Code requests | Claude Code uses SSE streaming; `response()` hook never fires for `text/event-stream` | Added `responseheaders()` hook + streaming callback that collects SSE chunks |
-| `tiktoken` `ProxyError` on first run | tiktoken downloads `cl100k_base` data at first use; with `HTTPS_PROXY` set, the download is routed through the local proxy which can't handle it | `_get_encoder()` strips all proxy env vars from `os.environ` before calling `tiktoken.get_encoding()`, restores them in `finally` |
+| `tiktoken` `ProxyError` on first run | tiktoken downloads the encoder data at first use; with `HTTPS_PROXY` set, the download is routed through the local proxy which can't handle it | `_get_encoder()` strips all proxy env vars from `os.environ` before calling `tiktoken.get_encoding()`, restores them in `finally` |
 | macOS cert install: `SecCertificateCreateFromData: Unknown format in import` | `cert.py` Darwin branch passes `mitmproxy-ca.pem` (key + cert bundle) to `security add-trusted-cert`; macOS requires the cert-only file | **Fixed.** `cert.py` now uses `mitmproxy-ca-cert.pem` (cert-only PEM) on all platforms. |
 | `contextspy db-upgrade` crashed with `OperationalError: no such column: requests.session_seq` on a pre-refactor DB | New `Request` columns (`tokens_output_text`, `tokens_output_thinking`, `provider_reasoning_tokens`, `usage_extra`, `session_seq`) were added to `db/models.py` but not to `db/database.py: _migrate()`'s `new_columns` list — `create_all()` only creates missing *tables*, not missing *columns* on existing ones | **Fixed.** Added the missing entries to `new_columns`. Rule going forward: every new/changed column on an existing table must be added there (see §5.4 "Schema Migrations"). |

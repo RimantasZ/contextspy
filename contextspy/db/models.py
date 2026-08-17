@@ -28,6 +28,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from contextspy.analysis.tokenizer import TOKENIZER_ID
+
 
 class Base(DeclarativeBase):
     pass
@@ -103,8 +105,10 @@ class Request(Base):
     # Ordinal of this request within its session (1, 2, 3, ...); NULL when session_id is NULL
     session_seq: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # Which encoder produced this row's counts. Rows captured before 0.3.4 read
+    # "tiktoken/cl100k_base"; see analysis/tokenizer.py for why it changed.
     tokenizer: Mapped[str] = mapped_column(
-        String, nullable=False, default="tiktoken/cl100k_base"
+        String, nullable=False, default=TOKENIZER_ID
     )
 
     # Raw content (Nulled after a retention period, if configured)

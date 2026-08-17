@@ -108,16 +108,31 @@ Yes, for the proxy itself. The only step that requires elevated privileges is in
 Token counts are estimates, not exact counts. The intention of ContextSpy is to provide rough estimates rather than exact counts.
 It is more aimed at cases where the user needs the ability to compare different configurations and their impact on token use, rather than precise token tracking and monitoring.
 
-Counts are estimates using tiktoken `cl100k_base`. While its estimated accuracy depends on the provider:
+Counts are estimates using tiktoken `o200k_base`. While its estimated accuracy depends on the provider:
 
 | Provider | Expected error |
 |---|---|
-| OpenAI (GPT-4, GPT-4o) | ~2–5% |
-| Anthropic (Claude) | ~5–15% |
+| OpenAI (GPT-5.x, GPT-4.1, GPT-4o, o-series) | ~2% |
+| OpenAI (GPT-4, GPT-3.5-turbo) | ~2–5% |
+| Anthropic (Claude) | ~15–30% |
 | Ollama / llama.cpp / vLLM | ~10–20% |
 
-In practice, error margins can be bigger - for example, for recent Opus models Anthropic increased token count by approx 30%.
-Again, the best use case is to use these numbers as comparative metrics between "case A" and "case B" - rather than as an exact count.
+`o200k_base` is the native encoder for every current OpenAI model, which is why their counts
+are close to exact. Versions up to 0.3.3 used `cl100k_base` — the two agree to within a
+fraction of a percent on the code, JSON and English prose that make up a coding agent's
+context, so upgrading does not shift your numbers; see
+[encoder choice](development.md#encoder-choice-and-the-034-switch) for the measurements.
+
+**Anthropic is the notable outlier.** Their tokenizer has diverged from `cl100k_base` and now
+yields materially more tokens for the same text — recent Claude requests measured against the
+provider's own `usage` come out **13–39% above** ContextSpy's estimate. The estimate is always
+the low side; tiktoken undercounts here, it never overcounts.
+
+Because the skew applies to all categories roughly equally, the *proportions* in the context
+breakdown stay useful even when the absolute numbers are low — which is the intended use of
+these numbers anyway: comparative metrics between "case A" and "case B" rather than an exact
+count. See [token estimation accuracy](development.md#anthropic-tokenizer-drift) for detail,
+including how this compounds for derived thinking counts.
 
 When the provider reports exact token counts in the API response (e.g. Anthropic's `usage` field), those are stored alongside the estimate and shown on the request detail page.
 

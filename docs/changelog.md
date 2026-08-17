@@ -1,5 +1,23 @@
 # What's New
 
+## v0.3.4 (unreleased)
+
+### Fixes & improvements
+- **Token counts now use the `o200k_base` encoder** — `cl100k_base` is native only to GPT-4 and
+  GPT-3.5-turbo, while every OpenAI model since GPT-4o (the GPT-5.x line, GPT-4.1, the o-series)
+  uses `o200k_base`. The two encoders agree to within ~0.0% on agent traffic, so your numbers do
+  not shift; what changes is that the OpenAI counts are now exact by construction rather than by
+  coincidence. Existing rows are not recounted, and each `Request` records which encoder produced
+  it in the `tokenizer` column. See
+  [encoder choice](development.md#encoder-choice-and-the-034-switch).
+- **Documented the Anthropic tokenizer drift** — Claude's tokenizer has diverged from tiktoken's,
+  and ContextSpy's estimates now run ~15–30% low against Anthropic's reported `usage` (measured
+  13–39%). The error bands in the FAQ and developer docs have been corrected, along with the note
+  that it lands entirely on the thinking figure when a reasoning count has to be derived.
+- **Session PDF export splits generated tokens** — the Requests table now shows *Output*,
+  *Thinking* and *Total out* as separate columns when a session contains reasoning, adds a totals
+  row, and states when the 500-row cap has truncated the list relative to the Summary section.
+
 ## v0.3.3
 
 ### New features
