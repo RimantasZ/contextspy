@@ -125,9 +125,9 @@ function blockLabel(b: RequestBlock): string {
     case "thinking":
       return `Thinking${b.message_index != null ? ` (msg ${b.message_index})` : ""}`;
     case "user_message":
-      return `User${b.message_index != null ? ` ${b.message_index}` : ""}`;
+      return `User${b.message_index != null ? ` (msg ${b.message_index})` : ""}`;
     case "assistant_message":
-      return `Assistant${b.message_index != null ? ` ${b.message_index}` : ""}`;
+      return `Assistant${b.message_index != null ? ` (msg ${b.message_index})` : ""}`;
     default:
       return b.block_type;
   }
