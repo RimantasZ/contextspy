@@ -175,6 +175,8 @@ class ContextSpyAddon:
             return  # the 101 upgrade response itself — real traffic goes through the ws_* hooks
         if flow.metadata.get("is_sse"):
             return  # handled by the SSE stream callback
+        if flow.response is None:
+            return  # no response to process (e.g., connection error)
         try:
             self._handle_response(flow)
         except Exception as exc:
