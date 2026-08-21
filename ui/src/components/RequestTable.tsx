@@ -33,7 +33,8 @@ const AGENT_COLORS: Record<string, string> = {
 export type SortKey =
   | 'timestamp'
   | 'tokens_total_input'
-  | 'tokens_total_output'
+  | 'tokens_output_text'
+  | 'tokens_output_thinking'
   | 'duration_ms'
   | 'status_code'
   | 'session'
@@ -200,7 +201,8 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortK
           <tr className="text-left text-gray-400 border-b border-gray-700">
             <SortHeader label="Time" col="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-36" />
             <SortHeader label="Tokens (in)" col="tokens_total_input" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-            <SortHeader label="Tokens (out)" col="tokens_total_output" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+            <SortHeader label="Output" col="tokens_output_text" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+            <SortHeader label="Thinking" col="tokens_output_thinking" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
             <th className="pb-2 pr-3 font-medium whitespace-nowrap" style={{ minWidth: 256 }}>Context</th>
             <SortHeader label="Duration" col="duration_ms" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
             <SortHeader label="Status" col="status_code" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
@@ -224,7 +226,10 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortK
                 {req.tokens_total_input > 0 ? req.tokens_total_input.toLocaleString() : '—'}
               </td>
               <td className="py-2 pr-3 text-right text-gray-300">
-                {req.tokens_total_output > 0 ? req.tokens_total_output.toLocaleString() : '—'}
+                {req.tokens_output_text > 0 ? req.tokens_output_text.toLocaleString() : '—'}
+              </td>
+              <td className="py-2 pr-3 text-right text-gray-300">
+                {req.tokens_output_thinking > 0 ? req.tokens_output_thinking.toLocaleString() : '—'}
               </td>
               <td className="py-2 pr-3">
                 <ContextBar data={req} />
