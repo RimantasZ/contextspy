@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from mitmproxy.options import Options
@@ -233,6 +234,7 @@ def start_local_proxies(
         )
         _reverse_threads.append(t)
         t.start()
+        time.sleep(0.1)  # Stagger startup to avoid race conditions in mitmproxy init
         logger.info(
             "Reverse proxy [%s] starting: localhost:%d → %s (provider=%s)",
             target.name, target.listen_port, target.target_url, target.provider,
