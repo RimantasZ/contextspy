@@ -11,13 +11,13 @@ verified yet. If you get one working, please open an issue or PR so it can be ad
       <th>Coding agent</th>
       <th>Provider API</th>
       <th>OS</th>
-      <th>Notes / specifics</th>
+      <th>Notes</th>
     </tr>
   </thead>
   <tbody>
     <!-- Claude Code -->
     <tr>
-      <td rowspan="1"><strong>Claude Code</strong><br><em>(claude CLI)</em></td>
+      <td rowspan="1">Claude Code</td>
       <td>Anthropic<br><code>api.anthropic.com</code></td>
       <td>macOS<br>Windows</td>
       <td>
@@ -94,43 +94,5 @@ verified yet. If you get one working, please open an issue or PR so it can be ad
       </td>
     </tr>
     <!-- Python / OpenAI SDK -->
-    <tr>
-      <td rowspan="3"><strong>Python scripts</strong><br><em>(OpenAI SDK / httpx)</em></td>
-      <td>llama.cpp<br><code>llama-server</code></td>
-      <td rowspan="3">macOS<br>Windows</td>
-      <td rowspan="3">
-        Local (reverse proxy) mode — <code>contextspy start-local</code>. <strong>No CA certificate
-        needed</strong>; loopback traffic bypasses <code>HTTPS_PROXY</code> entirely, which is why forward-proxy
-        mode can't be used here.<br><br>
-        Add one <code>[[reverse_targets]]</code> block per server to <code>~/.contextspy/config.toml</code>
-        with <code>provider = "openai"</code>, then point the client's <code>base_url</code> at ContextSpy's
-        <code>listen_port</code> instead of the server's own port. Defaults:
-        llama-server 8080 → 8889, Ollama 11434 → 8890, vLLM 8000 → 8891
-        (<code>contextspy setup-llamaserver</code> / <code>-ollama</code> / <code>-vllm</code>).<br><br>
-        All three expose the OpenAI-compatible <code>/v1/chat/completions</code> endpoint
-        (Ollama ≥ 0.1.24). Ollama's raw <code>/api/generate</code> and <code>/api/chat</code> endpoints are
-        <strong>not</strong> parsed.<br><br>
-        For <em>cloud</em> APIs from Python, note that httpx verifies against certifi and ignores
-        <code>SSL_CERT_FILE</code> — use <code>contextspy inject-cert</code> or pass an explicit
-        <code>httpx.Client(proxy=..., verify=...)</code> (see <code>contextspy setup-python</code>).
-      </td>
-    </tr>
-    <tr>
-      <td>Ollama<br><code>/v1/chat/completions</code></td>
-    </tr>
-    <tr>
-      <td>vLLM</td>
-    </tr>
   </tbody>
 </table>
-
-## Notes on OS coverage
-
-- **macOS** — Gatekeeper quarantines binaries downloaded from GitHub releases; run
-  `xattr -d com.apple.quarantine` on the extracted files. `sudo` is required for
-  `contextspy install-cert`.
-- **Windows** — `contextspy install-cert` must be run from an **elevated** prompt. Windows Defender
-  may flag the release binary because it bundles mitmproxy; install from PyPI if you can't add an
-  exception. Use the PowerShell (`$env:...`) form of every env var shown above.
-- **Linux** — not yet verified end-to-end, though installation is documented
-  (see [Installation](install.md)) and nothing is known to be platform-specific.
