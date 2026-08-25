@@ -1225,6 +1225,95 @@ class TestBlockPersistence:
         assert blocks_r1[0]["content"] == shared_text
         assert blocks_r2[0]["content"] == shared_text
 
+    def test_first_seen_session_seq(self, tmp_path):
+        """first_seen_session_seq reports the earliest session_seq (within the same
+        session) a piece of content — matched by content_hash — appeared at, not the
+        session_seq of the request being read."""
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+        from contextspy.analysis.blocks import Block
+
+        init_db(tmp_path / "first_seen.db")
+        system_prompt = Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, "You are helpful.")
+        turn1 = Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "first turn", message_index=0)
+        turn2 = Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "second turn", message_index=1)
+        turn3 = Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "third turn", message_index=2)
+
+        with get_db() as db:
+            session = crud.create_session(db, "s1")
+
+            req1 = crud.create_request(db, {
+                "id": "fs-req1", "session_id": session.id, "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, req1.id, [
+                Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, "You are helpful."),
+                Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "first turn", message_index=0),
+            ])
+
+            req2 = crud.create_request(db, {
+                "id": "fs-req2", "session_id": session.id, "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, req2.id, [
+                Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, "You are helpful."),
+                Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "first turn", message_index=0),
+                Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "second turn", message_index=1),
+            ])
+
+            req3 = crud.create_request(db, {
+                "id": "fs-req3", "session_id": session.id, "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, req3.id, [
+                Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, "You are helpful."),
+                Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "first turn", message_index=0),
+                Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "second turn", message_index=1),
+                Block.make(Direction.INPUT, BlockType.USER_MESSAGE, "third turn", message_index=2),
+            ])
+
+            # Same content in a different session must not leak into session 1's
+            # first-seen calculation.
+            other_session = crud.create_session(db, "s2")
+            req_other = crud.create_request(db, {
+                "id": "fs-req-other", "session_id": other_session.id, "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, req_other.id, [
+                Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, "You are helpful."),
+            ])
+
+            # A request with no session at all — first_seen_session_seq must be None.
+            req_no_session = crud.create_request(db, {
+                "id": "fs-req-nosession", "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+            })
+            crud.insert_blocks(db, req_no_session.id, [
+                Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, "You are helpful."),
+            ])
+
+            assert req1.session_seq == 1
+            assert req2.session_seq == 2
+            assert req3.session_seq == 3
+            assert req_other.session_seq == 1
+
+        with get_db() as db:
+            blocks_req3 = crud.get_blocks(db, "fs-req3")
+            blocks_other = crud.get_blocks(db, "fs-req-other")
+            blocks_no_session = crud.get_blocks(db, "fs-req-nosession")
+
+        by_content_req3 = {b["content"]: b for b in blocks_req3}
+        assert by_content_req3["You are helpful."]["first_seen_session_seq"] == 1
+        assert by_content_req3["first turn"]["first_seen_session_seq"] == 1
+        assert by_content_req3["second turn"]["first_seen_session_seq"] == 2
+        assert by_content_req3["third turn"]["first_seen_session_seq"] == 3
+
+        # Session 2 saw the (identical) system prompt for the first time in its own
+        # request #1, unaffected by session 1 having seen it back at #1 too.
+        assert blocks_other[0]["first_seen_session_seq"] == 1
+
+        assert blocks_no_session[0]["first_seen_session_seq"] is None
+
     def test_tool_block_links(self, tmp_path):
         """tool_call/tool_result blocks link to their tool_definition; tool_result also
         links to its tool_call — resolved at read time via tool_name/tool_call_id, no
