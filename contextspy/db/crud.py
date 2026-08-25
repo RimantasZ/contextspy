@@ -375,6 +375,27 @@ def get_blocks(db: OrmSession, request_id: str) -> list[dict]:
         .order_by(BlockRecord.direction.asc(), BlockRecord.position.asc())
     ).all()
 
+    # First-seen tracking: content is deduped by hash (see insert_blocks), so the
+    # same system prompt / growing conversation turn recurs verbatim across many
+    # requests in a session. For each hash in this request, find the earliest
+    # session_seq (within the same session) at which it appeared — lets the UI
+    # show when a piece of context first entered the window rather than just that
+    # it's present now.
+    session_id = db.execute(
+        select(Request.session_id).where(Request.id == request_id)
+    ).scalar_one_or_none()
+
+    first_seen: dict[str, int] = {}
+    if session_id is not None:
+        hashes = {r.content_hash for r, _ in rows if r.content_hash is not None}
+        if hashes:
+            first_seen = dict(db.execute(
+                select(BlockRecord.content_hash, func.min(Request.session_seq))
+                .join(Request, BlockRecord.request_id == Request.id)
+                .where(Request.session_id == session_id, BlockRecord.content_hash.in_(hashes))
+                .group_by(BlockRecord.content_hash)
+            ).all())
+
     # Resolve tool_call <-> tool_definition and tool_result <-> tool_call/tool_definition
     # links from the join keys already on each block (tool_name, tool_call_id) — no
     # extra query, and no stored FK needed since both sides of each link always live
@@ -426,6 +447,7 @@ def get_blocks(db: OrmSession, request_id: str) -> list[dict]:
             linked_call_id=linked_call_id,
             linked_definition_id=linked_definition_id,
             linked_previous_message_id=linked_previous_message_id,
+            first_seen_session_seq=first_seen.get(record.content_hash) if record.content_hash else None,
         ))
     return result
 

@@ -290,6 +290,11 @@ function ContextOverview({
             <span
               className={`text-xs font-medium ${CAT_LABEL[visualOf(selectedBlock)]} truncate min-w-0`}
             >
+              {selectedBlock.first_seen_session_seq != null && (
+                <span className="text-gray-500 mr-1.5" title="First appeared in this request">
+                  First seen in #{selectedBlock.first_seen_session_seq} ·
+                </span>
+              )}
               {blockLabel(selectedBlock)}
             </span>
             <div className="flex items-center gap-2 shrink-0">

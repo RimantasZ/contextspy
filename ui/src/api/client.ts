@@ -162,6 +162,9 @@ export interface RequestBlock {
   linked_call_id: number | null
   linked_definition_id: number | null
   linked_previous_message_id: number | null
+  /** Earliest session_seq (within the same session) this block's content was
+   *  first seen at; null with no session, or no content to hash (e.g. structural blocks). */
+  first_seen_session_seq: number | null
 }
 
 export interface ProxyStatus {

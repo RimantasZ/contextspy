@@ -239,6 +239,7 @@ class BlockRecord(Base):
         linked_call_id: int | None = None,
         linked_definition_id: int | None = None,
         linked_previous_message_id: int | None = None,
+        first_seen_session_seq: int | None = None,
     ) -> dict:
         return {
             "id": self.id,
@@ -256,6 +257,10 @@ class BlockRecord(Base):
             "linked_call_id": linked_call_id,
             "linked_definition_id": linked_definition_id,
             "linked_previous_message_id": linked_previous_message_id,
+            # Earliest session_seq (within the same session) this content_hash
+            # was first seen at — null when the request has no session, or the
+            # block has no content_hash (e.g. purely structural blocks).
+            "first_seen_session_seq": first_seen_session_seq,
         }
 
 
