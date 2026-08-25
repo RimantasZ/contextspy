@@ -40,11 +40,10 @@ function fmtMs(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatDuration(startedAt: string, endedAt: string | null): string {
-  if (!endedAt) return 'active';
-  const diffMs = new Date(endedAt).getTime() - new Date(startedAt).getTime();
-  if (diffMs < 0) return '—';
-  const totalSeconds = Math.floor(diffMs / 1000);
+function formatDuration(durationMs: number | null): string {
+  if (durationMs === null) return 'active';
+  if (durationMs < 0) return '—';
+  const totalSeconds = Math.floor(durationMs / 1000);
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
   const s = totalSeconds % 60;
@@ -121,7 +120,7 @@ function SessionsTable({ entries, onSessionClick }: {
                   {formatStart(entry.started_at)}
                 </td>
                 <td className="py-2 pr-4 text-gray-400 whitespace-nowrap">
-                  {formatDuration(entry.started_at, entry.ended_at)}
+                  {formatDuration(entry.duration_ms)}
                 </td>
                 <td className="py-2 pr-4 text-gray-300 text-right tabular-nums">
                   {entry.request_count.toLocaleString()}
@@ -197,12 +196,11 @@ function ModelBreakdown({ byModel, onModelClick }: {
   );
 }
 
-function LatencyPanel({ latency, byStatus }: { latency: LatencyStats | undefined; byStatus: Record<string, number> | undefined }) {
-  const errorCount = Object.entries(byStatus ?? {})
-    .filter(([code]) => code !== 'unknown' && parseInt(code) >= 400)
-    .reduce((s, [, n]) => s + n, 0);
-  const unknownCount = byStatus?.['unknown'] ?? 0;
-
+function LatencyPanel({ latency, errorCount, unknownCount }: {
+  latency: LatencyStats | undefined;
+  errorCount: number;
+  unknownCount: number;
+}) {
   const rows = [
     { label: 'Avg', value: fmtMs(latency?.avg_ms ?? null) },
     { label: 'P50', value: fmtMs(latency?.p50_ms ?? null) },
@@ -310,7 +308,7 @@ export default function Overview() {
         </div>
         <div className="bg-gray-800 rounded-lg p-4">
           <p className="text-sm font-medium text-gray-300 mb-3">Latency &amp; Errors</p>
-          <LatencyPanel latency={s?.latency} byStatus={s?.by_status} />
+          <LatencyPanel latency={s?.latency} errorCount={s?.error_count ?? 0} unknownCount={s?.unknown_status_count ?? 0} />
         </div>
       </div>
 

@@ -42,10 +42,8 @@ function SortHeader({
   );
 }
 
-function formatDuration(start: string, end: string | null): string {
-  const from = new Date(start).getTime();
-  const to = end ? new Date(end).getTime() : Date.now();
-  const secs = Math.floor((to - from) / 1000);
+function formatDuration(durationMs: number): string {
+  const secs = Math.floor(durationMs / 1000);
   if (secs < 60) return `${secs}s`;
   if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
@@ -104,10 +102,11 @@ export default function Sessions() {
     }
   }
 
+  // duration_ms is null only while a session is still active; approximate it
+  // live from the start timestamp until the backend reports a final value.
   function getDurationMs(e: SessionSummaryEntry): number {
-    const from = new Date(e.started_at).getTime();
-    const to = e.ended_at ? new Date(e.ended_at).getTime() : Date.now();
-    return to - from;
+    if (e.duration_ms !== null) return e.duration_ms;
+    return Date.now() - new Date(e.started_at).getTime();
   }
 
   const sorted = sortKey
@@ -176,7 +175,7 @@ export default function Sessions() {
                     {new Date(s.started_at).toLocaleString()}
                   </td>
                   <td className="px-4 py-3 text-gray-400">
-                    {formatDuration(s.started_at, s.ended_at)}
+                    {formatDuration(getDurationMs(s))}
                   </td>
                   <td className="px-4 py-3">
                     {s.ended_at === null ? (

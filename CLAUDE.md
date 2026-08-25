@@ -38,6 +38,27 @@ data (`[tool.setuptools.package-data]` in pyproject.toml). After changing anythi
 running app — `contextspy start` serves the pre-built `_web/`, not the Vite dev server. During
 active UI work, use `make dev-ui` + `make dev-backend` instead.
 
+## Policy: analysis logic lives in Python
+
+All logic related to request analysis, breaking requests down into blocks, and identifying the
+composition of the token window (categorization, aggregation, per-tool/per-category totals,
+detecting file contents / cache hits / thresholds, or any "what counts as X" decision) **must be
+implemented in the Python backend** (`analysis/`, `db/`), never in the frontend. The frontend
+(`ui/src/`) should only format, chart-layout, and display numbers the API already computed — it
+must not re-derive token counts, percentages, categories, or aggregates from raw block data in
+JS/TS. This keeps analysis behavior identical across the CLI, API, and UI, and keeps it covered
+by `tests/test_providers.py`.
+
+When this requires a new field on `Block`/`Request`/`BlockRecord` or a new derived/backfillable
+column, update `db/models.py` **and** follow the schema-change steps below (`db/database.py:
+_migrate()` for additive columns; `db/migrations.py` `_migrate_to_vN` + `SCHEMA_VERSION` bump for
+backfilled/derived data) — don't let a schema change ship without its migration step.
+
+When touching existing frontend code, if you notice analysis/classification/aggregation logic
+that was implemented client-side, treat it as a bug: move it into the appropriate Python module
+(`analysis/classifier.py` for categorization, `analysis/blocks.py` for block-level derivations,
+a router under `api/routers/` to expose it) and have the frontend consume the computed result.
+
 ## Architecture
 
 ### Request flow (the core pipeline)

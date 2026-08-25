@@ -272,6 +272,10 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         key = str(r.status_code) if r.status_code is not None else "unknown"
         by_status[key] = by_status.get(key, 0) + 1
 
+    # error/unknown counts derived from by_status (status_code >= 400 is an error)
+    error_count = sum(n for code, n in by_status.items() if code != "unknown" and int(code) >= 400)
+    unknown_status_count = by_status.get("unknown", 0)
+
     # session timing derived from request timestamps
     timestamps = [r.timestamp for r in rows]
     first_ts = min(timestamps)
@@ -295,6 +299,8 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         "by_model": by_model,
         "latency": latency,
         "by_status": by_status,
+        "error_count": error_count,
+        "unknown_status_count": unknown_status_count,
         "session_timing": session_timing,
     }
 
@@ -317,6 +323,8 @@ def _empty_stats() -> dict:
         "by_model": {},
         "latency": _empty_latency,
         "by_status": {},
+        "error_count": 0,
+        "unknown_status_count": 0,
         "session_timing": _empty_timing,
     }
 
@@ -588,12 +596,14 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
         ]
         if not reqs:
             continue
+        gap_start, gap_end = reqs[0].timestamp, reqs[-1].timestamp
         entries.append({
             "type": "gap",
             "session_id": None,
             "name": None,
-            "started_at": reqs[0].timestamp.isoformat(),
-            "ended_at": reqs[-1].timestamp.isoformat(),
+            "started_at": gap_start.isoformat(),
+            "ended_at": gap_end.isoformat(),
+            "duration_ms": int((gap_end - gap_start).total_seconds() * 1000),
             "is_active": False,
             "request_count": len(reqs),
             "tokens_in": sum(r.tokens_total_input for r in reqs),
@@ -618,12 +628,17 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
     }
     for s in sessions:
         stats = session_stats.get(s.id, _empty)
+        duration_ms = (
+            int((s.ended_at - s.started_at).total_seconds() * 1000)
+            if s.ended_at else None
+        )
         entries.append({
             "type": "session",
             "session_id": s.id,
             "name": s.name,
             "started_at": s.started_at.isoformat(),
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+            "duration_ms": duration_ms,
             "is_active": bool(s.is_active),
             "request_count": stats["req_count"],
             "tokens_in": stats["tok_in"],

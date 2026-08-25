@@ -106,6 +106,9 @@ export interface Stats {
   by_model: Record<string, number>
   latency: LatencyStats
   by_status: Record<string, number>
+  /** Count of requests with status_code >= 400. */
+  error_count: number
+  unknown_status_count: number
   session_timing: SessionTiming
 }
 
@@ -121,6 +124,8 @@ export interface SessionSummaryEntry {
   name: string | null
   started_at: string
   ended_at: string | null
+  /** null while active (no ended_at yet). */
+  duration_ms: number | null
   is_active: boolean
   request_count: number
   tokens_in: number
