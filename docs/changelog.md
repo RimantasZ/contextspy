@@ -1,5 +1,16 @@
 # What's New
 
+## Unreleased
+
+### Fixes & improvements
+- **Complete normalized stream capture** — SSE, Ollama NDJSON, and registered WebSocket responses
+  are reconstructed into canonical provider JSON before analysis. The request detail now exposes
+  both that JSON and the ordered normalized event/frame log, retaining unknown fields, errors,
+  and non-JSON application data instead of storing a response synthesized from parsed text.
+- Reconstruction, persistence, and block analysis now have separate failure boundaries. Failed or
+  incomplete upstream calls remain inspectable, with capture status metadata, and stream event
+  logs are purged alongside request/response bodies by the existing retention policy.
+
 ## v0.3.4
 
 ### Fixes & improvements

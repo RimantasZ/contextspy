@@ -19,6 +19,7 @@ format (e.g. GitHub Copilot -> Claude, opencode's zen gateway).
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
@@ -26,6 +27,7 @@ from contextspy.analysis.adapters.base import (
     reconcile_thinking,
 )
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
+from contextspy.analysis.capture import CanonicalResponse, CapturedEvent
 
 
 def _cache_attrs(part: dict) -> dict:
@@ -207,115 +209,90 @@ class AnthropicAdapter(WireFormatAdapter):
             cache_creation_tokens=cache_creation,
         )
 
-    # -- SSE ---------------------------------------------------------------
+    # -- streamed response reconstruction ---------------------------------
 
-    def parse_sse(self, raw: bytes) -> tuple[list[Block], Usage]:
-        text_data = raw.decode("utf-8", errors="replace")
-        input_tokens: int | None = None
-        output_tokens: int | None = None
-        cache_read: int | None = None
-        cache_creation: int | None = None
+    def reconstruct_response(
+        self, events: list[CapturedEvent], *, transport: str,
+    ) -> CanonicalResponse:
+        message: dict = {"type": "message", "role": "assistant", "content": []}
         parts_by_index: dict[int, dict] = {}
+        saw_stop = False
+        error: dict | None = None
 
-        for line in text_data.splitlines():
-            if not line.startswith("data: "):
+        for captured in events:
+            if captured.direction != "server_to_client":
                 continue
-            payload = line[6:].strip()
-            if not payload or payload == "[DONE]":
-                continue
-            try:
-                event = json.loads(payload)
-            except json.JSONDecodeError:
+            event = captured.payload
+            if not isinstance(event, dict):
                 continue
             etype = event.get("type", "")
-
-            if etype == "message_start":
-                usage = event.get("message", {}).get("usage", {})
-                if "input_tokens" in usage:
-                    input_tokens = usage["input_tokens"]
-                if "cache_read_input_tokens" in usage:
-                    cache_read = usage["cache_read_input_tokens"]
-                if "cache_creation_input_tokens" in usage:
-                    cache_creation = usage["cache_creation_input_tokens"]
-
+            if etype == "message_start" and isinstance(event.get("message"), dict):
+                message = deepcopy(event["message"])
+                for idx, part in enumerate(message.get("content") or []):
+                    if isinstance(part, dict):
+                        parts_by_index[idx] = deepcopy(part)
             elif etype == "content_block_start":
-                idx = event.get("index", 0)
-                cb = event.get("content_block", {})
-                entry = parts_by_index.setdefault(idx, {})
-                entry["type"] = cb.get("type", "text")
-                if entry["type"] == "text":
-                    entry["text"] = cb.get("text", "")
-                elif entry["type"] == "thinking":
-                    entry["thinking"] = cb.get("thinking", "")
-                elif entry["type"] == "redacted_thinking":
-                    entry["data"] = cb.get("data", "")
-                elif entry["type"] == "tool_use":
-                    entry["name"] = cb.get("name", "")
-                    entry["id"] = cb.get("id", "")
-                    entry["partial_json"] = ""
-
+                idx = int(event.get("index", 0))
+                block = event.get("content_block") or {}
+                if isinstance(block, dict):
+                    parts_by_index[idx] = deepcopy(block)
+                    if block.get("type") == "tool_use":
+                        parts_by_index[idx].setdefault("input", {})
+                        parts_by_index[idx]["_partial_json"] = ""
             elif etype == "content_block_delta":
-                idx = event.get("index", 0)
-                entry = parts_by_index.setdefault(idx, {"type": "text", "text": ""})
-                delta = event.get("delta", {})
+                idx = int(event.get("index", 0))
+                delta = event.get("delta") or {}
+                if not isinstance(delta, dict):
+                    continue
                 dtype = delta.get("type", "")
+                part = parts_by_index.setdefault(idx, {"type": "text", "text": ""})
                 if dtype == "text_delta":
-                    entry["text"] = entry.get("text", "") + delta.get("text", "")
+                    part["text"] = part.get("text", "") + delta.get("text", "")
                 elif dtype == "thinking_delta":
-                    entry["thinking"] = entry.get("thinking", "") + delta.get("thinking", "")
+                    part.setdefault("type", "thinking")
+                    part["thinking"] = part.get("thinking", "") + delta.get("thinking", "")
                 elif dtype == "signature_delta":
-                    entry["signature"] = entry.get("signature", "") + delta.get("signature", "")
+                    part["signature"] = part.get("signature", "") + delta.get("signature", "")
                 elif dtype == "input_json_delta":
-                    entry["partial_json"] = entry.get("partial_json", "") + delta.get("partial_json", "")
-
+                    part["_partial_json"] = part.get("_partial_json", "") + delta.get("partial_json", "")
+                else:
+                    # Preserve provider extensions on the reconstructed block as
+                    # well as in the complete event log.
+                    part.setdefault("_stream_deltas", []).append(deepcopy(delta))
             elif etype == "message_delta":
-                usage = event.get("usage", {})
-                if "output_tokens" in usage:
-                    output_tokens = usage["output_tokens"]
-                # Some providers (e.g. Copilot via Bedrock) report all token counts
-                # in message_delta rather than message_start — capture as fallback.
-                if "input_tokens" in usage and input_tokens is None:
-                    input_tokens = usage["input_tokens"]
-                if "cache_read_input_tokens" in usage and cache_read is None:
-                    cache_read = usage["cache_read_input_tokens"]
-                if "cache_creation_input_tokens" in usage and cache_creation is None:
-                    cache_creation = usage["cache_creation_input_tokens"]
+                delta = event.get("delta") or {}
+                if isinstance(delta, dict):
+                    message.update(deepcopy(delta))
+                usage = event.get("usage") or {}
+                if isinstance(usage, dict):
+                    merged_usage = dict(message.get("usage") or {})
+                    merged_usage.update(deepcopy(usage))
+                    message["usage"] = merged_usage
+            elif etype == "message_stop":
+                saw_stop = True
+            elif etype == "error":
+                error = deepcopy(event)
+                message["error"] = deepcopy(event.get("error", event))
+                saw_stop = True
 
-        blocks: list[Block] = []
+        content: list[dict] = []
         for idx in sorted(parts_by_index):
-            entry = parts_by_index[idx]
-            btype = entry.get("type", "text")
-            if btype == "text":
-                text = entry.get("text", "")
-                if text:
-                    blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, text, message_index=idx))
-            elif btype == "thinking":
-                text = entry.get("thinking", "")
-                attrs = {"signature": entry["signature"]} if entry.get("signature") else {}
-                if not text:
-                    attrs["hidden"] = True  # thinking.display: "omitted" (default on newest models)
-                blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, text,
-                                          message_index=idx, attrs=attrs))
-            elif btype == "redacted_thinking":
-                blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, "",
-                                          message_index=idx, attrs={"redacted": True}))
-            elif btype == "tool_use":
-                name = entry.get("name", "")
-                args = entry.get("partial_json", "")
-                blocks.append(Block.make(
-                    Direction.OUTPUT, BlockType.TOOL_CALL, args,
-                    message_index=idx, tool_name=name, tool_call_id=entry.get("id"),
-                ))
+            part = parts_by_index[idx]
+            partial = part.pop("_partial_json", None)
+            if partial is not None:
+                try:
+                    part["input"] = json.loads(partial) if partial else part.get("input", {})
+                except json.JSONDecodeError:
+                    part["input"] = partial
+                    part["input_json_incomplete"] = True
+            content.append(part)
+        message["content"] = content
 
-        billed = input_tokens or 0
-        total_input = billed + (cache_read or 0) + (cache_creation or 0) if (
-            input_tokens is not None or cache_read is not None or cache_creation is not None
-        ) else None
-        usage = Usage(
-            input_tokens=total_input,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read,
-            cache_creation_tokens=cache_creation,
+        return CanonicalResponse(
+            payload=message,
+            transport=transport,
+            events=events,
+            reconstructed=True,
+            complete=saw_stop or any(event.done for event in events),
+            error=error,
         )
-        reconcile_thinking(blocks, usage)
-        return blocks, usage

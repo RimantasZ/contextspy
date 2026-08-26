@@ -47,7 +47,9 @@ cd ui && npm run build   # outputs to contextspy/_web/
 coding agent → HTTPS_PROXY → mitmproxy (port 8888)
                                   │
                             ContextSpyAddon (intercepts here)
-                              → parse request body
+                              → capture request application JSON
+                              → reconstruct response JSON from SSE/WS when needed
+                              → parse canonical request/response JSON
                               → classify tokens into 8 categories
                               → write to SQLite
                               → broadcast via WebSocket
@@ -63,7 +65,7 @@ client (base_url=:8889) → mitmproxy reverse proxy (port 8889)
                             llama-server / Ollama / vLLM (port 8080…)
                                   │
                             ContextSpyAddon (provider_override="openai")
-                              → parse, classify, count tokens
+                              → capture/reconstruct, parse, classify, count tokens
                               → write to SQLite
                               → broadcast via WebSocket
 ```
@@ -81,11 +83,22 @@ All data is stored in `~/.contextspy/`:
 | `~/.contextspy/contextspy.db` | SQLite database — all requests and sessions |
 | `~/.contextspy/config.toml` | Configuration file (auto-created on first run) |
 
-Raw request/response bodies, plus the content-addressed `block_contents` table (see below), are
-purged automatically 7 days after capture by default to limit disk usage — configurable via
+Decoded request payloads, canonical response payloads, normalized SSE/NDJSON/WebSocket event
+logs, plus the content-addressed `block_contents` table (see below), are purged automatically 7
+days after capture by default to limit disk usage — configurable via
 `[retention]` in `config.toml` (`raw_body_days`, `block_content_days`; `0` disables purging).
 Purging only runs once, at server startup — there is no background timer, so a `contextspy`
 process left running for many days won't purge again until restarted.
+
+### Capture and analysis boundary
+
+Buffered JSON responses are analyzed directly. Streaming transports are first decoded into
+ordered `CapturedEvent` records and reconstructed by the provider adapter into its ordinary
+non-streaming response shape. That canonical JSON is both stored in `raw_response_body` and
+passed to `parse_response()`; `response_events` independently retains every normalized stream
+event/frame, including unknown data. Reconstruction and block analysis failures are recorded in
+`capture_error` without discarding the application payload. The UI's “raw” data is normalized
+application content, not byte-identical compressed/chunked wire traffic.
 
 ### Blocks
 

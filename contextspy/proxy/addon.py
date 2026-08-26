@@ -26,6 +26,7 @@ from mitmproxy import http
 
 from contextspy.analysis.adapters import get_adapter
 from contextspy.analysis.blocks import AnalyzedRequest, Usage
+from contextspy.analysis.capture import decode_ndjson, decode_sse
 from contextspy.analysis.classifier import CategoryBreakdown, classify, per_tool_tokens
 from contextspy.db import crud
 from contextspy.db.database import get_db
@@ -99,6 +100,29 @@ def _detect_agent(user_agent: str) -> str:
     return "unknown"
 
 
+def _add_capture_error(
+    current: dict | None, stage: str, error: Exception | str,
+) -> dict:
+    """Accumulate independent capture/reconstruction/analysis failures."""
+    issue = {"stage": stage, "message": str(error)}
+    if current is None:
+        return issue
+    current.setdefault("additional", []).append(issue)
+    return current
+
+
+def _captured_request_text(flow) -> tuple[str | None, str | None]:
+    """Return the request-hook snapshot, with a safe late-capture fallback."""
+    raw = flow.metadata.get("contextspy_request_body")
+    error = flow.metadata.get("contextspy_request_capture_error")
+    if raw is None and error is None:
+        try:
+            raw = flow.request.get_text()
+        except Exception as exc:
+            error = str(exc)
+    return raw, error
+
+
 # ---------------------------------------------------------------------------
 # Addon
 # ---------------------------------------------------------------------------
@@ -122,7 +146,6 @@ class ContextSpyAddon:
         # Keyed by flow.id — hooks run on the addon's own DumpMaster event loop
         # (single-threaded), so no locking is needed around this dict.
         self._ws_flows: dict[str, _WsFlowState] = {}
-        self._warned_no_parse_events: set[str] = set()
 
     def _get_provider(self, host: str, port: int) -> str | None:
         if self._provider_override is not None:
@@ -131,6 +154,10 @@ class ContextSpyAddon:
 
     def request(self, flow: http.HTTPFlow) -> None:
         flow.metadata["ts_start"] = time.monotonic()
+        try:
+            flow.metadata["contextspy_request_body"] = flow.request.get_text()
+        except Exception as exc:
+            flow.metadata["contextspy_request_capture_error"] = str(exc)
         logger.debug("HOOK request: %s %s", flow.request.pretty_host, flow.request.path[:60])
 
     def responseheaders(self, flow: http.HTTPFlow) -> None:
@@ -217,10 +244,18 @@ class ContextSpyAddon:
         user_agent = flow.request.headers.get("user-agent", "")
         agent = _detect_agent(user_agent)
 
+        raw_request_body, request_capture_error = _captured_request_text(flow)
+        request_decode_error: Exception | str | None = None
         try:
-            req_body = json.loads(flow.request.get_text() or "{}")
-        except json.JSONDecodeError:
+            decoded_request = json.loads(raw_request_body or "{}")
+            if not isinstance(decoded_request, dict):
+                request_decode_error = "JSON request is not an object"
+                req_body = {}
+            else:
+                req_body = decoded_request
+        except json.JSONDecodeError as exc:
             req_body = {}
+            request_decode_error = exc
 
         duration_ms: int | None = None
         if "ts_start" in flow.metadata:
@@ -232,61 +267,70 @@ class ContextSpyAddon:
 
         adapter = get_adapter(endpoint)
         analyzed: AnalyzedRequest | None = None
+        response_events: str | None = None
+        response_reconstructed = False
+        response_complete = True
+        capture_error: dict | None = None
+        if request_capture_error is not None:
+            capture_error = _add_capture_error(
+                capture_error, "request_capture", request_capture_error,
+            )
+        if request_decode_error is not None:
+            capture_error = _add_capture_error(
+                capture_error, "request_decode", request_decode_error,
+            )
+        raw_resp_text = raw_sse.decode("utf-8", errors="replace")
+        events = decode_sse(raw_sse)
+        if events:
+            response_events = json.dumps(
+                [event.to_dict() for event in events], ensure_ascii=False,
+            )
+        canonical_payload: dict | None = None
         if adapter is not None:
             try:
-                input_blocks, tool_call_map = adapter.parse_request(req_body)
-                output_blocks, usage = adapter.parse_sse(raw_sse)
-                analyzed = AnalyzedRequest(
-                    model=req_body.get("model"),
-                    input_blocks=input_blocks,
-                    output_blocks=output_blocks,
-                    usage=usage,
-                    tool_call_map=tool_call_map,
-                )
+                canonical = adapter.reconstruct_response(events, transport="sse")
+                canonical_payload = canonical.payload
+                raw_resp_text = json.dumps(canonical.payload, ensure_ascii=False)
+                response_reconstructed = canonical.reconstructed
+                response_complete = canonical.complete
             except Exception as exc:
-                logger.warning("Adapter parse error (sse): %s", exc, exc_info=True)
+                logger.warning("Adapter reconstruction error (sse): %s", exc, exc_info=True)
+                response_complete = False
+                capture_error = _add_capture_error(capture_error, "sse_reconstruction", exc)
 
-        # Store a clean synthetic JSON response (not raw SSE with all data: lines)
-        raw_resp_text = self._synthetic_response_text(
-            analyzed, raw_sse.decode("utf-8", errors="replace")
-        )
+            input_blocks = []
+            tool_call_map: dict[str, str] = {}
+            output_blocks = []
+            usage = Usage()
+            try:
+                input_blocks, tool_call_map = adapter.parse_request(req_body)
+            except Exception as exc:
+                logger.warning("Adapter request parse error (sse): %s", exc, exc_info=True)
+                capture_error = _add_capture_error(capture_error, "request_analysis", exc)
+            if canonical_payload is not None:
+                try:
+                    output_blocks, usage = adapter.parse_response(canonical_payload)
+                except Exception as exc:
+                    logger.warning("Adapter response parse error (sse): %s", exc, exc_info=True)
+                    capture_error = _add_capture_error(capture_error, "response_analysis", exc)
+            analyzed = AnalyzedRequest(
+                model=req_body.get("model"),
+                input_blocks=input_blocks,
+                output_blocks=output_blocks,
+                usage=usage,
+                tool_call_map=tool_call_map,
+            )
 
         self._save_request(
             provider=provider, agent=agent, endpoint=endpoint, req_body=req_body,
             analyzed=analyzed, duration_ms=duration_ms, raw_resp_text=raw_resp_text,
             status_code=flow.response.status_code if flow.response else None,
-            raw_request_body=flow.request.get_text(), ttft_ms=ttft_ms,
+            raw_request_body=raw_request_body, ttft_ms=ttft_ms,
+            response_transport="sse", response_reconstructed=response_reconstructed,
+            response_complete=response_complete, response_events=response_events,
+            capture_error=capture_error,
         )
-
-    @staticmethod
-    def _synthetic_response_text(analyzed: AnalyzedRequest | None, fallback: str) -> str:
-        """Build a clean synthetic JSON response from parsed SSE output (not raw
-        SSE with all ``data:`` lines), falling back to the raw text if parsing failed."""
-        if analyzed is None:
-            return fallback
-        message: dict = {"role": "assistant", "content": analyzed.response_text}
-        if analyzed.thinking_text:
-            message["reasoning_content"] = analyzed.thinking_text
-        synthetic: dict = {
-            "choices": [{
-                "message": message,
-                "finish_reason": "stop",
-            }],
-        }
-        if analyzed.model:
-            synthetic["model"] = analyzed.model
-        if analyzed.usage.input_tokens is not None or analyzed.usage.output_tokens is not None:
-            usage: dict = {
-                "prompt_tokens": analyzed.usage.input_tokens,
-                "completion_tokens": analyzed.usage.output_tokens,
-            }
-            if analyzed.usage.reasoning_tokens is not None:
-                # Surfaced even when there's no reasoning_content text to show
-                # (e.g. thinking.display: "omitted") — the token cost is real
-                # either way and would otherwise vanish from the stored JSON.
-                usage["completion_tokens_details"] = {"reasoning_tokens": analyzed.usage.reasoning_tokens}
-            synthetic["usage"] = usage
-        return json.dumps(synthetic, ensure_ascii=False)
+        flow.metadata["contextspy_saved"] = True
 
     def _handle_response(self, flow: http.HTTPFlow) -> None:
         if flow.response is None:
@@ -305,10 +349,18 @@ class ContextSpyAddon:
         user_agent = flow.request.headers.get("user-agent", "")
         agent = _detect_agent(user_agent)
 
+        raw_request_body, request_capture_error = _captured_request_text(flow)
+        request_decode_error: Exception | str | None = None
         try:
-            req_body = json.loads(flow.request.get_text() or "{}")
-        except json.JSONDecodeError:
+            decoded_request = json.loads(raw_request_body or "{}")
+            if not isinstance(decoded_request, dict):
+                request_decode_error = "JSON request is not an object"
+                req_body = {}
+            else:
+                req_body = decoded_request
+        except json.JSONDecodeError as exc:
             req_body = {}
+            request_decode_error = exc
 
         resp_text = flow.response.get_text() or ""
         # Some providers (e.g. Codex's chatgpt.com/backend-api/codex backend) send
@@ -317,55 +369,130 @@ class ContextSpyAddon:
         # falling back to json.loads() here would silently drop all output/usage data.
         resp_head = resp_text.lstrip()
         is_sse = resp_head.startswith("data:") or resp_head.startswith("event:")
-        resp_body: dict = {}
-        if not is_sse:
+        resp_body: dict | None = None
+        response_is_json = False
+        if not is_sse and resp_text:
             try:
-                resp_body = json.loads(resp_text or "{}")
+                decoded_response = json.loads(resp_text or "{}")
+                response_is_json = True
+                if isinstance(decoded_response, dict):
+                    resp_body = decoded_response
             except json.JSONDecodeError:
-                resp_body = {}
+                pass
 
         duration_ms: int | None = None
         if "ts_start" in flow.metadata:
             duration_ms = int((time.monotonic() - flow.metadata["ts_start"]) * 1000)
 
         adapter = get_adapter(endpoint)
+        content_type = flow.response.headers.get("content-type", "").lower()
+        is_ndjson = bool(
+            adapter is not None
+            and adapter.stream_format == "ndjson"
+            and (
+                "\n" in resp_text.strip()
+                or "application/x-ndjson" in content_type
+                or "application/jsonl" in content_type
+            )
+        )
         logger.debug(
             "response body: len=%d is_sse=%s adapter=%s",
             len(resp_text), is_sse, type(adapter).__name__ if adapter else None,
         )
         analyzed: AnalyzedRequest | None = None
+        response_events: str | None = None
+        response_reconstructed = False
+        response_complete = True
+        response_transport = (
+            "sse" if is_sse else "ndjson" if is_ndjson else "json" if response_is_json else "text"
+        )
+        capture_error: dict | None = None
+        if request_capture_error is not None:
+            capture_error = _add_capture_error(
+                capture_error, "request_capture", request_capture_error,
+            )
+        if request_decode_error is not None:
+            capture_error = _add_capture_error(
+                capture_error, "request_decode", request_decode_error,
+            )
+        raw_resp_text = resp_text
+        canonical_payload = resp_body
+        if is_sse or is_ndjson:
+            events = decode_sse(resp_text.encode("utf-8")) if is_sse else decode_ndjson(
+                resp_text.encode("utf-8")
+            )
+            if events:
+                response_events = json.dumps(
+                    [event.to_dict() for event in events], ensure_ascii=False,
+                )
+            if adapter is not None:
+                try:
+                    canonical = adapter.reconstruct_response(
+                        events, transport="sse" if is_sse else "ndjson",
+                    )
+                    canonical_payload = canonical.payload
+                    raw_resp_text = json.dumps(canonical.payload, ensure_ascii=False)
+                    response_reconstructed = canonical.reconstructed
+                    response_complete = canonical.complete
+                except Exception as exc:
+                    logger.warning("Adapter response reconstruction error: %s", exc, exc_info=True)
+                    canonical_payload = None
+                    response_complete = False
+                    capture_error = _add_capture_error(
+                        capture_error, "response_reconstruction", exc,
+                    )
         if adapter is not None:
+            input_blocks = []
+            tool_call_map: dict[str, str] = {}
+            output_blocks = []
+            usage = Usage()
             try:
                 input_blocks, tool_call_map = adapter.parse_request(req_body)
-                if is_sse:
-                    output_blocks, usage = adapter.parse_sse(resp_text.encode("utf-8"))
-                else:
-                    output_blocks, usage = adapter.parse_response(resp_body)
-                analyzed = AnalyzedRequest(
-                    model=req_body.get("model"),
-                    input_blocks=input_blocks,
-                    output_blocks=output_blocks,
-                    usage=usage,
-                    tool_call_map=tool_call_map,
-                )
             except Exception as exc:
-                logger.warning("Adapter parse error: %s", exc, exc_info=True)
+                logger.warning("Adapter request parse error: %s", exc, exc_info=True)
+                capture_error = _add_capture_error(capture_error, "request_analysis", exc)
+            if canonical_payload is not None:
+                try:
+                    output_blocks, usage = adapter.parse_response(canonical_payload)
+                except Exception as exc:
+                    logger.warning("Adapter response parse error: %s", exc, exc_info=True)
+                    capture_error = _add_capture_error(capture_error, "response_analysis", exc)
+            elif response_is_json:
+                capture_error = _add_capture_error(
+                    capture_error,
+                    "response_shape",
+                    "JSON response is not an object",
+                )
+            analyzed = AnalyzedRequest(
+                model=req_body.get("model"),
+                input_blocks=input_blocks,
+                output_blocks=output_blocks,
+                usage=usage,
+                tool_call_map=tool_call_map,
+            )
 
-        raw_resp_text = (
-            self._synthetic_response_text(analyzed, resp_text) if is_sse else resp_text
-        )
         self._save_request(
             provider=provider, agent=agent, endpoint=endpoint, req_body=req_body,
             analyzed=analyzed, duration_ms=duration_ms, raw_resp_text=raw_resp_text,
             status_code=flow.response.status_code if flow.response else None,
-            raw_request_body=flow.request.get_text(),
+            raw_request_body=raw_request_body,
+            response_transport=response_transport,
+            response_reconstructed=response_reconstructed,
+            response_complete=response_complete,
+            response_events=response_events,
+            capture_error=capture_error,
         )
+        flow.metadata["contextspy_saved"] = True
 
     def _save_request(self, *, provider: str, agent: str, endpoint: str, req_body: dict,
                       analyzed: AnalyzedRequest | None, duration_ms: int | None,
                       raw_resp_text: str | None, status_code: int | None,
                       raw_request_body: str | None, ttft_ms: int | None = None,
-                      transport: str = "http") -> None:
+                      transport: str = "http", response_transport: str = "json",
+                      response_reconstructed: bool = False,
+                      response_complete: bool = True,
+                      response_events: str | None = None,
+                      capture_error: dict | None = None) -> None:
         # Skip non-LLM endpoints (telemetry, auth, health checks, etc.)
         # Only persist requests that we could actually parse OR that look like
         # known LLM API paths so telemetry traffic is not stored as empty rows.
@@ -411,6 +538,10 @@ class ContextSpyAddon:
                 "ttft_ms": ttft_ms,
                 "status_code": status_code,
                 "transport": transport,
+                "response_transport": response_transport,
+                "response_reconstructed": int(response_reconstructed),
+                "response_complete": int(response_complete),
+                "capture_error": json.dumps(capture_error) if capture_error else None,
                 "provider_input_tokens": provider_input,
                 "provider_output_tokens": provider_output,
                 "provider_reasoning_tokens": provider_reasoning,
@@ -419,6 +550,7 @@ class ContextSpyAddon:
                 "usage_extra": usage_extra,
                 "raw_request_body": raw_request_body,
                 "raw_response_body": raw_resp_text,
+                "response_events": response_events,
             }
             data.update(breakdown.to_db_fields())
             req_record = crud.create_request(db, data)
@@ -538,10 +670,78 @@ class ContextSpyAddon:
         # always fire websocket_end for a tracked flow — flush any dangling exchange.
         if flow.id in self._ws_flows:
             self.websocket_end(flow)
+            return
+        if flow.metadata.get("contextspy_saved"):
+            return
+
+        provider = self._get_provider(flow.request.pretty_host, flow.request.port)
+        if provider is None:
+            return
+        endpoint = flow.request.path
+        raw_request_body, request_capture_error = _captured_request_text(flow)
+        capture_error = {
+            "stage": "transport",
+            "message": str(flow.error) if flow.error else "Upstream request failed",
+        }
+        try:
+            decoded_request = json.loads(raw_request_body or "{}")
+            if isinstance(decoded_request, dict):
+                req_body = decoded_request
+            else:
+                req_body = {}
+                capture_error = _add_capture_error(
+                    capture_error, "request_decode", "JSON request is not an object",
+                )
+        except json.JSONDecodeError as exc:
+            req_body = {}
+            capture_error = _add_capture_error(capture_error, "request_decode", exc)
+
+        analyzed: AnalyzedRequest | None = None
+        adapter = get_adapter(endpoint)
+        if request_capture_error:
+            capture_error["request_capture"] = request_capture_error
+        if adapter is not None:
+            try:
+                input_blocks, tool_call_map = adapter.parse_request(req_body)
+                analyzed = AnalyzedRequest(
+                    model=req_body.get("model"), input_blocks=input_blocks,
+                    output_blocks=[], usage=Usage(), tool_call_map=tool_call_map,
+                )
+            except Exception as exc:
+                capture_error["request_analysis"] = str(exc)
+
+        user_agent = flow.request.headers.get("user-agent", "")
+        self._save_request(
+            provider=provider,
+            agent=_detect_agent(user_agent),
+            endpoint=endpoint,
+            req_body=req_body,
+            analyzed=analyzed,
+            duration_ms=None,
+            raw_resp_text=None,
+            status_code=None,
+            raw_request_body=raw_request_body,
+            response_transport="none",
+            response_complete=False,
+            capture_error=capture_error,
+        )
+        flow.metadata["contextspy_saved"] = True
 
     def _handle_ws_exchange(self, state: _WsFlowState, ex: CompletedExchange) -> None:
         adapter = get_adapter(state.endpoint)
         analyzed: AnalyzedRequest | None = None
+        response_events: str | None = None
+        response_reconstructed = False
+        response_complete = ex.complete
+        capture_error: dict | None = None
+        captured_events = ex.events
+        raw_resp_text = json.dumps(
+            [event.to_dict() for event in captured_events], ensure_ascii=False,
+        )
+        if captured_events:
+            response_events = json.dumps(
+                [event.to_dict() for event in captured_events], ensure_ascii=False,
+            )
 
         if adapter is not None:
             try:
@@ -549,19 +749,38 @@ class ContextSpyAddon:
             except Exception as exc:
                 logger.warning("WS adapter parse_request error: %s", exc, exc_info=True)
                 input_blocks, tool_call_map = [], {}
+                capture_error = _add_capture_error(capture_error, "request_analysis", exc)
 
+            canonical_payload: dict | None = None
             try:
-                output_blocks, usage = adapter.parse_events(ex.events)
-            except NotImplementedError:
-                if adapter.format_id not in self._warned_no_parse_events:
-                    self._warned_no_parse_events.add(adapter.format_id)
-                    logger.warning(
-                        "WS: %s adapter has no event-level parser; output tokens unavailable",
-                        adapter.format_id,
-                    )
-                output_blocks, usage = [], Usage()
+                canonical = adapter.reconstruct_response(
+                    captured_events, transport="websocket",
+                )
+                canonical.complete = ex.complete
+                if ex.error and canonical.error is None:
+                    canonical.error = ex.error
+                canonical_payload = canonical.payload
+                raw_resp_text = json.dumps(canonical.payload, ensure_ascii=False)
+                response_reconstructed = canonical.reconstructed
+                response_complete = canonical.complete
             except Exception as exc:
-                logger.warning("WS adapter parse_events error: %s", exc, exc_info=True)
+                logger.warning("WS response reconstruction error: %s", exc, exc_info=True)
+                response_complete = False
+                output_blocks, usage = [], Usage()
+                capture_error = _add_capture_error(
+                    capture_error, "websocket_reconstruction", exc,
+                )
+
+            if canonical_payload is not None:
+                try:
+                    output_blocks, usage = adapter.parse_response(canonical_payload)
+                except Exception as exc:
+                    logger.warning("WS response parse error: %s", exc, exc_info=True)
+                    output_blocks, usage = [], Usage()
+                    capture_error = _add_capture_error(
+                        capture_error, "response_analysis", exc,
+                    )
+            else:
                 output_blocks, usage = [], Usage()
 
             if ex.error:
@@ -585,10 +804,6 @@ class ContextSpyAddon:
         if ex.request_ts is not None and ex.first_event_ts is not None:
             ttft_ms = int((ex.first_event_ts - ex.request_ts) * 1000)
 
-        raw_resp_text = self._synthetic_response_text(
-            analyzed, json.dumps(ex.events, ensure_ascii=False)
-        )
-
         self._save_request(
             provider=state.provider,
             agent=state.agent,
@@ -601,4 +816,9 @@ class ContextSpyAddon:
             raw_request_body=ex.raw_request_text,
             ttft_ms=ttft_ms,
             transport="websocket",
+            response_transport="websocket",
+            response_reconstructed=response_reconstructed,
+            response_complete=response_complete,
+            response_events=response_events,
+            capture_error=capture_error,
         )

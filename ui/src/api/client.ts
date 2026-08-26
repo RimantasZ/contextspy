@@ -48,6 +48,10 @@ export interface Request {
   ttft_ms: number | null
   status_code: number | null
   transport: string
+  response_transport: string
+  response_reconstructed: boolean
+  response_complete: boolean
+  capture_error: Record<string, unknown> | null
   tokens_system_prompt: number
   tokens_tool_definitions: number
   tokens_tool_results: number
@@ -70,6 +74,7 @@ export interface Request {
   tokenizer: string
   raw_request_body?: string | null
   raw_response_body?: string | null
+  response_events?: unknown[] | null
 }
 
 export interface CategoryStats {

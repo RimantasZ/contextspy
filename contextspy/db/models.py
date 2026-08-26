@@ -76,6 +76,16 @@ class Request(Base):
     transport: Mapped[str] = mapped_column(
         String, nullable=False, default="http", server_default="http"
     )
+    response_transport: Mapped[str] = mapped_column(
+        String, nullable=False, default="legacy", server_default="legacy"
+    )
+    response_reconstructed: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    response_complete: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    capture_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
 
     # Token counts by category
     tokens_system_prompt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -113,7 +123,12 @@ class Request(Base):
 
     # Raw content (Nulled after a retention period, if configured)
     raw_request_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Canonical provider response JSON for JSON/SSE/WS captures. The historical
+    # name remains for API compatibility; streamed rows are reconstructed before
+    # this value is analyzed and persisted.
     raw_response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Complete normalized application-level SSE records / WebSocket events.
+    response_events: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
 
     session: Mapped[Optional[Session]] = relationship("Session", back_populates="requests")
 
@@ -130,6 +145,10 @@ class Request(Base):
             "ttft_ms": self.ttft_ms,
             "status_code": self.status_code,
             "transport": self.transport,
+            "response_transport": self.response_transport,
+            "response_reconstructed": bool(self.response_reconstructed),
+            "response_complete": bool(self.response_complete),
+            "capture_error": json.loads(self.capture_error) if self.capture_error else None,
             "tokens_system_prompt": self.tokens_system_prompt,
             "tokens_tool_definitions": self.tokens_tool_definitions,
             "tokens_tool_results": self.tokens_tool_results,
@@ -154,6 +173,7 @@ class Request(Base):
         if include_raw:
             d["raw_request_body"] = self.raw_request_body
             d["raw_response_body"] = self.raw_response_body
+            d["response_events"] = json.loads(self.response_events) if self.response_events else None
         return d
 
 

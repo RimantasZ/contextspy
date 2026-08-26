@@ -24,9 +24,12 @@ sequential exchanges.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
+from typing import Any
 
+from contextspy.analysis.capture import CapturedEvent
 from contextspy.proxy.ws_protocols.base import CompletedExchange, WsProtocol, WsSession
 
 logger = logging.getLogger(__name__)
@@ -40,16 +43,43 @@ class CodexResponsesSession(WsSession):
         self, *, from_client: bool, content: bytes, is_text: bool, timestamp: float,
     ) -> list[CompletedExchange]:
         if not is_text:
-            logger.debug("codex ws: ignoring binary frame (from_client=%s)", from_client)
+            if self._pending is not None:
+                self._append_event(
+                    self._pending,
+                    direction="client_to_server" if from_client else "server_to_client",
+                    kind="binary",
+                    payload={
+                        "encoding": "base64",
+                        "data": base64.b64encode(content).decode("ascii"),
+                    },
+                )
+                if not from_client:
+                    self._mark_server_event(self._pending, timestamp)
             return []
         text = content.decode("utf-8", errors="replace")
         try:
             obj = json.loads(text)
         except json.JSONDecodeError:
-            logger.debug("codex ws: ignoring unparseable frame (from_client=%s)", from_client)
+            if self._pending is not None:
+                self._append_event(
+                    self._pending,
+                    direction="client_to_server" if from_client else "server_to_client",
+                    kind="text",
+                    text=text,
+                )
+                if not from_client:
+                    self._mark_server_event(self._pending, timestamp)
             return []
         if not isinstance(obj, dict):
-            logger.debug("codex ws: ignoring non-dict frame (from_client=%s)", from_client)
+            if self._pending is not None:
+                self._append_event(
+                    self._pending,
+                    direction="client_to_server" if from_client else "server_to_client",
+                    kind="json",
+                    payload=obj,
+                )
+                if not from_client:
+                    self._mark_server_event(self._pending, timestamp)
             return []
 
         if from_client:
@@ -58,6 +88,10 @@ class CodexResponsesSession(WsSession):
 
     def _on_client_frame(self, obj: dict, text: str, timestamp: float) -> list[CompletedExchange]:
         if obj.get("type") != "response.create":
+            if self._pending is not None:
+                self._append_event(
+                    self._pending, direction="client_to_server", kind="json", payload=obj,
+                )
             return []
         flushed: list[CompletedExchange] = []
         if self._pending is not None:
@@ -73,15 +107,20 @@ class CodexResponsesSession(WsSession):
         if pending is None:
             return []  # idle server frame (e.g. codex.rate_limits) with no turn in flight
 
-        if pending.first_event_ts is None:
-            pending.first_event_ts = timestamp
-        pending.last_event_ts = timestamp
+        self._mark_server_event(pending, timestamp)
+        self._append_event(
+            pending, direction="server_to_client", kind="json", payload=obj,
+        )
 
         etype = obj.get("type")
         if etype == "codex.rate_limits":
+            # It is not used by block analysis, but it is part of the provider
+            # payload and must remain visible in the normalized event capture.
             return []
         if etype == "error":
             error_obj = obj.get("error") or {}
+            if not isinstance(error_obj, dict):
+                error_obj = {"message": str(error_obj)}
             pending.error = {
                 "status": obj.get("status"),
                 "code": error_obj.get("code"),
@@ -90,13 +129,45 @@ class CodexResponsesSession(WsSession):
             pending.complete = True
             self._pending = None
             return [pending]
-
-        pending.events.append(obj)
-        if etype == "response.completed":
+        if etype in ("response.completed", "response.failed", "response.incomplete"):
+            if etype == "response.failed":
+                response = obj.get("response") or {}
+                response_error = response.get("error") or {} if isinstance(response, dict) else {}
+                if not isinstance(response_error, dict):
+                    response_error = {"message": str(response_error)}
+                status = obj.get("status")
+                pending.error = {
+                    "status": status if isinstance(status, int) else None,
+                    "code": response_error.get("code"),
+                    "message": response_error.get("message"),
+                }
             pending.complete = True
             self._pending = None
             return [pending]
         return []
+
+    @staticmethod
+    def _append_event(
+        pending: CompletedExchange,
+        *,
+        direction: str,
+        kind: str,
+        payload: Any = None,
+        text: str | None = None,
+    ) -> None:
+        pending.events.append(CapturedEvent(
+            sequence=len(pending.events),
+            direction=direction,
+            kind=kind,
+            payload=payload,
+            text=text,
+        ))
+
+    @staticmethod
+    def _mark_server_event(pending: CompletedExchange, timestamp: float) -> None:
+        if pending.first_event_ts is None:
+            pending.first_event_ts = timestamp
+        pending.last_event_ts = timestamp
 
     def on_close(self) -> list[CompletedExchange]:
         if self._pending is None:

@@ -189,7 +189,7 @@ function TextPane({
 // Main RawViewer
 // ---------------------------------------------------------------------------
 
-type RespTab = 'text' | 'thinking' | 'json' | 'raw';
+type RespTab = 'text' | 'thinking' | 'json' | 'events' | 'raw';
 type TextTab = Extract<RespTab, 'text' | 'thinking'>;
 
 /** How far to trust a thinking block's token count — set by the adapters'
@@ -208,12 +208,20 @@ interface Props {
   content: string | null | undefined;
   /** When true shows the output view: Text / Thinking / JSON / Raw tabs */
   responseMode?: boolean;
+  responseEvents?: unknown[] | null;
+  responseTransport?: string;
+  responseReconstructed?: boolean;
+  responseComplete?: boolean;
+  captureError?: Record<string, unknown> | null;
   totalInputTokens?: number | null;
   /** Increment to toggle open/close; scroll into view when opening */
   expandToggle?: number;
 }
 
-export function RawViewer({ title, requestId, content, responseMode, totalInputTokens, expandToggle }: Props) {
+export function RawViewer({
+  title, requestId, content, responseMode, responseEvents, responseTransport,
+  responseReconstructed, responseComplete, captureError, totalInputTokens, expandToggle,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [respTab, setRespTab] = useState<RespTab>('text');
@@ -251,6 +259,7 @@ export function RawViewer({ title, requestId, content, responseMode, totalInputT
     { key: 'text', label: 'Text' },
     ...(hasThinking ? [{ key: 'thinking' as RespTab, label: 'Thinking' }] : []),
     { key: 'json', label: 'JSON' },
+    ...((responseEvents?.length ?? 0) > 0 ? [{ key: 'events' as RespTab, label: 'Events' }] : []),
     { key: 'raw', label: 'Raw' },
   ];
 
@@ -368,6 +377,24 @@ export function RawViewer({ title, requestId, content, responseMode, totalInputT
                 ))}
               </div>
 
+              {(responseReconstructed || responseComplete === false || captureError) && (
+                <div className="flex flex-wrap gap-2 px-3 py-2 border-b border-gray-800 text-[10px]">
+                  {responseReconstructed && (
+                    <span className="rounded bg-indigo-950 text-indigo-300 px-2 py-0.5">
+                      Reconstructed from {responseTransport ?? 'stream'}
+                    </span>
+                  )}
+                  {responseComplete === false && (
+                    <span className="rounded bg-amber-950 text-amber-300 px-2 py-0.5">Incomplete capture</span>
+                  )}
+                  {captureError && (
+                    <span className="rounded bg-red-950 text-red-300 px-2 py-0.5">
+                      Capture warning: {String(captureError.message ?? captureError.stage ?? 'unknown error')}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* JSON tab — collapsible tree (needs the raw body; purged if gone) */}
               {respTab === 'json' && (
                 purged ? (
@@ -392,6 +419,17 @@ export function RawViewer({ title, requestId, content, responseMode, totalInputT
                     </div>
                   </>
                 )
+              )}
+
+              {/* Events tab — complete normalized SSE/WS application events. */}
+              {respTab === 'events' && (
+                <div className="p-4 overflow-auto max-h-[600px] text-xs font-mono leading-relaxed">
+                  <JsonNode
+                    value={(responseEvents ?? []) as JsonValue}
+                    depth={0}
+                    searchLower={searchLower}
+                  />
+                </div>
               )}
 
               {/* Raw tab — plain text (needs the raw body; purged if gone) */}

@@ -73,6 +73,11 @@ per-provider protocol module (`proxy/ws_protocols/`) that reassembles the frame 
 same request/response shape the HTTP path already produces — token counts, category breakdown,
 and dashboard broadcast all work the same way regardless of transport.
 
+The request detail stores the reconstructed provider response JSON and an ordered normalized
+event/frame log. Unknown JSON events, non-JSON text, errors, rate-limit frames, and binary frame
+contents associated with an active turn remain inspectable even when ContextSpy does not map them
+to blocks. This is application-payload fidelity, not byte-for-byte WebSocket/TLS framing.
+
 The concrete case this was built for: **Codex CLI**, when authenticated via a ChatGPT plan
 (rather than an API key), defaults to a WebSocket transport for its private
 `chatgpt.com/backend-api/codex/responses` endpoint. Those turns show a **WS** badge in the
@@ -172,8 +177,9 @@ All data lives in `~/.contextspy/`:
 
 ### How long is request data kept?
 
-Raw request/response bodies and the underlying block contents are automatically purged 7 days
-after capture by default — configurable via `[retention]` in `~/.contextspy/config.toml`
+Decoded request payloads, canonical response payloads, streamed event logs, and the underlying
+block contents are automatically purged 7 days after capture by default — configurable via
+`[retention]` in `~/.contextspy/config.toml`
 (`raw_body_days`, `block_content_days`; `0` keeps forever). Purging only happens at server startup,
 not on a background timer, so a long-running `contextspy` process won't re-purge until restarted.
 Aggregated token counts and classifications are kept indefinitely until you run `contextspy reset-db`.

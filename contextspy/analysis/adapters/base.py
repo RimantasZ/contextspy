@@ -13,11 +13,16 @@
 # limitations under the License.
 from __future__ import annotations
 
-import json
 from abc import ABC, abstractmethod
 from typing import Any
 
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
+from contextspy.analysis.capture import (
+    CanonicalResponse,
+    CapturedEvent,
+    decode_ndjson,
+    decode_sse,
+)
 
 
 class WireFormatAdapter(ABC):
@@ -31,6 +36,7 @@ class WireFormatAdapter(ABC):
 
     format_id: str
     endpoint_patterns: tuple[str, ...]
+    stream_format: str = "sse"
 
     @abstractmethod
     def parse_request(self, req_body: dict) -> tuple[list[Block], dict[str, str]]:
@@ -41,20 +47,17 @@ class WireFormatAdapter(ABC):
         """Return (output_blocks, usage) for a buffered (non-streaming) response body."""
 
     @abstractmethod
-    def parse_sse(self, raw: bytes) -> tuple[list[Block], Usage]:
-        """Return (output_blocks, usage) reconstructed from a raw streaming response."""
+    def reconstruct_response(
+        self, events: list[CapturedEvent], *, transport: str,
+    ) -> CanonicalResponse:
+        """Reduce transport events into canonical buffered provider response JSON."""
 
-    def parse_events(self, events: list[dict]) -> tuple[list[Block], Usage]:
-        """Return (output_blocks, usage) from already-decoded events (no SSE framing).
-
-        Used by transports that deliver discrete event objects directly (e.g.
-        WebSocket text frames) rather than an SSE byte stream. Not abstract —
-        adapters without an event-level parser (Anthropic, OpenAI Chat, Ollama)
-        don't need a stub; callers should catch NotImplementedError and degrade
-        gracefully (e.g. the WS addon path).
-        """
-        raise NotImplementedError(f"{self.format_id} has no event-level parser")
-
+    def reconstruct_stream(
+        self, raw: bytes, *, transport: str | None = None,
+    ) -> CanonicalResponse:
+        stream_format = transport or self.stream_format
+        events = decode_ndjson(raw) if stream_format == "ndjson" else decode_sse(raw)
+        return self.reconstruct_response(events, transport=stream_format)
 
 REGISTRY: list[WireFormatAdapter] = []
 
@@ -74,33 +77,13 @@ def get_adapter(endpoint: str) -> WireFormatAdapter | None:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def extract_sse_events(raw: bytes) -> list[dict]:
-    """Decode an SSE byte stream's ``data: `` lines into a list of event dicts.
-
-    Tolerant of blank lines, ``[DONE]`` sentinels, and malformed JSON (skipped).
-    """
-    text_data = raw.decode("utf-8", errors="replace")
-    events: list[dict] = []
-    for line in text_data.splitlines():
-        if not line.startswith("data: "):
-            continue
-        payload = line[6:].strip()
-        if not payload or payload == "[DONE]":
-            continue
-        try:
-            events.append(json.loads(payload))
-        except json.JSONDecodeError:
-            continue
-    return events
-
-
 def reconcile_thinking(blocks: list[Block], usage: Usage) -> None:
     """Give a response's thinking a token count, whatever the provider disclosed.
 
     Providers expose reasoning in three mutually exclusive ways, and every one
     of them has to land on the same two carriers: ``BlockType.THINKING`` blocks
     for the text, ``Usage.reasoning_tokens`` for the provider's own figure.
-    Called by every adapter at the end of ``parse_response``/``parse_sse`` so
+    Called by every adapter at the end of ``parse_response`` so
     the rules live in one place rather than four.
 
     Each thinking block comes out tagged with ``attrs["token_source"]``,

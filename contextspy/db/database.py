@@ -43,20 +43,25 @@ def init_db(db_path: Path) -> None:
 def _migrate(engine) -> None:
     """Apply additive schema migrations for existing databases."""
     new_columns = [
-        ("cache_read_tokens", "INTEGER"),
-        ("cache_creation_tokens", "INTEGER"),
-        ("ttft_ms", "INTEGER"),
-        ("tokens_output_text", "INTEGER NOT NULL DEFAULT 0"),
-        ("tokens_output_thinking", "INTEGER NOT NULL DEFAULT 0"),
-        ("provider_reasoning_tokens", "INTEGER"),
-        ("usage_extra", "TEXT"),
-        ("session_seq", "INTEGER"),
-        ("transport", "TEXT NOT NULL DEFAULT 'http'"),
+        ("requests", "cache_read_tokens", "INTEGER"),
+        ("requests", "cache_creation_tokens", "INTEGER"),
+        ("requests", "ttft_ms", "INTEGER"),
+        ("requests", "tokens_output_text", "INTEGER NOT NULL DEFAULT 0"),
+        ("requests", "tokens_output_thinking", "INTEGER NOT NULL DEFAULT 0"),
+        ("requests", "provider_reasoning_tokens", "INTEGER"),
+        ("requests", "usage_extra", "TEXT"),
+        ("requests", "session_seq", "INTEGER"),
+        ("requests", "transport", "TEXT NOT NULL DEFAULT 'http'"),
+        ("requests", "response_transport", "TEXT NOT NULL DEFAULT 'legacy'"),
+        ("requests", "response_reconstructed", "INTEGER NOT NULL DEFAULT 0"),
+        ("requests", "response_complete", "INTEGER NOT NULL DEFAULT 0"),
+        ("requests", "capture_error", "TEXT"),
+        ("requests", "response_events", "TEXT"),
     ]
     with engine.connect() as conn:
-        for col, col_type in new_columns:
+        for table, col, col_type in new_columns:
             try:
-                conn.execute(text(f"ALTER TABLE requests ADD COLUMN {col} {col_type}"))
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
                 conn.commit()
             except Exception:
                 # Column already exists — ignore
@@ -109,9 +114,13 @@ def startup_vacuum(settings=None) -> None:
                 text(
                     """
                     UPDATE requests
-                    SET raw_request_body = NULL, raw_response_body = NULL
+                    SET raw_request_body = NULL,
+                        raw_response_body = NULL,
+                        response_events = NULL
                     WHERE timestamp < :cutoff
-                      AND (raw_request_body IS NOT NULL OR raw_response_body IS NOT NULL)
+                      AND (raw_request_body IS NOT NULL
+                           OR raw_response_body IS NOT NULL
+                           OR response_events IS NOT NULL)
                     """
                 ),
                 {"cutoff": cutoff.isoformat()},

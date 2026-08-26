@@ -61,6 +61,10 @@ def _feed(session: CodexResponsesSession, *, from_client: bool, obj: dict, times
     return session.on_message(from_client=from_client, content=content, is_text=True, timestamp=timestamp)
 
 
+def _payloads(exchange) -> list:
+    return [event.payload for event in exchange.events]
+
+
 # ---------------------------------------------------------------------------
 # WS_REGISTRY / get_ws_protocol
 # ---------------------------------------------------------------------------
@@ -107,7 +111,8 @@ class TestCodexSession:
         ex = result[0]
         assert ex.request_body == obj
         assert ex.raw_request_text == text
-        assert ex.events == events
+        assert _payloads(ex) == events
+        assert all(event.direction == "server_to_client" for event in ex.events)
         assert ex.complete is True
         assert ex.error is None
         assert ex.request_ts == 1.0
@@ -126,7 +131,7 @@ class TestCodexSession:
         assert len(result) == 1
         ex1 = result[0]
         assert ex1.request_body == obj1
-        assert ex1.events == events1
+        assert _payloads(ex1) == events1
 
         obj2, text2 = _make_codex_request_frame(input_text="second")
         flushed = _feed(session, from_client=True, obj=obj2, timestamp=10.0, raw_text=text2)
@@ -138,11 +143,11 @@ class TestCodexSession:
         assert len(result) == 1
         ex2 = result[0]
         assert ex2.request_body == obj2
-        assert ex2.events == events2
+        assert _payloads(ex2) == events2
         # no bleed of the first turn's events into the second
-        assert ex2.events != ex1.events
+        assert _payloads(ex2) != _payloads(ex1)
 
-    def test_rate_limits_skipped_and_idle_server_frame_ignored(self):
+    def test_rate_limits_retained_mid_turn_and_idle_server_frame_ignored(self):
         session = CodexResponsesSession()
 
         # idle server frame with no turn in flight
@@ -152,7 +157,8 @@ class TestCodexSession:
         obj, text = _make_codex_request_frame()
         _feed(session, from_client=True, obj=obj, timestamp=1.0, raw_text=text)
 
-        # rate_limits frame arriving mid-turn must not show up in ex.events
+        # A rate_limits frame arriving mid-turn is not analyzed as output, but
+        # remains part of the complete normalized provider event capture.
         result = _feed(session, from_client=False, obj={"type": "codex.rate_limits"}, timestamp=1.5)
         assert result == []
 
@@ -161,8 +167,7 @@ class TestCodexSession:
         for i, event in enumerate(events):
             result = _feed(session, from_client=False, obj=event, timestamp=2.0 + i * 0.1)
         assert len(result) == 1
-        assert result[0].events == events
-        assert all(e.get("type") != "codex.rate_limits" for e in result[0].events)
+        assert _payloads(result[0]) == [{"type": "codex.rate_limits"}, *events]
 
     def test_error_envelope_finalizes_immediately(self):
         session = CodexResponsesSession()
@@ -178,7 +183,27 @@ class TestCodexSession:
         ex = result[0]
         assert ex.complete is True
         assert ex.error == {"status": 429, "code": "rate_limited", "message": "Too many requests"}
-        assert ex.events == []
+        assert _payloads(ex) == [error_frame]
+
+    def test_response_failed_is_a_complete_terminal_capture(self):
+        session = CodexResponsesSession()
+        obj, text = _make_codex_request_frame()
+        _feed(session, from_client=True, obj=obj, timestamp=1.0, raw_text=text)
+        failed = {
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": {"code": "server_error", "message": "Provider failed"},
+            },
+        }
+        result = _feed(session, from_client=False, obj=failed, timestamp=2.0)
+
+        assert len(result) == 1
+        assert result[0].complete is True
+        assert result[0].error == {
+            "status": None, "code": "server_error", "message": "Provider failed",
+        }
+        assert _payloads(result[0]) == [failed]
 
     def test_new_request_flushes_dangling_as_incomplete(self):
         session = CodexResponsesSession()
@@ -194,7 +219,7 @@ class TestCodexSession:
         dangling = flushed[0]
         assert dangling.request_body == obj1
         assert dangling.complete is False
-        assert dangling.events == [partial_event]
+        assert _payloads(dangling) == [partial_event]
 
     def test_close_flushes_dangling(self):
         session = CodexResponsesSession()
@@ -230,3 +255,52 @@ class TestCodexSession:
             from_client=True, content=b"[1, 2, 3]", is_text=True, timestamp=1.0,
         )
         assert result == []
+
+    def test_unknown_text_json_and_binary_are_retained_during_turn(self):
+        session = CodexResponsesSession()
+        obj, text = _make_codex_request_frame()
+        _feed(session, from_client=True, obj=obj, timestamp=1.0, raw_text=text)
+
+        session.on_message(
+            from_client=False, content=b"not-json", is_text=True, timestamp=1.1,
+        )
+        session.on_message(
+            from_client=False, content=b"[1,2,3]", is_text=True, timestamp=1.2,
+        )
+        session.on_message(
+            from_client=False, content=b"\x00\x01", is_text=False, timestamp=1.3,
+        )
+        result = _feed(
+            session,
+            from_client=False,
+            obj={"type": "response.completed", "response": {"output": []}},
+            timestamp=2.0,
+        )
+
+        assert len(result) == 1
+        events = result[0].events
+        assert [(event.kind, event.payload, event.text) for event in events[:2]] == [
+            ("text", None, "not-json"),
+            ("json", [1, 2, 3], None),
+        ]
+        assert events[2].kind == "binary"
+        assert events[2].payload == {"encoding": "base64", "data": "AAE="}
+
+    def test_auxiliary_client_frame_is_retained_but_not_response_input(self):
+        session = CodexResponsesSession()
+        obj, text = _make_codex_request_frame()
+        _feed(session, from_client=True, obj=obj, timestamp=1.0, raw_text=text)
+        _feed(
+            session, from_client=True, obj={"type": "client.control", "value": 1},
+            timestamp=1.1,
+        )
+        result = _feed(
+            session,
+            from_client=False,
+            obj={"type": "response.completed", "response": {"output": []}},
+            timestamp=2.0,
+        )
+
+        assert len(result) == 1
+        assert result[0].events[0].direction == "client_to_server"
+        assert result[0].events[0].payload == {"type": "client.control", "value": 1}

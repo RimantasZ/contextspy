@@ -234,7 +234,19 @@ export default function RequestDetail() {
       {/* Raw bodies */}
       <div className="space-y-3">
         <RawViewer title="Request" requestId={req.id} content={req.raw_request_body} totalInputTokens={req.tokens_total_input} expandToggle={requestToggle} />
-        <RawViewer title="Response" requestId={req.id} content={req.raw_response_body} responseMode totalInputTokens={req.tokens_total_output} expandToggle={responseToggle} />
+        <RawViewer
+          title="Response"
+          requestId={req.id}
+          content={req.raw_response_body}
+          responseMode
+          responseEvents={req.response_events}
+          responseTransport={req.response_transport}
+          responseReconstructed={req.response_reconstructed}
+          responseComplete={req.response_complete}
+          captureError={req.capture_error}
+          totalInputTokens={req.tokens_total_output}
+          expandToggle={responseToggle}
+        />
       </div>
     </div>
   );

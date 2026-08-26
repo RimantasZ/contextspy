@@ -28,13 +28,22 @@ import pytest
 
 from contextspy.analysis.adapters import get_adapter
 from contextspy.analysis.adapters.anthropic import AnthropicAdapter
-from contextspy.analysis.adapters.base import extract_sse_events
 from contextspy.analysis.adapters.ollama import OllamaAdapter
 from contextspy.analysis.adapters.openai_chat import OpenAIChatAdapter
 from contextspy.analysis.adapters.openai_responses import OpenAIResponsesAdapter
 from contextspy.analysis.blocks import AnalyzedRequest, BlockType, Direction, Usage
+from contextspy.analysis.capture import CapturedEvent, decode_sse
 from contextspy.analysis.classifier import classify, classify_blocks, per_tool_tokens
 from contextspy.analysis.tokenizer import count_tokens
+
+
+def _parse_stream(adapter, raw: bytes):
+    canonical = adapter.reconstruct_stream(raw)
+    return adapter.parse_response(canonical.payload)
+
+
+def _json_sse_payloads(raw: bytes) -> list[dict]:
+    return [event.payload for event in decode_sse(raw) if isinstance(event.payload, dict)]
 
 try:
     from contextspy.proxy.addon import _detect_agent, _detect_provider
@@ -330,36 +339,187 @@ def _make_openai_responses_sse(
 
 
 # ---------------------------------------------------------------------------
-# extract_sse_events (shared SSE-framing helper, used by parse_sse + WS parse_events)
+# generic SSE framing
 # ---------------------------------------------------------------------------
 
 class TestExtractSseEvents:
     def test_data_lines_parsed(self):
         raw = b'data: {"type": "a"}\n\ndata: {"type": "b"}\n\n'
-        events = extract_sse_events(raw)
+        events = _json_sse_payloads(raw)
         assert events == [{"type": "a"}, {"type": "b"}]
 
     def test_done_sentinel_skipped(self):
         raw = b'data: {"type": "a"}\n\ndata: [DONE]\n\n'
-        events = extract_sse_events(raw)
+        events = _json_sse_payloads(raw)
         assert events == [{"type": "a"}]
 
+
+class TestCompleteSseCapture:
+    def test_preserves_sse_metadata_multiline_and_done(self):
+        raw = (
+            b"event: custom\n"
+            b"id: evt-1\n"
+            b"retry: 1500\n"
+            b": provider-extension\n"
+            b"data: {\"type\":\n"
+            b"data: \"custom\", \"unknown\": 7}\n\n"
+            b"data: [DONE]\n\n"
+        )
+        events = decode_sse(raw)
+        assert len(events) == 2
+        assert events[0].event == "custom"
+        assert events[0].event_id == "evt-1"
+        assert events[0].retry_ms == 1500
+        assert events[0].comments == ["provider-extension"]
+        assert events[0].payload == {"type": "custom", "unknown": 7}
+        assert events[1].done is True
+
+    def test_preserves_non_json_data(self):
+        events = decode_sse(b"data: provider-specific text\n\n")
+        assert events[0].kind == "text"
+        assert events[0].payload == "provider-specific text"
+
+    def test_tolerates_json_per_line_without_blank_records(self):
+        events = decode_sse(b'data: {"n": 1}\ndata: {"n": 2}\ndata: [DONE]')
+        assert [event.payload for event in events[:2]] == [{"n": 1}, {"n": 2}]
+        assert events[2].done is True
+
+
+class TestCanonicalResponseReconstruction:
+    @staticmethod
+    def _block_signature(blocks):
+        return [
+            (b.block_type, b.content, b.tool_name, b.tool_call_id)
+            for b in blocks
+        ]
+
+    def test_anthropic_stream_uses_buffered_parser(self):
+        adapter = AnthropicAdapter()
+        canonical = adapter.reconstruct_stream(_make_anthropic_sse())
+        streamed_blocks, streamed_usage = adapter.parse_response(canonical.payload)
+        assert self._block_signature(streamed_blocks)
+        assert streamed_usage.output_tokens is not None
+        assert canonical.payload["content"][0]["text"].strip() == "Hello world"
+        assert canonical.events
+
+    def test_openai_chat_reconstructs_all_choices_and_tool_arguments(self):
+        adapter = OpenAIChatAdapter()
+        payloads = [
+            {"id": "chat-1", "object": "chat.completion.chunk", "choices": [
+                {"index": 0, "delta": {"role": "assistant", "content": "Hi ", "tool_calls": [
+                    {"index": 0, "id": "call-1", "function": {"name": "search", "arguments": '{"q":'}},
+                ]}},
+                {"index": 1, "delta": {"role": "assistant", "content": "Alternative"}},
+            ]},
+            {"choices": [
+                {"index": 0, "delta": {"content": "there", "tool_calls": [
+                    {"index": 0, "function": {"arguments": '"x"}'}},
+                ]}, "finish_reason": "tool_calls"},
+                {"index": 1, "delta": {}, "finish_reason": "stop"},
+            ], "usage": {"prompt_tokens": 3, "completion_tokens": 4,
+                           "provider_extension": {"kept": True}}},
+        ]
+        canonical = adapter.reconstruct_response(
+            [CapturedEvent(i, payload=p) for i, p in enumerate(payloads)], transport="sse",
+        )
+        assert canonical.payload["object"] == "chat.completion"
+        assert canonical.payload["choices"][0]["message"]["content"] == "Hi there"
+        assert canonical.payload["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] == '{"q":"x"}'
+        assert canonical.payload["choices"][1]["message"]["content"] == "Alternative"
+        assert canonical.payload["usage"]["provider_extension"] == {"kept": True}
+        blocks, _ = adapter.parse_response(canonical.payload)
+        assert len([b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]) == 2
+
+    def test_openai_chat_reconstructs_legacy_function_call(self):
+        adapter = OpenAIChatAdapter()
+        payloads = [
+            {"choices": [{"index": 0, "delta": {
+                "function_call": {"name": "search", "arguments": '{"q":'},
+            }}]},
+            {"choices": [{"index": 0, "delta": {
+                "function_call": {"arguments": '"test"}'},
+            }, "finish_reason": "function_call"}]},
+        ]
+        canonical = adapter.reconstruct_response(
+            [CapturedEvent(i, payload=p) for i, p in enumerate(payloads)], transport="sse",
+        )
+        blocks, _ = adapter.parse_response(canonical.payload)
+        call = next(block for block in blocks if block.block_type == BlockType.TOOL_CALL)
+        assert call.tool_name == "search"
+        assert call.content == '{"q":"test"}'
+
+    def test_responses_completed_snapshot_and_deltas_are_combined(self):
+        adapter = OpenAIResponsesAdapter()
+        payloads = [
+            {"type": "response.created", "response": {"id": "resp-1", "model": "gpt-5"}},
+            {"type": "response.output_item.added", "output_index": 0,
+             "item": {"type": "message", "role": "assistant"}},
+            {"type": "response.output_text.delta", "output_index": 0,
+             "content_index": 0, "delta": "hello"},
+            {"type": "provider.unknown", "future_field": {"kept": True}},
+            {"type": "response.completed", "response": {
+                "id": "resp-1", "model": "gpt-5",
+                "usage": {"input_tokens": 2, "output_tokens": 3},
+            }},
+        ]
+        canonical = adapter.reconstruct_response(
+            [CapturedEvent(i, payload=p) for i, p in enumerate(payloads)], transport="websocket",
+        )
+        assert canonical.payload["output"][0]["content"][0]["text"] == "hello"
+        assert canonical.events[3].payload["future_field"] == {"kept": True}
+        blocks, usage = adapter.parse_response(canonical.payload)
+        assert blocks[0].content == "hello"
+        assert usage.output_tokens == 3
+
+    def test_responses_failed_snapshot_is_terminal_and_preserved(self):
+        adapter = OpenAIResponsesAdapter()
+        failure = {
+            "type": "response.failed",
+            "response": {
+                "id": "resp-failed",
+                "status": "failed",
+                "error": {"code": "server_error", "message": "failed"},
+                "output": [],
+            },
+        }
+        canonical = adapter.reconstruct_response(
+            [CapturedEvent(0, payload=failure)], transport="websocket",
+        )
+        assert canonical.complete is True
+        assert canonical.payload["status"] == "failed"
+        assert canonical.payload["error"]["code"] == "server_error"
+
+    def test_ollama_ndjson_reconstructs_canonical_response(self):
+        adapter = OllamaAdapter()
+        raw = b'\n'.join([
+            b'{"model":"llama","message":{"role":"assistant","content":"Hi "},"done":false}',
+            b'{"message":{"role":"assistant","content":"there"},"done":false}',
+            b'{"done":true,"prompt_eval_count":2,"eval_count":3,"future":"kept"}',
+        ])
+        canonical = adapter.reconstruct_stream(raw)
+        assert canonical.payload["message"]["content"] == "Hi there"
+        assert canonical.payload["future"] == "kept"
+        blocks, usage = adapter.parse_response(canonical.payload)
+        assert blocks[0].content == "Hi there"
+        assert usage == Usage(input_tokens=2, output_tokens=3)
+
+class TestExtractSseEventsAdditional:
     def test_blank_lines_skipped(self):
         raw = b'\n\ndata: {"type": "a"}\n\n\n'
-        events = extract_sse_events(raw)
+        events = _json_sse_payloads(raw)
         assert events == [{"type": "a"}]
 
     def test_bad_json_skipped(self):
         raw = b'data: not json\n\ndata: {"type": "a"}\n\n'
-        events = extract_sse_events(raw)
+        events = _json_sse_payloads(raw)
         assert events == [{"type": "a"}]
 
     def test_empty_input(self):
-        assert extract_sse_events(b"") == []
+        assert _json_sse_payloads(b"") == []
 
     def test_non_data_lines_ignored(self):
         raw = b'event: message_start\n\ndata: {"type": "a"}\n\n'
-        events = extract_sse_events(raw)
+        events = _json_sse_payloads(raw)
         assert events == [{"type": "a"}]
 
 
@@ -448,7 +608,7 @@ class TestAnthropicSse:
     def test_standard_stream(self):
         raw = _make_anthropic_sse(text="Hello world", input_tokens=10,
                                    output_tokens=42, cache_read=500, cache_creation=100)
-        blocks, usage = self.adapter.parse_sse(raw)
+        blocks, usage = _parse_stream(self.adapter, raw)
         assert usage.input_tokens == 610
         assert usage.output_tokens == 42
         assert usage.cache_read_tokens == 500
@@ -459,13 +619,13 @@ class TestAnthropicSse:
     def test_copilot_bedrock_stream_all_tokens_in_message_delta(self):
         raw = _make_copilot_claude_sse(text="Hi there", input_tokens=1, output_tokens=220,
                                         cache_read=40876, cache_creation=3926)
-        blocks, usage = self.adapter.parse_sse(raw)
+        blocks, usage = _parse_stream(self.adapter, raw)
         assert usage.output_tokens == 220
         assert usage.cache_read_tokens == 40876
         assert usage.cache_creation_tokens == 3926
 
     def test_empty_stream(self):
-        blocks, usage = self.adapter.parse_sse(b"")
+        blocks, usage = _parse_stream(self.adapter, b"")
         assert blocks == []
 
     def test_copilot_claude_sse_via_get_adapter(self):
@@ -474,7 +634,7 @@ class TestAnthropicSse:
                                         output_tokens=220, cache_read=40876, cache_creation=3926)
         adapter = get_adapter("/v1/messages")
         assert adapter is not None
-        blocks, usage = adapter.parse_sse(raw)
+        blocks, usage = _parse_stream(adapter, raw)
         text = "".join(b.content for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
         assert "Hello" in text
         assert usage.output_tokens == 220
@@ -548,7 +708,7 @@ class TestAnthropicThinking:
             {"type": "message_delta", "usage": {"output_tokens": 15}},
         ]
         raw = b"\n".join(b"data: " + json.dumps(e).encode() for e in events)
-        blocks, usage = self.adapter.parse_sse(raw)
+        blocks, usage = _parse_stream(self.adapter, raw)
         thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
         text = [b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]
         assert thinking and thinking[0].content == "step 1 step 2"
@@ -647,7 +807,7 @@ class TestAnthropicThinking:
             {"type": "message_delta", "usage": {"output_tokens": 50}},
         ]
         raw = b"\n".join(b"data: " + json.dumps(e).encode() for e in events)
-        blocks, usage = self.adapter.parse_sse(raw)
+        blocks, usage = _parse_stream(self.adapter, raw)
         visible = sum(
             b.token_count for b in blocks if b.block_type != BlockType.THINKING
         )
@@ -785,7 +945,7 @@ class TestOpenAIChatAdapter:
 
     def test_sse(self):
         raw = _make_openai_sse(text="Hello world", prompt_tokens=20, completion_tokens=42)
-        blocks, usage = self.adapter.parse_sse(raw)
+        blocks, usage = _parse_stream(self.adapter, raw)
         text = "".join(b.content for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
         assert "Hello" in text
         assert usage.input_tokens == 20
@@ -852,7 +1012,7 @@ class TestOpenAIChatAdapter:
         lines = ["data: " + json.dumps(c) for c in chunks]
         lines.append("data: [DONE]")
         raw = "\n".join(lines).encode()
-        blocks, _ = self.adapter.parse_sse(raw)
+        blocks, _ = _parse_stream(self.adapter, raw)
         thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
         text = [b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]
         assert thinking and thinking[0].content == "Thinking it over."
@@ -920,7 +1080,7 @@ class TestOpenAIResponsesAdapter:
 
     def test_sse_accumulates_text(self):
         raw = _make_openai_responses_sse(text="Hello world", input_tokens=20, output_tokens=42)
-        blocks, usage = self.adapter.parse_sse(raw)
+        blocks, usage = _parse_stream(self.adapter, raw)
         text = "".join(b.content for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE)
         assert "Hello" in text
         assert usage.input_tokens == 20
@@ -936,22 +1096,23 @@ class TestOpenAIResponsesAdapter:
              "response": {"model": "gpt-4o", "usage": {"input_tokens": 10, "output_tokens": 5}}},
         ]
         raw = b"\n".join(b"data: " + json.dumps(e).encode() for e in events)
-        blocks, usage = self.adapter.parse_sse(raw)
+        blocks, usage = _parse_stream(self.adapter, raw)
         call = next(b for b in blocks if b.block_type == BlockType.TOOL_CALL)
         assert call.tool_name == "search"
         assert call.tool_call_id == "fc1"
         assert call.content == '{"q":"test"}'
 
     def test_sse_empty_stream(self):
-        blocks, usage = self.adapter.parse_sse(b"")
+        blocks, usage = _parse_stream(self.adapter, b"")
         assert blocks == []
         assert usage.input_tokens is None
 
-    def test_parse_events_equivalent_to_parse_sse(self):
+    def test_sse_and_websocket_events_use_equivalent_canonical_analysis(self):
         raw = _make_openai_responses_sse(text="Hello world", input_tokens=20, output_tokens=42)
-        sse_blocks, sse_usage = self.adapter.parse_sse(raw)
-        events = extract_sse_events(raw)
-        event_blocks, event_usage = self.adapter.parse_events(events)
+        sse = self.adapter.reconstruct_stream(raw)
+        websocket = self.adapter.reconstruct_response(decode_sse(raw), transport="websocket")
+        sse_blocks, sse_usage = self.adapter.parse_response(sse.payload)
+        event_blocks, event_usage = self.adapter.parse_response(websocket.payload)
         assert [b.content for b in sse_blocks] == [b.content for b in event_blocks]
         assert [b.block_type for b in sse_blocks] == [b.block_type for b in event_blocks]
         assert sse_usage == event_usage
@@ -960,7 +1121,7 @@ class TestOpenAIResponsesAdapter:
         raw = _make_openai_responses_sse(text="Hi", input_tokens=10, output_tokens=3)
         adapter = get_adapter("/zen/v1/responses")
         assert adapter is not None and adapter.format_id == "openai_responses"
-        _, usage = adapter.parse_sse(raw)
+        _, usage = _parse_stream(adapter, raw)
         assert usage.output_tokens == 3
 
     # -- hidden reasoning -------------------------------------------------
@@ -1051,7 +1212,7 @@ class TestOllamaAdapter:
             json.dumps({"done": True, "prompt_eval_count": 20, "eval_count": 42}),
         ]
         raw = "\n".join(lines).encode()
-        blocks, usage = self.adapter.parse_sse(raw)
+        blocks, usage = _parse_stream(self.adapter, raw)
         assert blocks[0].content == "Hello world"
         assert usage.input_tokens == 20
         assert usage.output_tokens == 42
@@ -1075,7 +1236,7 @@ class TestOllamaAdapter:
             json.dumps({"done": True, "prompt_eval_count": 20, "eval_count": 42}),
         ]
         raw = "\n".join(lines).encode()
-        blocks, _ = self.adapter.parse_sse(raw)
+        blocks, _ = _parse_stream(self.adapter, raw)
         thinking = [b for b in blocks if b.block_type == BlockType.THINKING]
         text = [b for b in blocks if b.block_type == BlockType.ASSISTANT_MESSAGE]
         assert thinking and thinking[0].content == "Let me think..."
@@ -1468,6 +1629,73 @@ class TestTransportColumn:
                 "provider": "anthropic", "endpoint": "/v1/messages",
             })
             assert req.transport == "http"
+            assert req.response_transport == "legacy"
+            assert bool(req.response_complete) is False
+
+    def test_response_capture_metadata_round_trips(self, tmp_path):
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+
+        init_db(tmp_path / "response_capture.db")
+        events = [{
+            "sequence": 0,
+            "direction": "server_to_client",
+            "kind": "json",
+            "payload": {"type": "response.output_text.delta", "delta": "hi"},
+            "text": None,
+            "event": None,
+            "event_id": None,
+            "retry_ms": None,
+            "done": False,
+        }]
+        with get_db() as db:
+            crud.create_request(db, {
+                "id": "req-sse", "timestamp": datetime.now(timezone.utc),
+                "provider": "openai", "endpoint": "/v1/responses",
+                "response_transport": "sse",
+                "response_reconstructed": 1,
+                "response_complete": 0,
+                "capture_error": json.dumps({"stage": "transport", "message": "truncated"}),
+                "raw_response_body": json.dumps({"id": "resp_1", "output": []}),
+                "response_events": json.dumps(events),
+            })
+
+        with get_db() as db:
+            payload = crud.get_request(db, "req-sse").to_dict()
+
+        assert payload["response_transport"] == "sse"
+        assert payload["response_reconstructed"] is True
+        assert payload["response_complete"] is False
+        assert payload["capture_error"] == {"stage": "transport", "message": "truncated"}
+        assert payload["response_events"] == events
+
+    def test_retention_purges_response_events_with_canonical_bodies(self, tmp_path):
+        from contextspy.config import Settings
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db, startup_vacuum
+
+        init_db(tmp_path / "response_retention.db")
+        with get_db() as db:
+            crud.create_request(db, {
+                "id": "req-old-stream",
+                "timestamp": datetime.now(timezone.utc) - timedelta(days=30),
+                "provider": "openai", "endpoint": "/v1/responses",
+                "raw_request_body": json.dumps({"input": "secret"}),
+                "raw_response_body": json.dumps({"output": "secret"}),
+                "response_events": json.dumps([{"payload": {"delta": "secret"}}]),
+            })
+
+        settings = Settings()
+        settings.retention.raw_body_days = 7
+        settings.retention.block_content_days = 0
+        startup_vacuum(settings)
+
+        with get_db() as db:
+            payload = crud.get_request(db, "req-old-stream").to_dict()
+
+        assert payload["raw_request_body"] is None
+        assert payload["raw_response_body"] is None
+        assert payload["response_events"] is None
 
     def test_init_db_twice_is_idempotent(self, tmp_path):
         from contextspy.db.database import init_db
@@ -1575,7 +1803,10 @@ class TestHandleWsExchange:
         exchange = CompletedExchange(
             request_body=request_body,
             raw_request_text=json.dumps(request_body),
-            events=events,
+            events=[
+                CapturedEvent(sequence=i, payload=event)
+                for i, event in enumerate(events)
+            ],
             request_ts=1.0, first_event_ts=1.2, last_event_ts=1.5,
         )
         state = _WsFlowState(
@@ -1597,3 +1828,108 @@ class TestHandleWsExchange:
             assert row.duration_ms == 500
             assert row.ttft_ms in (199, 200)
             assert row.tokens_total_output > 0
+            assert row.response_transport == "websocket"
+            assert bool(row.response_reconstructed) is True
+            assert bool(row.response_complete) is True
+            assert json.loads(row.raw_response_body)["output"][0]["content"][0]["text"] == "Hello world"
+            normalized_events = json.loads(row.response_events)
+            assert [event["payload"] for event in normalized_events] == events
+
+
+@pytest.mark.skipif(not _HAS_ADDON, reason="mitmproxy not installed")
+class TestAddonCaptureBoundaries:
+    @staticmethod
+    def _flow(*, request_text: str, response_text: str | None = None, error=None):
+        from types import SimpleNamespace
+
+        request = SimpleNamespace(
+            pretty_host="api.openai.com",
+            port=443,
+            path="/v1/responses",
+            headers={"user-agent": "test"},
+            get_text=lambda: request_text,
+        )
+        response = None if response_text is None else SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "application/octet-stream"},
+            get_text=lambda: response_text,
+        )
+        return SimpleNamespace(
+            id="flow-1", request=request, response=response, websocket=None,
+            metadata={"contextspy_request_body": request_text}, error=error,
+        )
+
+    def test_stream_capture_survives_both_analysis_failures(self, tmp_path, monkeypatch):
+        from contextspy.analysis.capture import CanonicalResponse
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+        from contextspy.proxy import addon as addon_module
+
+        class FailingAnalysisAdapter:
+            format_id = "test"
+            stream_format = "sse"
+
+            def reconstruct_response(self, events, *, transport):
+                return CanonicalResponse(
+                    payload={"id": "canonical", "unknown": {"kept": True}},
+                    transport=transport,
+                    events=events,
+                    reconstructed=True,
+                    complete=True,
+                )
+
+            def parse_request(self, request):
+                raise ValueError("request parser failed")
+
+            def parse_response(self, response):
+                raise ValueError("response parser failed")
+
+        init_db(tmp_path / "capture_boundary.db")
+        monkeypatch.setattr(addon_module, "get_adapter", lambda endpoint: FailingAnalysisAdapter())
+        flow = self._flow(
+            request_text=json.dumps({"model": "gpt-test", "input": "hello"}),
+            response_text='data: {"type":"future.event","value":7}\n\ndata: [DONE]\n\n',
+        )
+
+        addon_module.ContextSpyAddon(provider_override="openai")._handle_response(flow)
+
+        with get_db() as db:
+            rows = crud.list_requests(db)
+            assert len(rows) == 1
+            detail = rows[0].to_dict()
+        assert json.loads(detail["raw_response_body"]) == {
+            "id": "canonical", "unknown": {"kept": True},
+        }
+        assert detail["response_reconstructed"] is True
+        assert detail["response_complete"] is True
+        assert detail["response_events"][0]["payload"] == {
+            "type": "future.event", "value": 7,
+        }
+        assert detail["response_events"][1]["done"] is True
+        assert detail["capture_error"]["stage"] == "request_analysis"
+        assert detail["capture_error"]["additional"][0]["stage"] == "response_analysis"
+
+    def test_http_error_retains_request_and_does_not_double_save(self, tmp_path):
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+        from contextspy.proxy.addon import ContextSpyAddon
+
+        init_db(tmp_path / "failed_http.db")
+        request_text = json.dumps({"model": "gpt-test", "input": "keep me"})
+        flow = self._flow(
+            request_text=request_text,
+            error="connection reset before response",
+        )
+        addon = ContextSpyAddon(provider_override="openai")
+        addon.error(flow)
+        addon.error(flow)
+
+        with get_db() as db:
+            rows = crud.list_requests(db)
+            assert len(rows) == 1
+            detail = rows[0].to_dict()
+        assert detail["raw_request_body"] == request_text
+        assert detail["raw_response_body"] is None
+        assert detail["response_transport"] == "none"
+        assert detail["response_complete"] is False
+        assert detail["capture_error"]["stage"] == "transport"

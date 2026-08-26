@@ -19,7 +19,7 @@ full JSON object, not "data: "-prefixed.
 """
 from __future__ import annotations
 
-import json
+from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
@@ -27,6 +27,7 @@ from contextspy.analysis.adapters.base import (
     reconcile_thinking,
 )
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
+from contextspy.analysis.capture import CanonicalResponse, CapturedEvent
 
 _BLOCK_TYPE_FOR_ROLE = {
     "system": BlockType.SYSTEM_PROMPT,
@@ -37,6 +38,7 @@ _BLOCK_TYPE_FOR_ROLE = {
 class OllamaAdapter(WireFormatAdapter):
     format_id = "ollama"
     endpoint_patterns = ("/api/chat", "/api/generate")
+    stream_format = "ndjson"
 
     def parse_request(self, req_body: dict) -> tuple[list[Block], dict[str, str]]:
         blocks: list[Block] = []
@@ -65,37 +67,42 @@ class OllamaAdapter(WireFormatAdapter):
         reconcile_thinking(blocks, usage)
         return blocks, usage
 
-    def parse_sse(self, raw: bytes) -> tuple[list[Block], Usage]:
-        text_data = raw.decode("utf-8", errors="replace")
-        content_parts: list[str] = []
-        thinking_parts: list[str] = []
-        prompt_eval_count: int | None = None
-        eval_count: int | None = None
-        for line in text_data.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            message = event.get("message") or {}
-            if message.get("thinking"):
-                thinking_parts.append(message["thinking"])
-            if message.get("content"):
-                content_parts.append(message["content"])
-            if event.get("prompt_eval_count") is not None:
-                prompt_eval_count = event["prompt_eval_count"]
-            if event.get("eval_count") is not None:
-                eval_count = event["eval_count"]
+    def reconstruct_response(
+        self, events: list[CapturedEvent], *, transport: str,
+    ) -> CanonicalResponse:
+        response: dict = {}
+        message: dict = {"role": "assistant", "content": ""}
+        generated = ""
+        saw_done = False
 
-        blocks: list[Block] = []
-        thinking = "".join(thinking_parts)
-        if thinking:
-            blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, thinking))
-        content = "".join(content_parts)
-        if content:
-            blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, content))
-        usage = Usage(input_tokens=prompt_eval_count, output_tokens=eval_count)
-        reconcile_thinking(blocks, usage)
-        return blocks, usage
+        for captured in events:
+            if captured.direction != "server_to_client":
+                continue
+            event = captured.payload
+            if not isinstance(event, dict):
+                continue
+            for key, value in event.items():
+                if key not in ("message", "response") and value is not None:
+                    response[key] = deepcopy(value)
+            chunk_message = event.get("message") or {}
+            if isinstance(chunk_message, dict):
+                for key, value in chunk_message.items():
+                    if key in ("content", "thinking") and isinstance(value, str):
+                        message[key] = message.get(key, "") + value
+                    elif key == "tool_calls" and isinstance(value, list):
+                        message.setdefault("tool_calls", []).extend(deepcopy(value))
+                    elif value is not None:
+                        message[key] = deepcopy(value)
+            if isinstance(event.get("response"), str):
+                generated += event["response"]
+            saw_done = saw_done or event.get("done") is True
+
+        if message.get("content") or message.get("thinking") or message.get("tool_calls"):
+            response["message"] = message
+        if generated:
+            response["response"] = generated
+            response.setdefault("message", {"role": "assistant", "content": generated})
+        return CanonicalResponse(
+            payload=response, transport=transport, events=events,
+            reconstructed=True, complete=saw_done,
+        )

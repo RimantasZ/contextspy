@@ -20,6 +20,7 @@ llama-server, vLLM) and gateways relaying to OpenAI-format models
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
@@ -27,6 +28,7 @@ from contextspy.analysis.adapters.base import (
     reconcile_thinking,
 )
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
+from contextspy.analysis.capture import CanonicalResponse, CapturedEvent
 
 
 class OpenAIChatAdapter(WireFormatAdapter):
@@ -107,20 +109,36 @@ class OpenAIChatAdapter(WireFormatAdapter):
     def parse_response(self, resp_body: dict) -> tuple[list[Block], Usage]:
         blocks: list[Block] = []
         choices = resp_body.get("choices", [])
-        if choices:
-            msg = choices[0].get("message") or choices[0].get("delta") or {}
+        for list_index, choice in enumerate(choices):
+            choice_index = int(choice.get("index", list_index))
+            msg = choice.get("message") or choice.get("delta") or {}
             reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
             if reasoning:
-                blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, reasoning))
+                blocks.append(Block.make(
+                    Direction.OUTPUT, BlockType.THINKING, reasoning,
+                    message_index=choice_index,
+                ))
             text = flatten_content(msg.get("content", ""))
             if text:
-                blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, text))
+                blocks.append(Block.make(
+                    Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, text,
+                    message_index=choice_index,
+                ))
             for tc in msg.get("tool_calls") or []:
                 fn = tc.get("function") or {}
                 name = fn.get("name") or tc.get("name") or ""
                 blocks.append(Block.make(
                     Direction.OUTPUT, BlockType.TOOL_CALL, fn.get("arguments", ""),
-                    tool_name=name, tool_call_id=tc.get("id"),
+                    message_index=choice_index, tool_name=name, tool_call_id=tc.get("id"),
+                ))
+            function_call = msg.get("function_call") or {}
+            if isinstance(function_call, dict) and function_call:
+                blocks.append(Block.make(
+                    Direction.OUTPUT,
+                    BlockType.TOOL_CALL,
+                    function_call.get("arguments", ""),
+                    message_index=choice_index,
+                    tool_name=function_call.get("name", ""),
                 ))
 
         usage = resp_body.get("usage", {}) or {}
@@ -133,72 +151,82 @@ class OpenAIChatAdapter(WireFormatAdapter):
         reconcile_thinking(blocks, usage_obj)
         return blocks, usage_obj
 
-    # -- SSE -------------------------------------------------------------------
+    # -- streamed response reconstruction -------------------------------------
 
-    def parse_sse(self, raw: bytes) -> tuple[list[Block], Usage]:
-        text_data = raw.decode("utf-8", errors="replace")
-        prompt_tokens: int | None = None
-        completion_tokens: int | None = None
-        reasoning_tokens: int | None = None
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        tool_calls_acc: dict[int, dict] = {}
+    def reconstruct_response(
+        self, events: list[CapturedEvent], *, transport: str,
+    ) -> CanonicalResponse:
+        response: dict = {"object": "chat.completion", "choices": []}
+        choices: dict[int, dict] = {}
 
-        for line in text_data.splitlines():
-            if not line.startswith("data: "):
+        for captured in events:
+            if captured.direction != "server_to_client":
                 continue
-            payload = line[6:].strip()
-            if not payload or payload == "[DONE]":
+            event = captured.payload
+            if not isinstance(event, dict):
                 continue
-            try:
-                event = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
+            for key, value in event.items():
+                if key not in ("choices", "usage") and value is not None:
+                    response[key] = deepcopy(value)
+            if isinstance(event.get("usage"), dict):
+                response["usage"] = deepcopy(event["usage"])
 
-            for choice in event.get("choices", []):
-                delta = choice.get("delta", {})
-                if delta.get("content"):
-                    content_parts.append(delta["content"])
-                reasoning_delta = delta.get("reasoning_content") or delta.get("reasoning")
-                if reasoning_delta:
-                    reasoning_parts.append(reasoning_delta)
-                for tc in delta.get("tool_calls") or []:
-                    idx = tc.get("index", 0)
-                    entry = tool_calls_acc.setdefault(idx, {"id": None, "name": None, "arguments": ""})
-                    if tc.get("id"):
-                        entry["id"] = tc["id"]
-                    fn = tc.get("function") or {}
-                    if fn.get("name"):
-                        entry["name"] = fn["name"]
-                    if fn.get("arguments"):
-                        entry["arguments"] += fn["arguments"]
+            for chunk_choice in event.get("choices") or []:
+                if not isinstance(chunk_choice, dict):
+                    continue
+                idx = int(chunk_choice.get("index", 0))
+                choice = choices.setdefault(idx, {"index": idx, "message": {}})
+                delta = chunk_choice.get("delta") or chunk_choice.get("message") or {}
+                message = choice["message"]
+                if isinstance(delta, dict):
+                    for key, value in delta.items():
+                        if value is None:
+                            continue
+                        if key in ("content", "reasoning_content", "reasoning", "refusal") and isinstance(value, str):
+                            message[key] = message.get(key, "") + value
+                        elif key == "tool_calls" and isinstance(value, list):
+                            tool_calls = message.setdefault("tool_calls", [])
+                            for tc in value:
+                                if not isinstance(tc, dict):
+                                    continue
+                                tc_idx = int(tc.get("index", len(tool_calls)))
+                                while len(tool_calls) <= tc_idx:
+                                    tool_calls.append({"index": len(tool_calls), "function": {"arguments": ""}})
+                                target = tool_calls[tc_idx]
+                                for tc_key, tc_value in tc.items():
+                                    if tc_key == "function" and isinstance(tc_value, dict):
+                                        fn = target.setdefault("function", {})
+                                        for fn_key, fn_value in tc_value.items():
+                                            if fn_key == "arguments" and isinstance(fn_value, str):
+                                                fn[fn_key] = fn.get(fn_key, "") + fn_value
+                                            elif fn_value is not None:
+                                                fn[fn_key] = deepcopy(fn_value)
+                                    elif tc_key != "index" and tc_value is not None:
+                                        target[tc_key] = deepcopy(tc_value)
+                        elif key == "function_call" and isinstance(value, dict):
+                            function_call = message.setdefault(
+                                "function_call", {"arguments": ""},
+                            )
+                            for fn_key, fn_value in value.items():
+                                if fn_key == "arguments" and isinstance(fn_value, str):
+                                    function_call[fn_key] = function_call.get(fn_key, "") + fn_value
+                                elif fn_value is not None:
+                                    function_call[fn_key] = deepcopy(fn_value)
+                        elif isinstance(value, list) and isinstance(message.get(key), list):
+                            message[key].extend(deepcopy(value))
+                        else:
+                            message[key] = deepcopy(value)
+                for key, value in chunk_choice.items():
+                    if key not in ("delta", "message") and value is not None:
+                        choice[key] = deepcopy(value)
 
-            usage = event.get("usage") or {}
-            if usage.get("prompt_tokens") is not None:
-                prompt_tokens = usage["prompt_tokens"]
-            if usage.get("completion_tokens") is not None:
-                completion_tokens = usage["completion_tokens"]
-            details = usage.get("completion_tokens_details") or {}
-            if details.get("reasoning_tokens") is not None:
-                reasoning_tokens = details["reasoning_tokens"]
-
-        blocks: list[Block] = []
-        response_reasoning = "".join(reasoning_parts)
-        if response_reasoning:
-            blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, response_reasoning))
-        response_content = "".join(content_parts)
-        if response_content:
-            blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, response_content))
-        for idx in sorted(tool_calls_acc):
-            entry = tool_calls_acc[idx]
-            blocks.append(Block.make(
-                Direction.OUTPUT, BlockType.TOOL_CALL, entry["arguments"],
-                tool_name=entry["name"] or "", tool_call_id=entry["id"],
-            ))
-        usage_obj = Usage(
-            input_tokens=prompt_tokens,
-            output_tokens=completion_tokens,
-            reasoning_tokens=reasoning_tokens,
-        ) if (prompt_tokens is not None or completion_tokens is not None) else Usage()
-        reconcile_thinking(blocks, usage_obj)
-        return blocks, usage_obj
+        response["choices"] = [choices[idx] for idx in sorted(choices)]
+        if response.get("object") == "chat.completion.chunk":
+            response["object"] = "chat.completion"
+        complete = any(event.done for event in events) or any(
+            choice.get("finish_reason") is not None for choice in response["choices"]
+        )
+        return CanonicalResponse(
+            payload=response, transport=transport, events=events,
+            reconstructed=True, complete=complete,
+        )

@@ -148,7 +148,9 @@ Only intercept flows to the following hosts (all other traffic is passed through
 
 Accepts an optional `provider_override: str | None` constructor argument. When set, the addon skips hostname-based provider detection and always uses the specified provider string. Used by reverse-proxy mode where the upstream is a known local server.
 
-The addon handles both regular JSON responses and SSE streaming responses:
+The addon handles regular JSON, SSE/NDJSON streams, and registered WebSocket protocols. Request
+bodies are captured before forwarding so a connection failure can still produce an inspectable
+request row. Stream framing is decoded separately from provider reconstruction and analysis:
 
 ```
 class ContextSpyAddon:
@@ -161,22 +163,24 @@ class ContextSpyAddon:
 
     def request(self, flow):
         flow.metadata["ts_start"] = time.monotonic()
+        # Retain the decoded application request body for success/error paths.
 
     def responseheaders(self, flow):
         # For text/event-stream responses, attach a streaming callback
         # that collects SSE chunks. When the stream ends (empty bytes
-        # sentinel), parse the accumulated SSE data and save the record.
+        # sentinel), decode complete SSE records, reconstruct canonical provider
+        # response JSON, and save both the canonical JSON and normalized events.
         # Sets flow.metadata["is_sse"] = True to suppress response().
 
     def response(self, flow):
         # Skipped if is_sse is set (handled by stream callback).
         # Otherwise:
         # 1. Check hostname filter — skip if not an LLM host
-        # 2. Extract request/response bodies (JSON)
+        # 2. Extract request/response application payloads
         # 3. Detect provider from hostname
         # 4. Detect agent from User-Agent header
-        # 5. Run analysis pipeline → get token breakdown
-        # 6. Persist record to SQLite
+        # 5. Reconstruct streamed response JSON (if applicable)
+        # 6. Persist capture, then analyze that same canonical JSON
         # 7. Emit WebSocket event for live UI update
 ```
 
@@ -245,8 +249,10 @@ wire format produced them.
 
 Each supported wire format is one `WireFormatAdapter` subclass implementing
 `parse_request(req_body) -> (input_blocks, tool_call_map)`,
-`parse_response(resp_body) -> (output_blocks, usage)` (buffered/non-streaming), and
-`parse_sse(raw_bytes) -> (output_blocks, usage)` (streaming). `get_adapter(endpoint)` dispatches
+`reconstruct_response(events, transport) -> CanonicalResponse`, and
+`parse_response(resp_body) -> (output_blocks, usage)`. `parse_response()` is the only response
+analysis path: SSE, NDJSON, and WebSocket events are first reduced to the provider's normal
+buffered response shape. `get_adapter(endpoint)` dispatches
 by matching the request **path** (not host) against each adapter's `endpoint_patterns`, first
 match wins:
 
@@ -268,16 +274,24 @@ call — nothing else in the pipeline changes.
 Requests to unrecognised endpoints (`get_adapter` returns `None`) are recorded with
 `tokens_uncategorized = tokens_total_input` and no `Block` rows.
 
-#### SSE Streaming
+#### Canonical response capture and streaming
 
 Because Claude Code and most modern LLM clients use streaming responses
 (`Content-Type: text/event-stream`), the `response()` mitmproxy hook never fires for these flows.
 Instead `responseheaders()` detects `text/event-stream` and attaches a streaming callback that
 accumulates raw SSE bytes; on stream end, `proxy/addon.py`'s `_handle_sse_response` decompresses
-the body, resolves the adapter via `get_adapter(endpoint)`, and calls `adapter.parse_sse(raw)`
-instead of `parse_response()`. A clean JSON response body is synthesized from the resulting
-`AnalyzedRequest.response_text`/`usage` for storage. Everything downstream (classification,
-persistence) is identical to the non-streaming path.
+the body and uses the transport-neutral decoder in `analysis/capture.py`. The decoder preserves
+ordered application records, multiline `data`, SSE metadata, non-JSON text, and `[DONE]` before
+the adapter reconstructs canonical provider response JSON. Ollama's JSON-lines streams and Codex
+WebSocket events follow the same boundary.
+
+`raw_response_body` stores this canonical provider JSON; `response_events` stores the complete
+normalized application event/frame log. Unknown fields and events remain visible there even when
+no current block or usage rule understands them. HTTP JSON bodies go directly to the same
+`parse_response()` boundary. Reconstruction and analysis have separate error boundaries, so a
+parser failure does not discard the captured body/event log. “Raw” therefore means complete
+normalized application payload, not compressed bytes, HTTP chunks, TLS records, or exact JSON
+whitespace.
 
 #### Content Categories (`analysis/classifier.py`)
 
@@ -401,6 +415,12 @@ CREATE TABLE requests (
     duration_ms                     INTEGER,
     ttft_ms                         INTEGER,            -- time to first streamed token, if measurable
     status_code                     INTEGER,
+    transport                       TEXT NOT NULL DEFAULT 'http',
+    response_transport              TEXT NOT NULL DEFAULT 'legacy',
+        -- 'json' | 'sse' | 'ndjson' | 'websocket' | 'text' | 'none' | 'legacy'
+    response_reconstructed          INTEGER NOT NULL DEFAULT 0,
+    response_complete               INTEGER NOT NULL DEFAULT 0,
+    capture_error                   TEXT,               -- structured JSON warning/error
 
     -- Estimated token counts by category (aggregated from `blocks`, see below)
     tokens_system_prompt            INTEGER NOT NULL DEFAULT 0,
@@ -429,8 +449,9 @@ CREATE TABLE requests (
     tokenizer                       TEXT NOT NULL DEFAULT 'tiktoken/o200k_base',
 
     -- Raw content — purged per [retention] settings
-    raw_request_body                TEXT,
-    raw_response_body               TEXT
+    raw_request_body                TEXT,               -- complete decoded request payload
+    raw_response_body               TEXT,               -- canonical response JSON or text fallback
+    response_events                 TEXT                -- normalized SSE/NDJSON/WS events as JSON
 );
 
 CREATE INDEX idx_requests_session ON requests(session_id);
@@ -495,7 +516,7 @@ Linking".
   content hash), and (if any tools were used) one `ToolStat` row per tool.
 - **Retention (configurable, see §10):** on server startup only (no background timer),
   `startup_vacuum()`:
-  - NULLs `raw_request_body`/`raw_response_body` on `Request` rows older than
+  - NULLs `raw_request_body`/`raw_response_body`/`response_events` together on `Request` rows older than
     `retention.raw_body_days` (default 7; `0` = keep forever).
   - Deletes `block_contents` rows whose hash is no longer referenced by any `blocks` row from a
     request newer than `retention.block_content_days` (default 7; `0` = keep forever) — content
@@ -552,7 +573,7 @@ been purged by retention.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
-| `GET` | `/api/requests/{id}` | Full request detail including raw bodies (if not yet purged). 404 if missing. |
+| `GET` | `/api/requests/{id}` | Full request detail including canonical request/response payloads, normalized streamed `response_events`, and `response_transport`/`response_reconstructed`/`response_complete`/`capture_error` metadata (if not purged). 404 if missing. |
 | `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, linked_call_id, linked_definition_id, linked_previous_message_id`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. 404 if request missing. |
 
 #### Stats

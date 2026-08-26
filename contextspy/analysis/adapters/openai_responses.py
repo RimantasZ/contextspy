@@ -28,13 +28,14 @@ figure that counts — reconcile_thinking() puts it on the THINKING block
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
-    extract_sse_events,
     reconcile_thinking,
 )
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
+from contextspy.analysis.capture import CanonicalResponse, CapturedEvent
 
 
 def _reasoning_summary_text(item: dict) -> str:
@@ -160,76 +161,143 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
         reconcile_thinking(blocks, usage)
         return blocks, usage
 
-    # -- SSE ---------------------------------------------------------------
+    # -- streamed response reconstruction ---------------------------------
 
-    def parse_sse(self, raw: bytes) -> tuple[list[Block], Usage]:
-        return self.parse_events(extract_sse_events(raw))
+    def reconstruct_response(
+        self, events: list[CapturedEvent], *, transport: str,
+    ) -> CanonicalResponse:
+        response: dict = {"object": "response", "output": []}
+        output_by_index: dict[int, dict] = {}
+        completed_snapshot: dict | None = None
+        error: dict | None = None
+        saw_terminal_event = False
 
-    def parse_events(self, events: list[dict]) -> tuple[list[Block], Usage]:
-        input_tokens: int | None = None
-        output_tokens: int | None = None
-        reasoning_tokens: int | None = None
-        text_by_index: dict[int, list[str]] = {}
-        fc_by_index: dict[int, dict] = {}
-        reasoning_by_index: dict[int, dict] = {}
+        def item_at(index: int, item_type: str = "message") -> dict:
+            item = output_by_index.setdefault(index, {"type": item_type})
+            item.setdefault("type", item_type)
+            return item
 
-        for event in events:
+        def content_part(item: dict, index: int, part_type: str) -> dict:
+            content = item.setdefault("content", [])
+            while len(content) <= index:
+                content.append({"type": "output_text", "text": ""})
+            part = content[index]
+            if not isinstance(part, dict):
+                part = {"type": part_type}
+                content[index] = part
+            part.setdefault("type", part_type)
+            return part
+
+        for captured in events:
+            if captured.direction != "server_to_client":
+                continue
+            event = captured.payload
+            if not isinstance(event, dict):
+                continue
             etype = event.get("type", "")
+            if etype in ("response.created", "response.in_progress"):
+                snapshot = event.get("response")
+                if isinstance(snapshot, dict):
+                    response.update(deepcopy(snapshot))
+                    for idx, item in enumerate(snapshot.get("output") or []):
+                        if isinstance(item, dict):
+                            output_by_index[idx] = deepcopy(item)
+            elif etype in ("response.output_item.added", "response.output_item.done"):
+                idx = int(event.get("output_index", 0))
+                item = event.get("item")
+                if isinstance(item, dict):
+                    if etype.endswith(".done") or idx not in output_by_index:
+                        output_by_index[idx] = deepcopy(item)
+                    else:
+                        output_by_index[idx].update(deepcopy(item))
+            elif etype in ("response.content_part.added", "response.content_part.done"):
+                out_idx = int(event.get("output_index", 0))
+                content_idx = int(event.get("content_index", 0))
+                part = event.get("part")
+                item = item_at(out_idx)
+                if isinstance(part, dict):
+                    target = content_part(item, content_idx, part.get("type", "output_text"))
+                    target.update(deepcopy(part))
+            elif etype in ("response.output_text.delta", "response.output_text.done"):
+                out_idx = int(event.get("output_index", 0))
+                content_idx = int(event.get("content_index", 0))
+                part = content_part(item_at(out_idx), content_idx, "output_text")
+                if etype.endswith(".delta"):
+                    part["text"] = part.get("text", "") + event.get("delta", "")
+                elif event.get("text") is not None:
+                    part["text"] = event["text"]
+                for key in ("annotations", "logprobs"):
+                    if event.get(key) is not None:
+                        part[key] = deepcopy(event[key])
+            elif etype in ("response.refusal.delta", "response.refusal.done"):
+                out_idx = int(event.get("output_index", 0))
+                content_idx = int(event.get("content_index", 0))
+                part = content_part(item_at(out_idx), content_idx, "refusal")
+                if etype.endswith(".delta"):
+                    part["refusal"] = part.get("refusal", "") + event.get("delta", "")
+                elif event.get("refusal") is not None:
+                    part["refusal"] = event["refusal"]
+            elif etype in (
+                "response.function_call_arguments.delta",
+                "response.function_call_arguments.done",
+            ):
+                idx = int(event.get("output_index", 0))
+                item = item_at(idx, "function_call")
+                item["type"] = "function_call"
+                if etype.endswith(".delta"):
+                    item["arguments"] = item.get("arguments", "") + event.get("delta", "")
+                elif event.get("arguments") is not None:
+                    item["arguments"] = event["arguments"]
+                for key in ("name", "call_id", "item_id"):
+                    if event.get(key) is not None:
+                        item["id" if key == "item_id" else key] = event[key]
+            elif etype in (
+                "response.reasoning_summary_text.delta",
+                "response.reasoning_summary_text.done",
+            ):
+                idx = int(event.get("output_index", 0))
+                summary_idx = int(event.get("summary_index", 0))
+                item = item_at(idx, "reasoning")
+                item["type"] = "reasoning"
+                summary = item.setdefault("summary", [])
+                while len(summary) <= summary_idx:
+                    summary.append({"type": "summary_text", "text": ""})
+                part = summary[summary_idx]
+                if etype.endswith(".delta"):
+                    part["text"] = part.get("text", "") + event.get("delta", "")
+                elif event.get("text") is not None:
+                    part["text"] = event["text"]
+            elif etype in ("response.completed", "response.failed", "response.incomplete"):
+                snapshot = event.get("response")
+                if isinstance(snapshot, dict):
+                    completed_snapshot = deepcopy(snapshot)
+                saw_terminal_event = True
+                if etype == "response.failed" or (
+                    isinstance(snapshot, dict) and snapshot.get("error") is not None
+                ):
+                    error = deepcopy(event)
+            elif etype == "error":
+                error = deepcopy(event)
+                saw_terminal_event = True
 
-            if etype == "response.output_text.delta":
-                idx = event.get("output_index", 0)
-                text_by_index.setdefault(idx, []).append(event.get("delta", ""))
+        if completed_snapshot is not None:
+            final = deepcopy(response)
+            final.update(completed_snapshot)
+            snapshot_output = completed_snapshot.get("output")
+            if isinstance(snapshot_output, list):
+                output_by_index = {
+                    idx: deepcopy(item) for idx, item in enumerate(snapshot_output)
+                    if isinstance(item, dict)
+                }
+        else:
+            final = response
+        final["output"] = [output_by_index[idx] for idx in sorted(output_by_index)]
+        if error is not None:
+            final.setdefault("error", deepcopy(error.get("error", error)))
+            final.setdefault("status", "failed")
 
-            elif etype == "response.function_call_arguments.delta":
-                idx = event.get("output_index", 0)
-                fc_by_index.setdefault(idx, {"name": "", "call_id": "", "args": []})
-                fc_by_index[idx]["args"].append(event.get("delta", ""))
-
-            elif etype == "response.reasoning_summary_text.delta":
-                idx = event.get("output_index", 0)
-                reasoning_by_index.setdefault(idx, {"summary": []})
-                reasoning_by_index[idx]["summary"].append(event.get("delta", ""))
-
-            elif etype == "response.output_item.added":
-                item = event.get("item", {})
-                idx = event.get("output_index", 0)
-                if item.get("type") == "function_call":
-                    fc_by_index.setdefault(idx, {"name": "", "call_id": "", "args": []})
-                    fc_by_index[idx]["name"] = item.get("name", "")
-                    fc_by_index[idx]["call_id"] = item.get("call_id") or item.get("id", "")
-                elif item.get("type") == "reasoning":
-                    reasoning_by_index.setdefault(idx, {"summary": []})
-
-            elif etype == "response.completed":
-                resp_obj = event.get("response", {})
-                usage = resp_obj.get("usage", {})
-                if input_tokens is None:
-                    input_tokens = usage.get("input_tokens")
-                if output_tokens is None:
-                    output_tokens = usage.get("output_tokens")
-                details = usage.get("output_tokens_details") or {}
-                if reasoning_tokens is None:
-                    reasoning_tokens = details.get("reasoning_tokens")
-
-        blocks: list[Block] = []
-        for idx in sorted(text_by_index):
-            text = "".join(text_by_index[idx])
-            if text:
-                blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, text, message_index=idx))
-        for idx in sorted(fc_by_index):
-            fc = fc_by_index[idx]
-            blocks.append(Block.make(
-                Direction.OUTPUT, BlockType.TOOL_CALL, "".join(fc["args"]),
-                message_index=idx, tool_name=fc["name"], tool_call_id=fc["call_id"] or None,
-            ))
-        for idx in sorted(reasoning_by_index):
-            text = "".join(reasoning_by_index[idx]["summary"])
-            blocks.append(Block.make(
-                Direction.OUTPUT, BlockType.THINKING, text, message_index=idx,
-            ))
-
-        usage_obj = Usage(
-            input_tokens=input_tokens, output_tokens=output_tokens, reasoning_tokens=reasoning_tokens,
-        ) if (input_tokens is not None or output_tokens is not None) else Usage()
-        reconcile_thinking(blocks, usage_obj)
-        return blocks, usage_obj
+        complete = saw_terminal_event or any(event.done for event in events)
+        return CanonicalResponse(
+            payload=final, transport=transport, events=events,
+            reconstructed=True, complete=complete, error=error,
+        )

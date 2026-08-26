@@ -16,6 +16,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from contextspy.analysis.capture import CapturedEvent
+
 
 @dataclass
 class CompletedExchange:
@@ -23,7 +25,10 @@ class CompletedExchange:
 
     request_body: dict          # request JSON (may be synthesized by a protocol)
     raw_request_text: str       # verbatim client frame -> raw_request_body
-    events: list[dict] = field(default_factory=list)  # decoded server events, arrival order
+    # Complete application frames associated with this turn, in arrival order.
+    # Provider reconstruction consumes server JSON events; unknown text, binary,
+    # and auxiliary client frames remain available in the normalized capture.
+    events: list[CapturedEvent] = field(default_factory=list)
     request_ts: float | None = None
     first_event_ts: float | None = None
     last_event_ts: float | None = None
