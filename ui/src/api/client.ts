@@ -39,6 +39,7 @@ export interface Session {
 export interface Request {
   id: string
   session_id: string | null
+  logical_request_id: string | null
   timestamp: string
   provider: string
   model: string | null
@@ -69,12 +70,102 @@ export interface Request {
   provider_reasoning_tokens: number | null
   cache_read_tokens: number | null
   cache_creation_tokens: number | null
+  cache_write_tokens: number | null
+  uncached_input_tokens: number | null
+  ordinary_input_tokens: number | null
+  cache_hit_pct: number | null
   usage_extra: Record<string, unknown> | null
+  provider_request_id: string | null
+  previous_provider_request_id: string | null
+  provider_conversation_id: string | null
+  logical_turn_id: string | null
+  invocation_seq: number | null
+  lineage_status: string
+  identity_metadata: Record<string, unknown>
+  observed_input_tokens: number
+  reconstructed_input_tokens: number | null
+  unattributed_input_tokens: number | null
+  input_token_variance: number | null
+  context_coverage_pct: number | null
+  context_reconstruction_status: string
   session_seq: number | null
   tokenizer: string
   raw_request_body?: string | null
   raw_response_body?: string | null
   response_events?: unknown[] | null
+}
+
+export interface LogicalRequest {
+  id: string
+  session_id: string | null
+  provider: string
+  agent: string | null
+  model: string | null
+  endpoint: string
+  transport: string
+  provider_conversation_id: string | null
+  logical_turn_id: string | null
+  parent_logical_request_id: string | null
+  started_at: string
+  updated_at: string
+  state: 'complete' | 'incomplete' | 'error'
+  grouping_confidence: string
+  grouping_metadata: Record<string, unknown>
+  invocation_count: number
+  peak_context_tokens: number | null
+  final_context_tokens: number | null
+  cumulative_input_tokens: number | null
+  cumulative_cached_tokens: number | null
+  cumulative_cache_write_tokens: number | null
+  cumulative_output_tokens: number | null
+  cumulative_reasoning_tokens: number | null
+  cache_hit_pct: number | null
+  duration_ms: number | null
+  status_code: number | null
+}
+
+export interface ContextSnapshotBlock {
+  id: number
+  request_id: string
+  position: number
+  source_request_id: string | null
+  source_block_id: number | null
+  direction: string
+  message_index: number | null
+  block_type: string
+  category: string | null
+  content: string | null
+  content_purged: boolean
+  token_count: number
+  tool_name: string | null
+  tool_call_id: string | null
+  provenance: string
+  attrs: Record<string, unknown>
+}
+
+export interface RequestContext {
+  request_id: string
+  lineage: {
+    provider_request_id: string | null
+    previous_provider_request_id: string | null
+    provider_conversation_id: string | null
+    logical_turn_id: string | null
+    lineage_status: string
+  }
+  accounting: {
+    observed_input_tokens: number
+    reconstructed_input_tokens: number | null
+    provider_input_tokens: number | null
+    unattributed_input_tokens: number | null
+    input_token_variance: number | null
+    context_coverage_pct: number | null
+    cache_read_tokens: number | null
+    cache_write_tokens: number | null
+    uncached_input_tokens: number | null
+    ordinary_input_tokens: number | null
+    status: string
+  }
+  blocks: ContextSnapshotBlock[]
 }
 
 export interface CategoryStats {
@@ -100,6 +191,8 @@ export interface SessionTiming {
 
 export interface Stats {
   request_count: number
+  model_call_count: number
+  logical_request_count: number
   tokens_total_input: number
   tokens_total_output: number
   /** Output split: generated text vs. reasoning. Both roll up into tokens_total_output. */
@@ -133,6 +226,7 @@ export interface SessionSummaryEntry {
   duration_ms: number | null
   is_active: boolean
   request_count: number
+  model_call_count: number
   tokens_in: number
   tokens_out: number
   tokens_system_prompt: number
@@ -219,6 +313,25 @@ export const requestsApi = {
   get: (id: string) => apiFetch<{ request: Request }>(`/requests/${id}`),
   blocks: (id: string) =>
     apiFetch<{ session_seq: number | null; blocks: RequestBlock[] }>(`/requests/${id}/blocks`),
+  context: (id: string) => apiFetch<RequestContext>(`/requests/${id}/context`),
+}
+
+export const logicalRequestsApi = {
+  list: (params: { session_id?: string; provider?: string; agent?: string; model?: string; q?: string; status_category?: string; sort_by?: string; sort_dir?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams()
+    if (params.session_id) qs.set('session_id', params.session_id)
+    if (params.provider) qs.set('provider', params.provider)
+    if (params.agent) qs.set('agent', params.agent)
+    if (params.model) qs.set('model', params.model)
+    if (params.q) qs.set('q', params.q)
+    if (params.status_category) qs.set('status_category', params.status_category)
+    if (params.limit != null) qs.set('limit', String(params.limit))
+    if (params.offset != null) qs.set('offset', String(params.offset))
+    if (params.sort_by) qs.set('sort_by', params.sort_by)
+    if (params.sort_dir) qs.set('sort_dir', params.sort_dir)
+    return apiFetch<{ logical_requests: LogicalRequest[] }>(`/logical-requests?${qs}`)
+  },
+  get: (id: string) => apiFetch<{ logical_request: LogicalRequest; invocations: Request[] }>(`/logical-requests/${id}`),
 }
 
 // ---- Stats API ------------------------------------------------------------

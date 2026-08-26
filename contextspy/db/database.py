@@ -54,9 +54,23 @@ def _migrate(engine) -> None:
         ("requests", "transport", "TEXT NOT NULL DEFAULT 'http'"),
         ("requests", "response_transport", "TEXT NOT NULL DEFAULT 'legacy'"),
         ("requests", "response_reconstructed", "INTEGER NOT NULL DEFAULT 0"),
-        ("requests", "response_complete", "INTEGER NOT NULL DEFAULT 0"),
+        ("requests", "response_complete", "INTEGER NOT NULL DEFAULT 1"),
         ("requests", "capture_error", "TEXT"),
         ("requests", "response_events", "TEXT"),
+        ("requests", "logical_request_id", "TEXT"),
+        ("requests", "provider_request_id", "TEXT"),
+        ("requests", "previous_provider_request_id", "TEXT"),
+        ("requests", "provider_conversation_id", "TEXT"),
+        ("requests", "logical_turn_id", "TEXT"),
+        ("requests", "invocation_seq", "INTEGER"),
+        ("requests", "lineage_status", "TEXT NOT NULL DEFAULT 'standalone'"),
+        ("requests", "identity_metadata", "TEXT"),
+        ("requests", "observed_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("requests", "reconstructed_input_tokens", "INTEGER"),
+        ("requests", "unattributed_input_tokens", "INTEGER"),
+        ("requests", "input_token_variance", "INTEGER"),
+        ("requests", "context_coverage_pct", "REAL"),
+        ("requests", "context_reconstruction_status", "TEXT NOT NULL DEFAULT 'observed'"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_columns:
@@ -66,6 +80,13 @@ def _migrate(engine) -> None:
             except Exception:
                 # Column already exists — ignore
                 pass
+        for statement in (
+            "CREATE INDEX IF NOT EXISTS idx_requests_logical ON requests (logical_request_id)",
+            "CREATE INDEX IF NOT EXISTS idx_requests_provider_response ON requests (provider, provider_request_id)",
+            "CREATE INDEX IF NOT EXISTS idx_requests_previous_response ON requests (provider, previous_provider_request_id)",
+        ):
+            conn.execute(text(statement))
+        conn.commit()
 
 
 def get_engine():
@@ -141,6 +162,11 @@ def startup_vacuum(settings=None) -> None:
                         FROM blocks b
                         JOIN requests r ON r.id = b.request_id
                         WHERE b.content_hash IS NOT NULL AND r.timestamp >= :cutoff
+                        UNION
+                        SELECT DISTINCT c.content_hash
+                        FROM context_snapshot_blocks c
+                        JOIN requests r ON r.id = c.request_id
+                        WHERE c.content_hash IS NOT NULL AND r.timestamp >= :cutoff
                     )
                     """
                 ),

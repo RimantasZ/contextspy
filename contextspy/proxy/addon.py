@@ -28,6 +28,15 @@ from contextspy.analysis.adapters import get_adapter
 from contextspy.analysis.blocks import AnalyzedRequest, Usage
 from contextspy.analysis.capture import decode_ndjson, decode_sse
 from contextspy.analysis.classifier import CategoryBreakdown, classify, per_tool_tokens
+from contextspy.analysis.context_reconstruction import (
+    reconcile_unresolved_descendants,
+    reconstruct_context,
+)
+from contextspy.analysis.conversation import (
+    ContextMutation,
+    InvocationIdentity,
+    get_conversation_adapter,
+)
 from contextspy.db import crud
 from contextspy.db.database import get_db
 from contextspy.proxy.ws_protocols import CompletedExchange, WsSession, get_ws_protocol
@@ -522,14 +531,120 @@ class ContextSpyAddon:
             cache_creation = None
             usage_extra = None
 
+        response_body: dict | None = None
+        if raw_resp_text:
+            try:
+                decoded_response = json.loads(raw_resp_text)
+                if isinstance(decoded_response, dict):
+                    response_body = decoded_response
+            except (TypeError, json.JSONDecodeError):
+                pass
+
+        conversation_adapter = get_conversation_adapter(
+            provider=provider, endpoint=endpoint, transport=transport,
+            request_body=req_body,
+        )
+        identity = (
+            conversation_adapter.identify(
+                provider=provider, agent=agent, request_body=req_body,
+                response_body=response_body,
+            )
+            if conversation_adapter is not None else InvocationIdentity(
+                agent_id=agent, confidence="singleton",
+            )
+        )
+        mutation = (
+            conversation_adapter.context_mutation(
+                request_body=req_body, identity=identity,
+            )
+            if conversation_adapter is not None else ContextMutation()
+        )
+
         with get_db() as db:
             active_session = crud.get_active_session(db)
             session_id = active_session.id if active_session else None
 
+            request_id = str(uuid.uuid4())
+            captured_at = datetime.now(timezone.utc)
+            predecessor = None
+            if identity.previous_provider_request_id:
+                predecessor = crud.get_request_by_provider_id(
+                    db, provider, identity.previous_provider_request_id,
+                )
+            elif identity.provider_conversation_id and mutation.inherit_previous:
+                predecessor = crud.get_latest_conversation_request(
+                    db, provider, identity.provider_conversation_id,
+                )
+
+            logical = None
+            logical_key = (
+                conversation_adapter.logical_request_key(
+                    provider=provider, identity=identity,
+                )
+                if conversation_adapter is not None else None
+            )
+            if logical_key is not None:
+                scoped_logical_key = json.dumps(
+                    [logical_key.serialize(), session_id], separators=(",", ":"),
+                )
+                logical = crud.get_logical_request_by_key(db, scoped_logical_key)
+            else:
+                scoped_logical_key = None
+            if (
+                logical is None
+                and logical_key is None
+                and predecessor is not None
+                and predecessor.session_id == session_id
+                and predecessor.logical_request_id
+            ):
+                logical = crud.get_logical_request(db, predecessor.logical_request_id)
+
+            if logical is None:
+                grouping_key = (
+                    scoped_logical_key if scoped_logical_key is not None
+                    else f"singleton:{request_id}"
+                )
+                logical = crud.create_logical_request(db, {
+                    "id": str(uuid.uuid4()),
+                    "session_id": session_id,
+                    "grouping_key": grouping_key,
+                    "provider": provider,
+                    "agent": identity.agent_id or agent,
+                    "model": model,
+                    "endpoint": endpoint,
+                    "transport": transport,
+                    "provider_conversation_id": identity.provider_conversation_id,
+                    "logical_turn_id": identity.logical_turn_id,
+                    "started_at": captured_at,
+                    "updated_at": captured_at,
+                    "state": "complete" if response_complete else "incomplete",
+                    "grouping_confidence": (
+                        identity.confidence if logical_key is not None else "singleton"
+                    ),
+                    "grouping_metadata": (
+                        json.dumps(identity.metadata) if identity.metadata else None
+                    ),
+                })
+            if (
+                identity.parent_turn_id
+                and identity.provider_conversation_id
+                and logical.parent_logical_request_id is None
+            ):
+                parent = crud.get_logical_request_by_turn(
+                    db,
+                    provider=provider,
+                    conversation_id=identity.provider_conversation_id,
+                    turn_id=identity.parent_turn_id,
+                    session_id=session_id,
+                )
+                if parent is not None and parent.id != logical.id:
+                    logical.parent_logical_request_id = parent.id
+
             data: dict = {
-                "id": str(uuid.uuid4()),
+                "id": request_id,
                 "session_id": session_id,
-                "timestamp": datetime.now(timezone.utc),
+                "logical_request_id": logical.id,
+                "timestamp": captured_at,
                 "provider": provider,
                 "model": model,
                 "agent": agent,
@@ -548,6 +663,20 @@ class ContextSpyAddon:
                 "cache_read_tokens": cache_read,
                 "cache_creation_tokens": cache_creation,
                 "usage_extra": usage_extra,
+                "provider_request_id": identity.provider_request_id,
+                "previous_provider_request_id": identity.previous_provider_request_id,
+                "provider_conversation_id": identity.provider_conversation_id,
+                "logical_turn_id": identity.logical_turn_id,
+                "invocation_seq": crud.next_invocation_seq(db, logical.id),
+                "lineage_status": "standalone",
+                "identity_metadata": json.dumps({
+                    "adapter": (
+                        conversation_adapter.adapter_id
+                        if conversation_adapter is not None else None
+                    ),
+                    **identity.metadata,
+                }),
+                "observed_input_tokens": breakdown.total_input,
                 "raw_request_body": raw_request_body,
                 "raw_response_body": raw_resp_text,
                 "response_events": response_events,
@@ -564,8 +693,28 @@ class ContextSpyAddon:
                 if tool_rows:
                     crud.upsert_tool_stats(db, req_record.id, tool_rows)
 
+                reconstruct_context(
+                    db,
+                    request=req_record,
+                    analyzed=analyzed,
+                    identity=identity,
+                    mutation=mutation,
+                    predecessor=predecessor,
+                )
+
+                if identity.previous_provider_request_id:
+                    crud.mark_forked_lineage(
+                        db, provider, identity.previous_provider_request_id,
+                    )
+
+                if identity.provider_request_id:
+                    reconcile_unresolved_descendants(db, req_record)
+
+            logical = crud.refresh_logical_request(db, logical.id)
+
             # Serialise while the session is still open to avoid detached-instance errors
             ws_payload = req_record.to_dict(include_raw=False)
+            logical_payload = logical.to_dict()
 
         ts_str = data["timestamp"].strftime("%H:%M:%S")
         logger.info(
@@ -585,6 +734,12 @@ class ContextSpyAddon:
                 asyncio.run_coroutine_threadsafe(
                     self.ws_manager.broadcast(
                         {"event": "new_request", "data": ws_payload}
+                    ),
+                    self.ws_manager.loop,
+                )
+                asyncio.run_coroutine_threadsafe(
+                    self.ws_manager.broadcast(
+                        {"event": "logical_request_updated", "data": logical_payload}
                     ),
                     self.ws_manager.loop,
                 )

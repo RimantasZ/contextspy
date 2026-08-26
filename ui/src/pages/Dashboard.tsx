@@ -14,8 +14,9 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStatsOverview, useRequests, useToolStats, useSessions, useSessionsSummary } from '../api/hooks';
+import { useStatsOverview, useLogicalRequests, useRequests, useToolStats, useSessions, useSessionsSummary } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
+import { LogicalRequestTable } from '../components/LogicalRequestTable';
 import { RequestTable } from '../components/RequestTable';
 import { SessionControls } from '../components/SessionControls';
 import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
@@ -240,7 +241,8 @@ export default function Overview() {
   const navigate = useNavigate();
 
   const stats = useStatsOverview();
-  const requests = useRequests({ limit: 20 });
+  const requests = useLogicalRequests({ limit: 20 });
+  const physicalRequests = useRequests({ limit: 20 });
   const toolStats = useToolStats();
   const sessions = useSessions();
   const summary = useSessionsSummary();
@@ -262,7 +264,11 @@ export default function Overview() {
           value={s ? s.tokens_total_output.toLocaleString() : '—'}
           sub={s && <OutputSplit text={s.tokens_output_text} thinking={s.tokens_output_thinking} />}
         />
-        <StatCard label="Total requests" value={s?.request_count ?? '—'} />
+        <StatCard
+          label="Logical requests"
+          value={s?.logical_request_count ?? '—'}
+          sub={s ? `${s.model_call_count.toLocaleString()} model calls` : undefined}
+        />
         <StatCard label="Providers" value={s ? Object.keys(s.by_provider).length : '—'} />
       </div>
 
@@ -315,11 +321,19 @@ export default function Overview() {
       {/* Recent requests */}
       <div className="bg-gray-800 rounded-lg p-4">
         <p className="text-sm font-medium text-gray-300 mb-4">Recent requests</p>
-        <RequestTable
-          requests={requests.data?.requests ?? []}
-          sessions={sessions.data?.sessions}
-          onRowClick={(id) => navigate(`/requests/${id}`)}
-        />
+        {(requests.data?.logical_requests ?? []).length > 0 ? (
+          <LogicalRequestTable
+            requests={requests.data?.logical_requests ?? []}
+            sessions={sessions.data?.sessions}
+            onRowClick={(id) => navigate(`/logical-requests/${id}`)}
+          />
+        ) : (
+          <RequestTable
+            requests={physicalRequests.data?.requests ?? []}
+            sessions={sessions.data?.sessions}
+            onRowClick={(id) => navigate(`/requests/${id}`)}
+          />
+        )}
       </div>
     </div>
   );

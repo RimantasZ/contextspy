@@ -89,6 +89,19 @@ ContextSpy makes these costs visible so you can act on them.
 
 ContextSpy starts an HTTPS proxy (or reverse proxy for locally hosted models) which intercepts every request to LLMs, analyzes it and stores to local SQLite db. A webserver is also started on localhost, and serves dashboard to visualise all captured data.
 
+For agent transports such as Codex WebSocket mode, one user turn may invoke the model several
+times while tools run. ContextSpy keeps those physical model calls for accurate usage accounting,
+but groups them into one **logical request** in the default UI. Each invocation distinguishes:
+
+- input observed in the captured request;
+- visible context reconstructed from captured continuation lineage;
+- provider-reported input tokens, which remain the authoritative usage figure;
+- cached, cache-write, and unattributed input when the provider reports or implies them.
+
+Unattributed input is the gap between provider usage and context ContextSpy can reconstruct. It can
+represent server-managed instructions, hidden state, compaction, provider formatting, or tokenizer
+differences; it is not added on top of the provider-reported total.
+
 ## Some screenshots
 
 <p align="center"><strong>Request view</strong><br><img src="docs/_static/request.png" alt="Request view"></p>
@@ -153,6 +166,10 @@ derived data for existing requests), `contextspy start` will print a warning —
   current user message, assistant prefill, uncategorised
 - **Live dashboard** — real-time charts and per-request detail with a visual block map
   of the context window
+- **Logical agent requests** — group multi-call WebSocket turns while retaining an expandable
+  model-invocation timeline and cumulative usage
+- **Continuation reconstruction** — rebuild best-effort visible context from provider response
+  lineage and reconcile it with provider-reported input/cache usage
 - **Session tracking** — name and group requests by task to compare usage across runs
 - **SQLite storage** — all data stored locally in `~/.contextspy/`; no data leaves your machine
 - **Agent detection** — Copilot, Claude Desktop/Code, opencode, Cursor, and generic clients

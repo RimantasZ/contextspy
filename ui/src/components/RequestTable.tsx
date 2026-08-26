@@ -33,6 +33,7 @@ const AGENT_COLORS: Record<string, string> = {
 export type SortKey =
   | 'timestamp'
   | 'tokens_total_input'
+  | 'tokens_total_output'
   | 'tokens_output_text'
   | 'tokens_output_thinking'
   | 'duration_ms'

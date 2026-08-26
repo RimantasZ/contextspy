@@ -13,7 +13,7 @@
 // limitations under the License.
 import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useRequest, useRequestToolStats } from '../api/hooks';
+import { useRequest, useRequestContext, useRequestToolStats } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { RawViewer } from '../components/RawViewer';
 import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
@@ -57,9 +57,11 @@ export default function RequestDetail() {
   const navigate = useNavigate();
   const { data, isLoading, error } = useRequest(id ?? '');
   const toolStats = useRequestToolStats(id ?? '');
+  const context = useRequestContext(id ?? '');
 
   const [requestToggle, setRequestToggle] = useState(0);
   const [responseToggle, setResponseToggle] = useState(0);
+  const [showContext, setShowContext] = useState(false);
 
   if (isLoading) {
     return <div className="p-6 text-gray-400">Loading\u2026</div>;
@@ -71,6 +73,12 @@ export default function RequestDetail() {
   const req = data.request;
   const catData = categoryDataFromRequest(req);
   const total = req.tokens_total_input;
+  const displayedContext = req.provider_input_tokens ?? req.reconstructed_input_tokens ?? req.tokens_total_input;
+  const displayedContextSource = req.provider_input_tokens != null
+    ? 'provider reported'
+    : req.reconstructed_input_tokens != null
+      ? 'reconstructed'
+      : 'observed on wire';
 
   function pctDiff(reported: number, estimated: number): string {
     if (estimated === 0) return '';
@@ -147,6 +155,11 @@ export default function RequestDetail() {
           ← Back
         </button>
         <h1 className="text-xl font-bold text-white">Request detail</h1>
+        {req.logical_request_id && (
+          <button onClick={() => navigate(`/logical-requests/${req.logical_request_id}`)} className="ml-auto text-xs px-3 py-1.5 rounded bg-indigo-900 text-indigo-300 hover:bg-indigo-800">
+            View logical request
+          </button>
+        )}
       </div>
 
       {/* Metadata: token stat panels left | fields right */}
@@ -158,8 +171,8 @@ export default function RequestDetail() {
             className="bg-gray-800 rounded-lg p-4 text-left hover:bg-gray-750 hover:ring-1 hover:ring-indigo-500 transition-all cursor-pointer"
           >
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Context tokens</p>
-            <p className="text-2xl font-semibold text-white">{req.tokens_total_input.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 mt-1">click to view request ↓</p>
+            <p className="text-2xl font-semibold text-white">{displayedContext.toLocaleString()}</p>
+            <p className="text-xs text-gray-500 mt-1">{displayedContextSource} · click to inspect ↓</p>
           </button>
           <button
             onClick={() => setResponseToggle(v => v + 1)}
@@ -187,10 +200,64 @@ export default function RequestDetail() {
         </div>
       </div>
 
+      {context.data && (
+        <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-gray-200">Effective context accounting</p>
+              <p className="text-xs text-gray-500 mt-1">Observed is the wire payload; reconstructed adds captured predecessor state; provider input is authoritative usage.</p>
+            </div>
+            <button onClick={() => setShowContext(value => !value)} className="text-xs text-indigo-300 hover:text-indigo-200">
+              {showContext ? 'Hide context blocks' : `Show ${context.data.blocks.length} context blocks`}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {[
+              ['Observed', context.data.accounting.observed_input_tokens],
+              ['Reconstructed', context.data.accounting.reconstructed_input_tokens],
+              ['Provider input', context.data.accounting.provider_input_tokens],
+              ['Unattributed', context.data.accounting.unattributed_input_tokens],
+              ['Coverage', context.data.accounting.context_coverage_pct == null ? null : `${context.data.accounting.context_coverage_pct.toFixed(1)}%`],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="bg-gray-900 rounded p-3">
+                <p className="text-[10px] uppercase text-gray-500">{label}</p>
+                <p className={`text-lg font-semibold ${label === 'Unattributed' ? 'text-amber-300' : 'text-white'}`}>
+                  {typeof value === 'number' ? value.toLocaleString() : value ?? '—'}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="text-xs text-gray-500 flex flex-wrap gap-x-5 gap-y-1">
+            <span>Lineage: <span className="text-gray-300">{context.data.lineage.lineage_status}</span></span>
+            <span>Reconstruction: <span className="text-gray-300">{context.data.accounting.status}</span></span>
+            <span>Cached: <span className="text-teal-300">{context.data.accounting.cache_read_tokens?.toLocaleString() ?? '—'}</span></span>
+            <span>Cache writes: <span className="text-amber-300">{context.data.accounting.cache_write_tokens?.toLocaleString() ?? '—'}</span></span>
+          </div>
+          {showContext && (
+            <div className="max-h-[480px] overflow-auto border border-gray-700 rounded">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-gray-900"><tr className="text-left text-gray-400">
+                  <th className="p-2">#</th><th className="p-2">Provenance</th><th className="p-2">Category</th><th className="p-2 text-right">Tokens</th><th className="p-2">Content</th>
+                </tr></thead>
+                <tbody>{context.data.blocks.map(block => (
+                  <tr key={block.id} className="border-t border-gray-800 align-top">
+                    <td className="p-2 text-gray-600">{block.position + 1}</td>
+                    <td className="p-2 text-indigo-300 whitespace-nowrap">{block.provenance}</td>
+                    <td className="p-2 text-gray-400 whitespace-nowrap">{block.category ?? block.block_type}</td>
+                    <td className="p-2 text-right text-gray-300">{block.token_count.toLocaleString()}</td>
+                    <td className="p-2 text-gray-300 font-mono whitespace-pre-wrap break-all max-w-xl">{block.content ?? (block.content_purged ? '[purged]' : '[hidden]')}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Charts + breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-gray-800 rounded-lg p-4">
-          <p className="text-sm font-medium text-gray-300 mb-3">Token composition</p>
+          <p className="text-sm font-medium text-gray-300 mb-3">Observed request composition</p>
           <TokenDonut data={catData} />
         </div>
         <div className="bg-gray-800 rounded-lg p-4">

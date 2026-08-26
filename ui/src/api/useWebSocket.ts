@@ -39,8 +39,14 @@ export function useWebSocket() {
           const msg = JSON.parse(e.data)
           if (msg.event === 'new_request') {
             qc.invalidateQueries({ queryKey: ['requests'] })
+            qc.invalidateQueries({ queryKey: ['logical-requests'] })
             qc.invalidateQueries({ queryKey: ['stats'] })
             qc.invalidateQueries({ queryKey: ['stats', 'sessions-summary'] })
+          } else if (msg.event === 'logical_request_updated') {
+            qc.invalidateQueries({ queryKey: ['logical-requests'] })
+            if (msg.data?.id) {
+              qc.invalidateQueries({ queryKey: ['logical-request', msg.data.id] })
+            }
           } else if (msg.event === 'session_started' || msg.event === 'session_ended') {
             qc.invalidateQueries({ queryKey: ['sessions'] })
             qc.invalidateQueries({ queryKey: ['stats'] })

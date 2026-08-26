@@ -18,12 +18,20 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, TYPE_CHECKING
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.analysis.blocks import BlockType, Direction
-from contextspy.db.models import BlockContent, BlockRecord, Request, Session, ToolStat
+from contextspy.db.models import (
+    BlockContent,
+    BlockRecord,
+    ContextSnapshotBlock,
+    LogicalRequest,
+    Request,
+    Session,
+    ToolStat,
+)
 
 if TYPE_CHECKING:
     from contextspy.analysis.blocks import Block
@@ -87,6 +95,10 @@ def delete_session(db: OrmSession, session_id: str) -> bool:
         text("UPDATE requests SET session_id = NULL WHERE session_id = :sid"),
         {"sid": session_id},
     )
+    db.execute(
+        text("UPDATE logical_requests SET session_id = NULL WHERE session_id = :sid"),
+        {"sid": session_id},
+    )
     db.delete(session)
     db.flush()
     return True
@@ -99,6 +111,10 @@ def delete_session_with_requests(db: OrmSession, session_id: str) -> bool:
         return False
     db.execute(
         text("DELETE FROM requests WHERE session_id = :sid"),
+        {"sid": session_id},
+    )
+    db.execute(
+        text("DELETE FROM logical_requests WHERE session_id = :sid"),
         {"sid": session_id},
     )
     db.delete(session)
@@ -130,6 +146,57 @@ def create_request(db: OrmSession, data: dict[str, Any]) -> Request:
 
 def get_request(db: OrmSession, request_id: str) -> Request | None:
     return db.get(Request, request_id)
+
+
+def get_request_by_provider_id(
+    db: OrmSession, provider: str, provider_request_id: str,
+) -> Request | None:
+    return db.execute(
+        select(Request).where(
+            Request.provider == provider,
+            Request.provider_request_id == provider_request_id,
+        ).order_by(Request.timestamp.desc())
+    ).scalars().first()
+
+
+def get_latest_conversation_request(
+    db: OrmSession, provider: str, conversation_id: str,
+) -> Request | None:
+    return db.execute(
+        select(Request).where(
+            Request.provider == provider,
+            Request.provider_conversation_id == conversation_id,
+        ).order_by(Request.timestamp.desc())
+    ).scalars().first()
+
+
+def get_unresolved_children(
+    db: OrmSession, provider: str, provider_request_id: str,
+) -> list[Request]:
+    return list(db.execute(
+        select(Request).where(
+            Request.provider == provider,
+            Request.previous_provider_request_id == provider_request_id,
+            Request.lineage_status == "unresolved_predecessor",
+        ).order_by(Request.timestamp.asc())
+    ).scalars().all())
+
+
+def mark_forked_lineage(
+    db: OrmSession, provider: str, previous_provider_request_id: str,
+) -> bool:
+    children = list(db.execute(
+        select(Request).where(
+            Request.provider == provider,
+            Request.previous_provider_request_id == previous_provider_request_id,
+        )
+    ).scalars().all())
+    if len(children) < 2:
+        return False
+    for child in children:
+        child.lineage_status = "forked"
+    db.flush()
+    return True
 
 
 _SORT_COLUMNS = {
@@ -179,15 +246,223 @@ def list_requests(
             )
         )
     if status_category == "success":
-        stmt = stmt.where(Request.status_code >= 200, Request.status_code < 300)
+        stmt = stmt.where(or_(
+            (Request.status_code >= 200) & (Request.status_code < 300),
+            and_(
+                Request.transport == "websocket",
+                Request.status_code.is_(None),
+                Request.response_complete == 1,
+                Request.capture_error.is_(None),
+                or_(
+                    Request.usage_extra.is_(None),
+                    ~Request.usage_extra.like('%"ws_error"%'),
+                ),
+            ),
+        ))
     elif status_category == "error":
         stmt = stmt.where(
-            or_(Request.status_code == None, Request.status_code >= 400)  # noqa: E711
+            or_(
+                Request.status_code >= 400,
+                Request.capture_error.isnot(None),
+                Request.response_complete == 0,
+                Request.usage_extra.like('%"ws_error"%'),
+            )
         )
     col = Session.name if sort_by == 'session' else _SORT_COLUMNS.get(sort_by, Request.timestamp)
     stmt = stmt.order_by(col.asc() if sort_dir == 'asc' else col.desc())
     stmt = stmt.limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Logical requests and invocation lineage
+# ---------------------------------------------------------------------------
+
+def get_logical_request(db: OrmSession, logical_request_id: str) -> LogicalRequest | None:
+    return db.get(LogicalRequest, logical_request_id)
+
+
+def get_logical_request_by_key(db: OrmSession, grouping_key: str) -> LogicalRequest | None:
+    return db.execute(
+        select(LogicalRequest).where(LogicalRequest.grouping_key == grouping_key)
+    ).scalars().first()
+
+
+def get_logical_request_by_turn(
+    db: OrmSession, *, provider: str, conversation_id: str, turn_id: str,
+    session_id: str | None = None,
+) -> LogicalRequest | None:
+    stmt = select(LogicalRequest).where(
+        LogicalRequest.provider == provider,
+        LogicalRequest.provider_conversation_id == conversation_id,
+        LogicalRequest.logical_turn_id == turn_id,
+    )
+    stmt = (
+        stmt.where(LogicalRequest.session_id.is_(None))
+        if session_id is None else stmt.where(LogicalRequest.session_id == session_id)
+    )
+    return db.execute(stmt.order_by(LogicalRequest.started_at.asc())).scalars().first()
+
+
+def create_logical_request(db: OrmSession, data: dict[str, Any]) -> LogicalRequest:
+    row = LogicalRequest(**data)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def next_invocation_seq(db: OrmSession, logical_request_id: str) -> int:
+    current = db.execute(
+        select(func.max(Request.invocation_seq)).where(
+            Request.logical_request_id == logical_request_id
+        )
+    ).scalar()
+    return (current or 0) + 1
+
+
+def attach_request_to_logical(
+    db: OrmSession, request: Request, logical_request_id: str,
+) -> str | None:
+    old_id = request.logical_request_id
+    if old_id == logical_request_id:
+        return None
+    request.logical_request_id = logical_request_id
+    request.invocation_seq = next_invocation_seq(db, logical_request_id)
+    db.flush()
+    if old_id:
+        remaining = db.execute(
+            select(func.count()).select_from(Request).where(
+                Request.logical_request_id == old_id
+            )
+        ).scalar() or 0
+        if remaining == 0:
+            old = db.get(LogicalRequest, old_id)
+            if old is not None:
+                db.delete(old)
+                db.flush()
+                return None
+    return old_id
+
+
+def get_logical_invocations(
+    db: OrmSession, logical_request_id: str,
+) -> list[Request]:
+    return list(db.execute(
+        select(Request).where(Request.logical_request_id == logical_request_id)
+        .order_by(Request.invocation_seq.asc(), Request.timestamp.asc())
+    ).scalars().all())
+
+
+_LOGICAL_SORT_COLUMNS = {
+    "timestamp": LogicalRequest.started_at,
+    "tokens_total_input": LogicalRequest.peak_context_tokens,
+    "tokens_total_output": LogicalRequest.cumulative_output_tokens,
+    "duration_ms": LogicalRequest.duration_ms,
+    "status_code": LogicalRequest.status_code,
+    "provider": LogicalRequest.provider,
+    "agent": LogicalRequest.agent,
+    "model": LogicalRequest.model,
+}
+
+
+def list_logical_requests(
+    db: OrmSession,
+    session_id: str | None = None,
+    provider: str | None = None,
+    agent: str | None = None,
+    model: str | None = None,
+    q: str | None = None,
+    status_category: str | None = None,
+    sort_by: str = "timestamp",
+    sort_dir: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+) -> list[LogicalRequest]:
+    stmt = select(LogicalRequest)
+    if sort_by == "session":
+        stmt = stmt.outerjoin(Session, LogicalRequest.session_id == Session.id)
+    if session_id is not None:
+        stmt = stmt.where(LogicalRequest.session_id == session_id)
+    if provider:
+        stmt = stmt.where(LogicalRequest.provider == provider)
+    if agent:
+        stmt = stmt.where(LogicalRequest.agent == agent)
+    if model:
+        stmt = stmt.where(LogicalRequest.model == model)
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(
+            LogicalRequest.model.ilike(like),
+            LogicalRequest.agent.ilike(like),
+            LogicalRequest.endpoint.ilike(like),
+            LogicalRequest.provider.ilike(like),
+        ))
+    if status_category == "success":
+        stmt = stmt.where(LogicalRequest.state == "complete")
+    elif status_category == "error":
+        stmt = stmt.where(LogicalRequest.state.in_(("error", "incomplete")))
+    column = (
+        Session.name if sort_by == "session"
+        else _LOGICAL_SORT_COLUMNS.get(sort_by, LogicalRequest.started_at)
+    )
+    stmt = stmt.order_by(column.asc() if sort_dir == "asc" else column.desc())
+    return list(db.execute(stmt.limit(limit).offset(offset)).scalars().all())
+
+
+def refresh_logical_request(db: OrmSession, logical_request_id: str) -> LogicalRequest:
+    logical = db.get(LogicalRequest, logical_request_id)
+    if logical is None:
+        raise ValueError(f"Unknown logical request: {logical_request_id}")
+    rows = get_logical_invocations(db, logical_request_id)
+    if not rows:
+        return logical
+
+    reported_input = [r.provider_input_tokens for r in rows if r.provider_input_tokens is not None]
+    cached = [r.cache_read_tokens for r in rows if r.cache_read_tokens is not None]
+    cache_write = [r.cache_creation_tokens for r in rows if r.cache_creation_tokens is not None]
+    reported_output = [r.provider_output_tokens for r in rows if r.provider_output_tokens is not None]
+    reasoning = [r.provider_reasoning_tokens for r in rows if r.provider_reasoning_tokens is not None]
+
+    def utc_key(row: Request) -> datetime:
+        value = row.timestamp
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+    logical.invocation_count = len(rows)
+    logical.started_at = min(rows, key=utc_key).timestamp
+    logical.updated_at = max(rows, key=utc_key).timestamp
+    logical.model = rows[-1].model or logical.model
+    logical.agent = rows[-1].agent or logical.agent
+    logical.peak_context_tokens = max(reported_input) if reported_input else None
+    logical.final_context_tokens = next(
+        (r.provider_input_tokens for r in reversed(rows) if r.provider_input_tokens is not None),
+        None,
+    )
+    logical.cumulative_input_tokens = sum(reported_input) if reported_input else None
+    logical.cumulative_cached_tokens = sum(cached) if cached else None
+    logical.cumulative_cache_write_tokens = sum(cache_write) if cache_write else None
+    logical.cumulative_output_tokens = sum(reported_output) if reported_output else None
+    logical.cumulative_reasoning_tokens = sum(reasoning) if reasoning else None
+    durations = [r.duration_ms for r in rows if r.duration_ms is not None]
+    logical.duration_ms = sum(durations) if durations else None
+    logical.status_code = next(
+        (r.status_code for r in reversed(rows) if r.status_code is not None), None,
+    )
+    def provider_error(row: Request) -> bool:
+        if not row.usage_extra:
+            return False
+        try:
+            return bool(json.loads(row.usage_extra).get("ws_error"))
+        except (TypeError, json.JSONDecodeError):
+            return False
+
+    if any((r.status_code or 0) >= 400 or r.capture_error or provider_error(r) for r in rows):
+        logical.state = "error"
+    elif any(not bool(r.response_complete) for r in rows):
+        logical.state = "incomplete"
+    else:
+        logical.state = "complete"
+    db.flush()
+    return logical
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +505,7 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
     total_output = sum(r.tokens_total_output for r in rows)
     output_text = sum(r.tokens_output_text for r in rows)
     output_thinking = sum(r.tokens_output_thinking for r in rows)
+    logical_request_count = len({r.logical_request_id or r.id for r in rows})
 
     by_category: dict[str, dict] = {}
     for col in _CATEGORY_COLS:
@@ -268,12 +544,26 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
 
     # by_status (exact HTTP status codes)
     by_status: dict[str, int] = {}
+    def has_provider_error(row: Request) -> bool:
+        if (row.status_code or 0) >= 400 or row.capture_error or not bool(row.response_complete):
+            return True
+        if not row.usage_extra:
+            return False
+        try:
+            return bool(json.loads(row.usage_extra).get("ws_error"))
+        except (TypeError, json.JSONDecodeError):
+            return False
+
     for r in rows:
-        key = str(r.status_code) if r.status_code is not None else "unknown"
+        if r.status_code is not None:
+            key = str(r.status_code)
+        elif r.transport == "websocket" and not has_provider_error(r):
+            key = "ws_success"
+        else:
+            key = "unknown"
         by_status[key] = by_status.get(key, 0) + 1
 
-    # error/unknown counts derived from by_status (status_code >= 400 is an error)
-    error_count = sum(n for code, n in by_status.items() if code != "unknown" and int(code) >= 400)
+    error_count = sum(1 for row in rows if has_provider_error(row))
     unknown_status_count = by_status.get("unknown", 0)
 
     # session timing derived from request timestamps
@@ -289,6 +579,8 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
 
     return {
         "request_count": len(rows),
+        "model_call_count": len(rows),
+        "logical_request_count": logical_request_count,
         "tokens_total_input": total_input,
         "tokens_total_output": total_output,
         "tokens_output_text": output_text,
@@ -310,6 +602,8 @@ def _empty_stats() -> dict:
     _empty_timing = {"first_request_at": None, "last_request_at": None, "elapsed_ms": None, "active_duration_ms": None}
     return {
         "request_count": 0,
+        "model_call_count": 0,
+        "logical_request_count": 0,
         "tokens_total_input": 0,
         "tokens_total_output": 0,
         "tokens_output_text": 0,
@@ -453,6 +747,83 @@ def get_blocks(db: OrmSession, request_id: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Reconstructed context snapshots
+# ---------------------------------------------------------------------------
+
+def insert_context_snapshot(
+    db: OrmSession, request_id: str, entries: list[dict[str, Any]],
+) -> None:
+    db.query(ContextSnapshotBlock).filter(
+        ContextSnapshotBlock.request_id == request_id
+    ).delete(synchronize_session=False)
+    for position, entry in enumerate(entries):
+        block = entry["block"]
+        if block.content_hash and block.content:
+            db.execute(
+                sqlite_insert(BlockContent).values(
+                    hash=block.content_hash,
+                    content=block.content,
+                    created_at=datetime.now(timezone.utc),
+                ).on_conflict_do_nothing(index_elements=["hash"])
+            )
+        attrs = dict(block.attrs)
+        if entry.get("context_operation"):
+            attrs["context_operation"] = entry["context_operation"]
+        db.add(ContextSnapshotBlock(
+            request_id=request_id,
+            position=position,
+            source_request_id=entry.get("source_request_id"),
+            source_block_id=entry.get("source_block_id"),
+            direction=block.direction,
+            message_index=block.message_index,
+            block_type=block.block_type,
+            category=block.category,
+            content_hash=block.content_hash,
+            token_count=block.token_count,
+            tool_name=block.tool_name,
+            tool_call_id=block.tool_call_id,
+            provenance=entry["provenance"],
+            attrs=json.dumps(attrs) if attrs else None,
+        ))
+    db.flush()
+
+
+def get_context_snapshot(db: OrmSession, request_id: str) -> list[dict]:
+    rows = db.execute(
+        select(ContextSnapshotBlock, BlockContent.content)
+        .outerjoin(BlockContent, ContextSnapshotBlock.content_hash == BlockContent.hash)
+        .where(ContextSnapshotBlock.request_id == request_id)
+        .order_by(ContextSnapshotBlock.position.asc())
+    ).all()
+    return [record.to_dict(content) for record, content in rows]
+
+
+def get_raw_block_rows(
+    db: OrmSession, request_id: str, *, direction: str | None = None,
+) -> list[tuple[BlockRecord, str | None]]:
+    stmt = (
+        select(BlockRecord, BlockContent.content)
+        .outerjoin(BlockContent, BlockRecord.content_hash == BlockContent.hash)
+        .where(BlockRecord.request_id == request_id)
+    )
+    if direction is not None:
+        stmt = stmt.where(BlockRecord.direction == direction)
+    stmt = stmt.order_by(BlockRecord.direction.asc(), BlockRecord.position.asc())
+    return list(db.execute(stmt).all())
+
+
+def get_raw_context_rows(
+    db: OrmSession, request_id: str,
+) -> list[tuple[ContextSnapshotBlock, str | None]]:
+    return list(db.execute(
+        select(ContextSnapshotBlock, BlockContent.content)
+        .outerjoin(BlockContent, ContextSnapshotBlock.content_hash == BlockContent.hash)
+        .where(ContextSnapshotBlock.request_id == request_id)
+        .order_by(ContextSnapshotBlock.position.asc())
+    ).all())
+
+
+# ---------------------------------------------------------------------------
 # Tool stats
 # ---------------------------------------------------------------------------
 
@@ -545,6 +916,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
         select(
             Request.session_id,
             func.count().label("req_count"),
+            func.count(func.distinct(func.coalesce(Request.logical_request_id, Request.id))).label("logical_req_count"),
             func.sum(Request.tokens_total_input).label("tok_in"),
             func.sum(Request.tokens_total_output).label("tok_out"),
             func.sum(Request.tokens_system_prompt).label("tok_system_prompt"),
@@ -562,6 +934,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
     session_stats: dict[str, dict] = {
         row.session_id: {
             "req_count": row.req_count,
+            "logical_req_count": row.logical_req_count,
             "tok_in": row.tok_in or 0,
             "tok_out": row.tok_out or 0,
             "tokens_system_prompt": row.tok_system_prompt or 0,
@@ -579,6 +952,8 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
     # All null-session requests, oldest-first
     null_req_rows = db.execute(
         select(
+            Request.id,
+            Request.logical_request_id,
             Request.timestamp,
             Request.tokens_total_input,
             Request.tokens_total_output,
@@ -627,7 +1002,8 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             "ended_at": gap_end.isoformat(),
             "duration_ms": int((gap_end - gap_start).total_seconds() * 1000),
             "is_active": False,
-            "request_count": len(reqs),
+            "request_count": len({r.logical_request_id or r.id for r in reqs}),
+            "model_call_count": len(reqs),
             "tokens_in": sum(r.tokens_total_input for r in reqs),
             "tokens_out": sum(r.tokens_total_output for r in reqs),
             "tokens_system_prompt": sum(r.tokens_system_prompt for r in reqs),
@@ -642,7 +1018,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
 
     # Session entries
     _empty: dict = {
-        "req_count": 0, "tok_in": 0, "tok_out": 0,
+        "req_count": 0, "logical_req_count": 0, "tok_in": 0, "tok_out": 0,
         "tokens_system_prompt": 0, "tokens_tool_definitions": 0,
         "tokens_tool_results": 0, "tokens_file_contents": 0,
         "tokens_conversation_history": 0, "tokens_current_user_message": 0,
@@ -662,7 +1038,8 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
             "duration_ms": duration_ms,
             "is_active": bool(s.is_active),
-            "request_count": stats["req_count"],
+            "request_count": stats["logical_req_count"],
+            "model_call_count": stats["req_count"],
             "tokens_in": stats["tok_in"],
             "tokens_out": stats["tok_out"],
             "tokens_system_prompt": stats["tokens_system_prompt"],

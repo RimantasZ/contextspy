@@ -135,6 +135,20 @@ OPENAI_RESPONSES_RESP: dict = {
     "usage": {"input_tokens": 20, "output_tokens": 42},
 }
 
+CODEX_CUSTOM_TOOL_REQUEST: dict = {
+    "type": "response.create",
+    "model": "gpt-5-codex",
+    "previous_response_id": "resp_previous",
+    "input": [{
+        "type": "custom_tool_call_output",
+        "call_id": "call_patch",
+        "output": [
+            {"type": "input_text", "text": "Patch applied successfully"},
+            {"type": "input_text", "text": "1 file changed"},
+        ],
+    }],
+}
+
 
 # ---------------------------------------------------------------------------
 # Fixtures — SSE response bytes
@@ -1069,6 +1083,73 @@ class TestOpenAIResponsesAdapter:
         assert result.tool_name == "get_weather"
         assert result.content == "Sunny, 72F"
 
+    def test_codex_custom_tool_output_in_request(self):
+        blocks, _ = self.adapter.parse_request(CODEX_CUSTOM_TOOL_REQUEST)
+        result = next(b for b in blocks if b.block_type == BlockType.TOOL_RESULT)
+        assert result.tool_call_id == "call_patch"
+        assert result.content == "Patch applied successfully\n1 file changed"
+        assert result.attrs["response_item_type"] == "custom_tool_call_output"
+
+    def test_codex_custom_tool_call_in_response(self):
+        response = {
+            "model": "gpt-5-codex",
+            "output": [{
+                "type": "custom_tool_call",
+                "id": "item_patch",
+                "call_id": "call_patch",
+                "name": "apply_patch",
+                "input": "*** Begin Patch",
+            }],
+            "usage": {"input_tokens": 100, "output_tokens": 20},
+        }
+        blocks, _ = self.adapter.parse_response(response)
+        call = next(b for b in blocks if b.block_type == BlockType.TOOL_CALL)
+        assert call.tool_name == "apply_patch"
+        assert call.tool_call_id == "call_patch"
+        assert call.content == "*** Begin Patch"
+        assert call.attrs["response_item_type"] == "custom_tool_call"
+
+    def test_codex_custom_tool_call_stream(self):
+        events = [
+            {"type": "response.output_item.added", "output_index": 0,
+             "item": {"type": "custom_tool_call", "call_id": "call_patch",
+                      "name": "apply_patch", "id": "item_patch"}},
+            {"type": "response.custom_tool_call_input.delta", "output_index": 0,
+             "delta": "*** Begin"},
+            {"type": "response.custom_tool_call_input.done", "output_index": 0,
+             "input": "*** Begin Patch"},
+            {"type": "response.completed", "response": {
+                "model": "gpt-5-codex",
+                "usage": {"input_tokens": 100, "output_tokens": 20},
+            }},
+        ]
+        canonical = self.adapter.reconstruct_response(
+            [CapturedEvent(sequence=i, payload=event) for i, event in enumerate(events)],
+            transport="websocket",
+        )
+        blocks, _ = self.adapter.parse_response(canonical.payload)
+        call = next(b for b in blocks if b.block_type == BlockType.TOOL_CALL)
+        assert call.tool_name == "apply_patch"
+        assert call.tool_call_id == "call_patch"
+        assert call.content == "*** Begin Patch"
+
+    def test_responses_cache_usage(self):
+        _, usage = self.adapter.parse_response({
+            "output": [],
+            "usage": {
+                "input_tokens": 1000,
+                "input_tokens_details": {
+                    "cached_tokens": 800,
+                    "cache_write_tokens": 100,
+                },
+                "output_tokens": 20,
+                "output_tokens_details": {"reasoning_tokens": 12},
+            },
+        })
+        assert usage.cache_read_tokens == 800
+        assert usage.cache_creation_tokens == 100
+        assert usage.reasoning_tokens == 12
+
     def test_no_usage(self):
         blocks, usage = self.adapter.parse_response({"model": "gpt-4o", "output": [], "usage": {}})
         assert usage.input_tokens is None
@@ -1630,7 +1711,7 @@ class TestTransportColumn:
             })
             assert req.transport == "http"
             assert req.response_transport == "legacy"
-            assert bool(req.response_complete) is False
+            assert bool(req.response_complete) is True
 
     def test_response_capture_metadata_round_trips(self, tmp_path):
         from contextspy.db import crud

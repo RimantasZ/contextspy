@@ -14,11 +14,12 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
+import { useSession, useStatsSession, useTimeline, useLogicalRequests, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
-import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
+import { RequestTable } from '../components/RequestTable';
+import { LogicalRequestTable } from '../components/LogicalRequestTable';
 import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
 import { OutputSplit } from '../components/OutputSplit';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
@@ -66,6 +67,7 @@ export default function SessionDetail() {
   const stats = useStatsSession(id ?? '');
   const timeline = useTimeline(id, bucket);
   const requests = useRequests({ session_id: id, sort_by: reqSortKey ?? undefined, sort_dir: reqSortKey ? reqSortDir : undefined, limit: 500 });
+  const logicalRequests = useLogicalRequests({ session_id: id, sort_by: reqSortKey ?? undefined, sort_dir: reqSortKey ? reqSortDir : undefined, limit: 500 });
   const toolStats = useToolStats(id);
   const endSession = useEndSession();
   const renameSession = useRenameSession();
@@ -149,7 +151,8 @@ export default function SessionDetail() {
       startY: y,
       head: [['Metric', 'Value']],
       body: [
-        ['Requests', String(st?.request_count ?? 0)],
+        ['Logical requests', String(st?.logical_request_count ?? 0)],
+        ['Model calls', String(st?.model_call_count ?? 0)],
         ['Context tokens', (st?.tokens_total_input ?? 0).toLocaleString()],
         ['Generated tokens', (st?.tokens_total_output ?? 0).toLocaleString()],
         ...(st && st.tokens_output_thinking > 0
@@ -408,7 +411,11 @@ export default function SessionDetail() {
             value: st ? st.tokens_total_output.toLocaleString() : '—',
             sub: st && <OutputSplit text={st.tokens_output_text} thinking={st.tokens_output_thinking} />,
           },
-          { label: 'Requests', value: st?.request_count ?? '—' },
+          {
+            label: 'Logical requests',
+            value: st?.logical_request_count ?? '—',
+            sub: st ? `${st.model_call_count.toLocaleString()} model calls` : undefined,
+          },
         ] as Array<{ label: string; value: string | number; sub?: ReactNode }>).map(({ label, value, sub }) => (
           <div key={label} className="bg-gray-800 rounded-lg p-4">
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>
@@ -446,14 +453,26 @@ export default function SessionDetail() {
 
       {/* Requests table */}
       <div className="bg-gray-800 rounded-lg p-4">
-        <p className="text-sm font-medium text-gray-300 mb-4">Requests in this session</p>
-        <RequestTable
-          requests={requests.data?.requests ?? []}
-          onRowClick={(reqId) => navigate(`/requests/${reqId}`)}
-          sortKey={reqSortKey}
-          sortDir={reqSortDir}
-          onSortChange={handleReqSortChange}
-        />
+        <p className="text-sm font-medium text-gray-300 mb-4">Logical requests in this session</p>
+        {(logicalRequests.data?.logical_requests ?? []).length > 0 ? (
+          <LogicalRequestTable
+            requests={logicalRequests.data?.logical_requests ?? []}
+            sessions={[s]}
+            onRowClick={(requestId) => navigate(`/logical-requests/${requestId}`)}
+            sortKey={reqSortKey}
+            sortDir={reqSortDir}
+            onSortChange={handleReqSortChange}
+          />
+        ) : (
+          <RequestTable
+            requests={requests.data?.requests ?? []}
+            sessions={[s]}
+            onRowClick={(requestId) => navigate(`/requests/${requestId}`)}
+            sortKey={reqSortKey}
+            sortDir={reqSortDir}
+            onSortChange={handleReqSortChange}
+          />
+        )}
       </div>
 
       {deletingSession && (

@@ -13,9 +13,10 @@
 // limitations under the License.
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useRequests, useStatsOverview } from '../api/hooks';
+import { useLogicalRequests, useRequests, useStatsOverview } from '../api/hooks';
 import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
+import { LogicalRequestTable } from '../components/LogicalRequestTable';
 
 const PAGE_SIZE = 50;
 
@@ -28,6 +29,7 @@ export default function Requests() {
   const [page, setPage] = useState(0);
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [view, setView] = useState<'logical' | 'invocations'>('logical');
 
   function handleSortChange(key: SortKey | null, dir: 'asc' | 'desc') {
     setSortKey(key);
@@ -38,7 +40,7 @@ export default function Requests() {
   const stats = useStatsOverview();
   const modelOptions = Object.keys(stats.data?.by_model ?? {}).sort();
 
-  const { data, isLoading } = useRequests({
+  const queryParams = {
     provider: provider || undefined,
     agent: agent || undefined,
     q: q || undefined,
@@ -47,15 +49,30 @@ export default function Requests() {
     sort_dir: sortKey ? sortDir : undefined,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
-  });
+  };
+  const logical = useLogicalRequests(queryParams);
+  const physical = useRequests(queryParams);
 
-  const reqs = data?.requests ?? [];
+  const logicalRows = logical.data?.logical_requests ?? [];
+  const physicalRows = physical.data?.requests ?? [];
+  const legacyFallback = view === 'logical' && logicalRows.length === 0 && physicalRows.length > 0;
+  const rowCount = view === 'logical' && !legacyFallback ? logicalRows.length : physicalRows.length;
+  const isLoading = view === 'logical' ? logical.isLoading : physical.isLoading;
 
   function resetPage() { setPage(0); }
 
   return (
     <div className="p-6 space-y-4">
-      <h1 className="text-2xl font-bold text-white">All Requests</h1>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">All Requests</h1>
+          <p className="text-xs text-gray-500 mt-1">Logical requests group the model calls made for one agent turn.</p>
+        </div>
+        <div className="flex rounded bg-gray-800 p-1 text-xs">
+          <button onClick={() => { setView('logical'); setPage(0); }} className={`px-3 py-1.5 rounded ${view === 'logical' ? 'bg-indigo-600 text-white' : 'text-gray-400'}`}>Logical requests</button>
+          <button onClick={() => { setView('invocations'); setPage(0); }} className={`px-3 py-1.5 rounded ${view === 'invocations' ? 'bg-indigo-600 text-white' : 'text-gray-400'}`}>Model calls</button>
+        </div>
+      </div>
 
       {/* Filter bar */}
       <div className="flex gap-3 flex-wrap items-center">
@@ -113,21 +130,34 @@ export default function Requests() {
 
       {/* Table */}
       <div className="bg-gray-800 rounded-lg p-4">
+        {legacyFallback && (
+          <p className="mb-3 text-xs text-amber-300">These legacy captures have not been grouped yet. Run <code>contextspy db-upgrade</code> to backfill retained request data.</p>
+        )}
         {isLoading ? (
           <div className="text-center py-12 text-gray-500 text-sm">Loading…</div>
         ) : (
-          <RequestTable
-            requests={reqs}
-            onRowClick={(id) => navigate(`/requests/${id}`)}
-            sortKey={sortKey}
-            sortDir={sortDir}
-            onSortChange={handleSortChange}
-          />
+          view === 'logical' && !legacyFallback ? (
+            <LogicalRequestTable
+              requests={logicalRows}
+              onRowClick={(id) => navigate(`/logical-requests/${id}`)}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSortChange={handleSortChange}
+            />
+          ) : (
+            <RequestTable
+              requests={physicalRows}
+              onRowClick={(id) => navigate(`/requests/${id}`)}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSortChange={handleSortChange}
+            />
+          )
         )}
       </div>
 
       {/* Pagination */}
-      {(page > 0 || reqs.length === PAGE_SIZE) && (
+      {(page > 0 || rowCount === PAGE_SIZE) && (
         <div className="flex justify-between items-center">
           <button
             disabled={page === 0}
@@ -138,7 +168,7 @@ export default function Requests() {
           </button>
           <span className="text-sm text-gray-500">Page {page + 1}</span>
           <button
-            disabled={reqs.length < PAGE_SIZE}
+            disabled={rowCount < PAGE_SIZE}
             onClick={() => setPage((p) => p + 1)}
             className="px-3 py-1 text-sm bg-gray-700 text-gray-300 rounded disabled:opacity-40 hover:bg-gray-600"
           >

@@ -21,6 +21,49 @@ from contextspy.db.database import get_db
 router = APIRouter(tags=["requests"])
 
 
+@router.get("/logical-requests")
+def list_logical_requests(
+    session_id: str | None = Query(default=None),
+    provider: str | None = Query(default=None),
+    agent: str | None = Query(default=None),
+    model: str | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    status_category: str | None = Query(default=None, pattern="^(success|error)$"),
+    sort_by: str = Query(default="timestamp", pattern="^(timestamp|tokens_total_input|tokens_total_output|duration_ms|status_code|session|provider|agent|model)$"),
+    sort_dir: str = Query(default="desc", pattern="^(asc|desc)$"),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    with get_db() as db:
+        rows = crud.list_logical_requests(
+            db,
+            session_id=session_id,
+            provider=provider,
+            agent=agent,
+            model=model,
+            q=q,
+            status_category=status_category,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            limit=limit,
+            offset=offset,
+        )
+        return {"logical_requests": [row.to_dict() for row in rows]}
+
+
+@router.get("/logical-requests/{logical_request_id}")
+def get_logical_request(logical_request_id: str):
+    with get_db() as db:
+        logical = crud.get_logical_request(db, logical_request_id)
+        if logical is None:
+            raise HTTPException(status_code=404, detail="Logical request not found")
+        invocations = crud.get_logical_invocations(db, logical_request_id)
+        return {
+            "logical_request": logical.to_dict(),
+            "invocations": [row.to_dict(include_raw=False) for row in invocations],
+        }
+
+
 @router.get("/requests")
 def list_requests(
     session_id: str | None = Query(default=None),
@@ -68,3 +111,45 @@ def get_request_blocks(request_id: str):
             raise HTTPException(status_code=404, detail="Request not found")
         blocks = crud.get_blocks(db, request_id)
         return {"session_seq": req.session_seq, "blocks": blocks}
+
+
+@router.get("/requests/{request_id}/context")
+def get_request_context(request_id: str):
+    with get_db() as db:
+        req = crud.get_request(db, request_id)
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found")
+        return {
+            "request_id": request_id,
+            "lineage": {
+                "provider_request_id": req.provider_request_id,
+                "previous_provider_request_id": req.previous_provider_request_id,
+                "provider_conversation_id": req.provider_conversation_id,
+                "logical_turn_id": req.logical_turn_id,
+                "lineage_status": req.lineage_status,
+            },
+            "accounting": {
+                "observed_input_tokens": req.observed_input_tokens,
+                "reconstructed_input_tokens": req.reconstructed_input_tokens,
+                "provider_input_tokens": req.provider_input_tokens,
+                "unattributed_input_tokens": req.unattributed_input_tokens,
+                "input_token_variance": req.input_token_variance,
+                "context_coverage_pct": req.context_coverage_pct,
+                "cache_read_tokens": req.cache_read_tokens,
+                "cache_write_tokens": req.cache_creation_tokens,
+                "uncached_input_tokens": (
+                    max(req.provider_input_tokens - (req.cache_read_tokens or 0), 0)
+                    if req.provider_input_tokens is not None else None
+                ),
+                "ordinary_input_tokens": (
+                    max(
+                        req.provider_input_tokens
+                        - (req.cache_read_tokens or 0)
+                        - (req.cache_creation_tokens or 0),
+                        0,
+                    ) if req.provider_input_tokens is not None else None
+                ),
+                "status": req.context_reconstruction_status,
+            },
+            "blocks": crud.get_context_snapshot(db, request_id),
+        }

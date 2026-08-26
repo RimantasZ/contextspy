@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { sessionsApi, requestsApi, statsApi, proxyApi } from './client'
+import { sessionsApi, requestsApi, logicalRequestsApi, statsApi, proxyApi } from './client'
 
 // ---- Sessions -------------------------------------------------------------
 
@@ -94,6 +94,31 @@ export function useRequestBlocks(id: string, enabled: boolean = true) {
     queryKey: ['request', id, 'blocks'],
     queryFn: () => requestsApi.blocks(id),
     enabled: !!id && enabled,
+  })
+}
+
+export function useRequestContext(id: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['request', id, 'context'],
+    queryFn: () => requestsApi.context(id),
+    enabled: !!id && enabled,
+  })
+}
+
+export function useLogicalRequests(params: { session_id?: string; provider?: string; agent?: string; model?: string; q?: string; status_category?: string; sort_by?: string; sort_dir?: string; limit?: number; offset?: number }) {
+  return useQuery({
+    queryKey: ['logical-requests', params],
+    queryFn: () => logicalRequestsApi.list(params),
+    refetchInterval: 5_000,
+  })
+}
+
+export function useLogicalRequest(id: string) {
+  return useQuery({
+    queryKey: ['logical-request', id],
+    queryFn: () => logicalRequestsApi.get(id),
+    enabled: !!id,
+    refetchInterval: 5_000,
   })
 }
 

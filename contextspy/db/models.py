@@ -19,6 +19,7 @@ from typing import Optional
 
 from sqlalchemy import (
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -58,12 +59,91 @@ class Session(Base):
         }
 
 
+class LogicalRequest(Base):
+    """One user-visible turn containing one or more physical model invocations."""
+
+    __tablename__ = "logical_requests"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    grouping_key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    agent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    endpoint: Mapped[str] = mapped_column(String, nullable=False)
+    transport: Mapped[str] = mapped_column(String, nullable=False, default="http")
+    provider_conversation_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    logical_turn_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    parent_logical_request_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("logical_requests.id", ondelete="SET NULL"), nullable=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False, default="complete")
+    grouping_confidence: Mapped[str] = mapped_column(String, nullable=False, default="singleton")
+    grouping_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    invocation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    peak_context_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    final_context_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cumulative_input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cumulative_cached_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cumulative_cache_write_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cumulative_output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cumulative_reasoning_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    def to_dict(self) -> dict:
+        cache_hit_pct = (
+            round(self.cumulative_cached_tokens / self.cumulative_input_tokens * 100, 1)
+            if self.cumulative_cached_tokens is not None
+            and self.cumulative_input_tokens not in (None, 0)
+            else None
+        )
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "provider": self.provider,
+            "agent": self.agent,
+            "model": self.model,
+            "endpoint": self.endpoint,
+            "transport": self.transport,
+            "provider_conversation_id": self.provider_conversation_id,
+            "logical_turn_id": self.logical_turn_id,
+            "parent_logical_request_id": self.parent_logical_request_id,
+            "started_at": self.started_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "state": self.state,
+            "grouping_confidence": self.grouping_confidence,
+            "grouping_metadata": (
+                json.loads(self.grouping_metadata) if self.grouping_metadata else {}
+            ),
+            "invocation_count": self.invocation_count,
+            "peak_context_tokens": self.peak_context_tokens,
+            "final_context_tokens": self.final_context_tokens,
+            "cumulative_input_tokens": self.cumulative_input_tokens,
+            "cumulative_cached_tokens": self.cumulative_cached_tokens,
+            "cumulative_cache_write_tokens": self.cumulative_cache_write_tokens,
+            "cumulative_output_tokens": self.cumulative_output_tokens,
+            "cumulative_reasoning_tokens": self.cumulative_reasoning_tokens,
+            "cache_hit_pct": cache_hit_pct,
+            "duration_ms": self.duration_ms,
+            "status_code": self.status_code,
+        }
+
+
 class Request(Base):
     __tablename__ = "requests"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     session_id: Mapped[Optional[str]] = mapped_column(
         String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    logical_request_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("logical_requests.id", ondelete="SET NULL"), nullable=True
     )
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     provider: Mapped[str] = mapped_column(String, nullable=False)
@@ -83,7 +163,7 @@ class Request(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     response_complete: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
+        Integer, nullable=False, default=1, server_default="1"
     )
     capture_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
 
@@ -106,11 +186,32 @@ class Request(Base):
     provider_input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     provider_output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     provider_reasoning_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    # Anthropic prompt-cache breakdown (None for non-Anthropic providers)
+    # Provider prompt-cache breakdown (Anthropic cache creation / OpenAI cache writes)
     cache_read_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cache_creation_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Any other provider usage fields not otherwise modelled (JSON)
     usage_extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Provider conversation identity and reconstructed context accounting.
+    provider_request_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    previous_provider_request_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    provider_conversation_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    logical_turn_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    invocation_seq: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    lineage_status: Mapped[str] = mapped_column(
+        String, nullable=False, default="standalone", server_default="standalone"
+    )
+    identity_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    observed_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    reconstructed_input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    unattributed_input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    input_token_variance: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    context_coverage_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    context_reconstruction_status: Mapped[str] = mapped_column(
+        String, nullable=False, default="observed", server_default="observed"
+    )
 
     # Ordinal of this request within its session (1, 2, 3, ...); NULL when session_id is NULL
     session_seq: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -133,9 +234,18 @@ class Request(Base):
     session: Mapped[Optional[Session]] = relationship("Session", back_populates="requests")
 
     def to_dict(self, include_raw: bool = True) -> dict:
+        uncached_input = (
+            max(self.provider_input_tokens - (self.cache_read_tokens or 0), 0)
+            if self.provider_input_tokens is not None else None
+        )
+        ordinary_input = (
+            max(uncached_input - (self.cache_creation_tokens or 0), 0)
+            if uncached_input is not None else None
+        )
         d = {
             "id": self.id,
             "session_id": self.session_id,
+            "logical_request_id": self.logical_request_id,
             "timestamp": self.timestamp.isoformat(),
             "provider": self.provider,
             "model": self.model,
@@ -167,6 +277,28 @@ class Request(Base):
             "cache_read_tokens": self.cache_read_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
             "usage_extra": json.loads(self.usage_extra) if self.usage_extra else None,
+            "cache_write_tokens": self.cache_creation_tokens,
+            "uncached_input_tokens": uncached_input,
+            "ordinary_input_tokens": ordinary_input,
+            "cache_hit_pct": (
+                round((self.cache_read_tokens or 0) / self.provider_input_tokens * 100, 1)
+                if self.provider_input_tokens not in (None, 0) else None
+            ),
+            "provider_request_id": self.provider_request_id,
+            "previous_provider_request_id": self.previous_provider_request_id,
+            "provider_conversation_id": self.provider_conversation_id,
+            "logical_turn_id": self.logical_turn_id,
+            "invocation_seq": self.invocation_seq,
+            "lineage_status": self.lineage_status,
+            "identity_metadata": (
+                json.loads(self.identity_metadata) if self.identity_metadata else {}
+            ),
+            "observed_input_tokens": self.observed_input_tokens,
+            "reconstructed_input_tokens": self.reconstructed_input_tokens,
+            "unattributed_input_tokens": self.unattributed_input_tokens,
+            "input_token_variance": self.input_token_variance,
+            "context_coverage_pct": self.context_coverage_pct,
+            "context_reconstruction_status": self.context_reconstruction_status,
             "session_seq": self.session_seq,
             "tokenizer": self.tokenizer,
         }
@@ -181,6 +313,15 @@ class Request(Base):
 Index("idx_requests_session", Request.session_id)
 Index("idx_requests_timestamp", Request.timestamp)
 Index("idx_requests_provider", Request.provider)
+Index("idx_requests_logical", Request.logical_request_id)
+Index("idx_requests_provider_response", Request.provider, Request.provider_request_id)
+Index("idx_requests_previous_response", Request.provider, Request.previous_provider_request_id)
+Index("idx_logical_requests_started", LogicalRequest.started_at)
+Index("idx_logical_requests_session", LogicalRequest.session_id)
+Index(
+    "idx_logical_requests_turn",
+    LogicalRequest.provider, LogicalRequest.provider_conversation_id, LogicalRequest.logical_turn_id,
+)
 
 
 class ToolStat(Base):
@@ -287,6 +428,54 @@ class BlockRecord(Base):
 Index("idx_blocks_request", BlockRecord.request_id)
 Index("idx_blocks_content_hash", BlockRecord.content_hash)
 Index("idx_blocks_type", BlockRecord.block_type)
+
+
+class ContextSnapshotBlock(Base):
+    """One block in the best-effort effective context for a physical invocation."""
+
+    __tablename__ = "context_snapshot_blocks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(
+        String, ForeignKey("requests.id", ondelete="CASCADE"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_request_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    source_block_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    direction: Mapped[str] = mapped_column(String, nullable=False, default="input")
+    message_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    block_type: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tool_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    tool_call_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    provenance: Mapped[str] = mapped_column(String, nullable=False)
+    attrs: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    def to_dict(self, content: str | None) -> dict:
+        return {
+            "id": self.id,
+            "request_id": self.request_id,
+            "position": self.position,
+            "source_request_id": self.source_request_id,
+            "source_block_id": self.source_block_id,
+            "direction": self.direction,
+            "message_index": self.message_index,
+            "block_type": self.block_type,
+            "category": self.category,
+            "content": content,
+            "content_purged": self.content_hash is not None and content is None,
+            "token_count": self.token_count,
+            "tool_name": self.tool_name,
+            "tool_call_id": self.tool_call_id,
+            "provenance": self.provenance,
+            "attrs": json.loads(self.attrs) if self.attrs else {},
+        }
+
+
+Index("idx_context_snapshot_request", ContextSnapshotBlock.request_id)
+Index("idx_context_snapshot_content", ContextSnapshotBlock.content_hash)
 
 
 class SchemaMeta(Base):
