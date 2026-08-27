@@ -38,8 +38,27 @@ def test_create_migration_backup_uses_versioned_filename_and_exact_copy(tmp_path
         db_path, 1, 2, timestamp=timestamp
     )
 
-    assert backup_path.name == "contextspy_1_2_20260827T123456000789Z.back"
+    assert backup_path.name == "contextspy_backup_v1_to_v2_2026-08-27-1234.back"
     assert backup_path.read_bytes() == db_path.read_bytes()
+
+
+def test_create_migration_backup_adds_suffix_when_name_exists(tmp_path):
+    db_path = tmp_path / "contextspy.db"
+    _legacy_db_with_request(db_path)
+    timestamp = datetime(2026, 8, 27, 12, 34, tzinfo=timezone.utc)
+    base = tmp_path / "contextspy_backup_v1_to_v2_2026-08-27-1234.back"
+    suffixed = tmp_path / "contextspy_backup_v1_to_v2_2026-08-27-1234-1.back"
+    base.write_bytes(b"first backup")
+    suffixed.write_bytes(b"second backup")
+
+    backup_path = migrations.create_migration_backup(
+        db_path, 1, 2, timestamp=timestamp
+    )
+
+    assert backup_path.name == "contextspy_backup_v1_to_v2_2026-08-27-1234-2.back"
+    assert backup_path.read_bytes() == db_path.read_bytes()
+    assert base.read_bytes() == b"first backup"
+    assert suffixed.read_bytes() == b"second backup"
 
 
 def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path):
@@ -50,7 +69,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
     db_path = tmp_path / "profile.db"
     original_bytes = b"untouched sqlite database"
     db_path.write_bytes(original_bytes)
-    previous_backup = tmp_path / "profile_0_1_20260826T000000000000Z.back"
+    previous_backup = tmp_path / "profile_backup_v0_to_v1_2026-08-26-0000.back"
     previous_backup.write_bytes(b"old backup")
 
     settings = Settings(config_dir=tmp_path)
@@ -94,7 +113,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
 
     cli.db_upgrade()
 
-    backup_path = tmp_path / "profile_1_2_20260827T000000000000Z.back"
+    backup_path = tmp_path / "profile_backup_v1_to_v2_2026-08-27-0000.back"
     assert events == ["backup", "init"]
     assert backup_path.read_bytes() == original_bytes
     assert db_path.read_bytes() == b"database changed by init"
@@ -110,7 +129,8 @@ def test_list_migration_backups_only_returns_backups_for_database(tmp_path):
     db_path = tmp_path / "profile_with_underscores.db"
     matching = [
         tmp_path / "profile_with_underscores_1_2_20260826T000000000000Z.back",
-        tmp_path / "profile_with_underscores_2_3_20260827T000000000000Z.back",
+        tmp_path / "profile_with_underscores_backup_v2_to_v3_2026-08-27-0000.back",
+        tmp_path / "profile_with_underscores_backup_v2_to_v3_2026-08-27-0000-1.back",
     ]
     for backup in matching:
         backup.write_bytes(b"backup")

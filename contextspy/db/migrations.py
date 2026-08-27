@@ -27,6 +27,7 @@ table and applied explicitly with ``contextspy db-upgrade``.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -112,10 +113,15 @@ def create_migration_backup(
     """Copy the untouched SQLite file to a versioned backup beside it."""
     db_path = Path(db_path)
     timestamp = timestamp or datetime.now(timezone.utc)
-    timestamp_text = timestamp.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    backup_path = db_path.with_name(
-        f"{db_path.stem}_{version_from}_{version_to}_{timestamp_text}.back"
+    timestamp_text = timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d-%H%M")
+    backup_stem = (
+        f"{db_path.stem}_backup_v{version_from}_to_v{version_to}_{timestamp_text}"
     )
+    backup_path = db_path.with_name(f"{backup_stem}.back")
+    suffix = 1
+    while backup_path.exists():
+        backup_path = db_path.with_name(f"{backup_stem}-{suffix}.back")
+        suffix += 1
     shutil.copy2(db_path, backup_path)
     return backup_path
 
@@ -126,26 +132,30 @@ def list_migration_backups(db_path: Path) -> list[Path]:
     if not db_path.parent.is_dir():
         return []
 
-    prefix = f"{db_path.stem}_"
+    escaped_stem = re.escape(db_path.stem)
+    current_name = re.compile(
+        rf"(?P<base>{escaped_stem}_backup_v\d+_to_v\d+_"
+        r"\d{4}-\d{2}-\d{2}-\d{4})"
+        r"(?:-(?P<sequence>\d+))?\.back"
+    )
+    legacy_name = re.compile(
+        rf"{escaped_stem}_\d+_\d+_\d{{8}}T\d{{12}}Z\.back"
+    )
     backups: list[Path] = []
     for candidate in db_path.parent.iterdir():
-        if not candidate.is_file():
-            continue
-        name = candidate.name
-        if not name.startswith(prefix) or not name.endswith(".back"):
-            continue
-        backup_details = name[len(prefix) : -len(".back")]
-        version_from, separator, remainder = backup_details.partition("_")
-        version_to, separator_2, timestamp = remainder.partition("_")
-        if (
-            separator
-            and separator_2
-            and version_from.isdigit()
-            and version_to.isdigit()
-            and timestamp
+        if candidate.is_file() and (
+            current_name.fullmatch(candidate.name)
+            or legacy_name.fullmatch(candidate.name)
         ):
             backups.append(candidate)
-    return sorted(backups)
+
+    def sort_key(backup: Path) -> tuple[str, int]:
+        match = current_name.fullmatch(backup.name)
+        if match is None:
+            return backup.name, 0
+        return match.group("base"), int(match.group("sequence") or 0)
+
+    return sorted(backups, key=sort_key)
 
 
 def get_meta(db: OrmSession, key: str, default: str | None = None) -> str | None:
