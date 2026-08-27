@@ -685,7 +685,16 @@ def db_upgrade() -> None:
 
     settings = Settings.load()
     settings.ensure_dirs()
-    init_db(settings.storage.db_path)
+    db_path = settings.storage.db_path
+
+    version_from, pending_before_init = migrations.inspect_migration_state(db_path)
+    if pending_before_init:
+        backup_path = migrations.create_migration_backup(
+            db_path, version_from, migrations.SCHEMA_VERSION
+        )
+        console.print(f"[green]Database backup created:[/green] {backup_path}")
+
+    init_db(db_path)
 
     with get_db() as db:
         pending = migrations.check_and_flag_pending_migrations(db)

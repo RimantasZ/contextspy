@@ -739,6 +739,8 @@ contextspy reset-db [--yes]
 
 contextspy db-upgrade
     Apply any pending data migrations (see §5.4 "Schema Migrations").
+    Before initialization or migration changes the database, copy the original
+    SQLite file beside it as <db_name>_<version_from>_<version_to>_<timestamp>.back.
     Prints "already up to date" if nothing is pending. `start`/`start-local`
     refuse to boot until this (or reset-db) has been run against a DB with
     pending migrations.
