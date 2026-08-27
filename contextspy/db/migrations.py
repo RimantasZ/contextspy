@@ -120,6 +120,34 @@ def create_migration_backup(
     return backup_path
 
 
+def list_migration_backups(db_path: Path) -> list[Path]:
+    """Return versioned migration backups belonging to ``db_path``."""
+    db_path = Path(db_path)
+    if not db_path.parent.is_dir():
+        return []
+
+    prefix = f"{db_path.stem}_"
+    backups: list[Path] = []
+    for candidate in db_path.parent.iterdir():
+        if not candidate.is_file():
+            continue
+        name = candidate.name
+        if not name.startswith(prefix) or not name.endswith(".back"):
+            continue
+        backup_details = name[len(prefix) : -len(".back")]
+        version_from, separator, remainder = backup_details.partition("_")
+        version_to, separator_2, timestamp = remainder.partition("_")
+        if (
+            separator
+            and separator_2
+            and version_from.isdigit()
+            and version_to.isdigit()
+            and timestamp
+        ):
+            backups.append(candidate)
+    return sorted(backups)
+
+
 def get_meta(db: OrmSession, key: str, default: str | None = None) -> str | None:
     row = db.get(SchemaMeta, key)
     return row.value if row else default

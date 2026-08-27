@@ -61,6 +61,34 @@ app.add_typer(session_app, name="session")
 console = Console()
 
 
+def _format_file_size(path: pathlib.Path) -> str:
+    """Return a readable file size while retaining the exact byte count."""
+    size = path.stat().st_size
+    if size < 1024:
+        unit = "byte" if size == 1 else "bytes"
+        return f"{size:,} {unit}"
+
+    value = float(size)
+    unit = "bytes"
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
+        value /= 1024
+        if value < 1024 or unit == "TiB":
+            break
+    return f"{value:.1f} {unit} ({size:,} bytes)"
+
+
+def _print_previous_migration_backups(backups: list[pathlib.Path]) -> None:
+    if not backups:
+        return
+    console.print("[yellow]Previous database backups:[/yellow]")
+    for backup in backups:
+        console.print(f"  {backup} — {_format_file_size(backup)}")
+    console.print(
+        "[yellow]Previous backups can be deleted when no longer needed "
+        "to save disk space.[/yellow]"
+    )
+
+
 def _api(port: int, path: str) -> str:
     return f"http://127.0.0.1:{port}/api{path}"
 
@@ -687,12 +715,17 @@ def db_upgrade() -> None:
     settings.ensure_dirs()
     db_path = settings.storage.db_path
 
+    previous_backups = migrations.list_migration_backups(db_path)
     version_from, pending_before_init = migrations.inspect_migration_state(db_path)
     if pending_before_init:
         backup_path = migrations.create_migration_backup(
             db_path, version_from, migrations.SCHEMA_VERSION
         )
-        console.print(f"[green]Database backup created:[/green] {backup_path}")
+        console.print("[green]Database backup created:[/green]")
+        console.print(f"  Path: {backup_path}")
+        console.print(f"  Size on disk: {_format_file_size(backup_path)}")
+
+    _print_previous_migration_backups(previous_backups)
 
     init_db(db_path)
 

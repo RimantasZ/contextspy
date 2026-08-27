@@ -50,6 +50,8 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
     db_path = tmp_path / "profile.db"
     original_bytes = b"untouched sqlite database"
     db_path.write_bytes(original_bytes)
+    previous_backup = tmp_path / "profile_0_1_20260826T000000000000Z.back"
+    previous_backup.write_bytes(b"old backup")
 
     settings = Settings(config_dir=tmp_path)
     settings.storage.db_path = db_path
@@ -82,9 +84,37 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
     monkeypatch.setattr(database, "init_db", init_db)
     monkeypatch.setattr(database, "get_db", get_db)
 
+    output = []
+
+    class RecordingConsole:
+        def print(self, *values, **kwargs):
+            output.append(" ".join(str(value) for value in values))
+
+    monkeypatch.setattr(cli, "console", RecordingConsole())
+
     cli.db_upgrade()
 
     backup_path = tmp_path / "profile_1_2_20260827T000000000000Z.back"
     assert events == ["backup", "init"]
     assert backup_path.read_bytes() == original_bytes
     assert db_path.read_bytes() == b"database changed by init"
+    rendered_output = "\n".join(output)
+    assert f"Path: {backup_path}" in rendered_output
+    assert "Size on disk: 25 bytes" in rendered_output
+    assert str(previous_backup) in rendered_output
+    assert "10 bytes" in rendered_output
+    assert "deleted when no longer needed to save disk space" in rendered_output
+
+
+def test_list_migration_backups_only_returns_backups_for_database(tmp_path):
+    db_path = tmp_path / "profile_with_underscores.db"
+    matching = [
+        tmp_path / "profile_with_underscores_1_2_20260826T000000000000Z.back",
+        tmp_path / "profile_with_underscores_2_3_20260827T000000000000Z.back",
+    ]
+    for backup in matching:
+        backup.write_bytes(b"backup")
+    (tmp_path / "profile_with_underscores_notes.back").write_bytes(b"not a backup")
+    (tmp_path / "other_1_2_20260827T000000000000Z.back").write_bytes(b"other db")
+
+    assert migrations.list_migration_backups(db_path) == matching
