@@ -599,6 +599,27 @@ class ContextSpyAddon:
             ):
                 logical = crud.get_logical_request(db, predecessor.logical_request_id)
 
+            # Some Codex WebSocket captures expose the response id only as the
+            # *next* request's previous_response_id.  Within an explicit
+            # logical turn the socket is sequential, so use the prior
+            # invocation as the predecessor and backfill its response id.
+            if predecessor is None and mutation.inherit_previous:
+                if logical is not None:
+                    prior_invocations = crud.get_logical_invocations(db, logical.id)
+                    predecessor = prior_invocations[-1] if prior_invocations else None
+                elif identity.provider_conversation_id:
+                    predecessor = crud.get_latest_conversation_request(
+                        db, provider, identity.provider_conversation_id,
+                    )
+                if (
+                    predecessor is not None
+                    and predecessor.session_id == session_id
+                    and identity.previous_provider_request_id
+                    and not predecessor.provider_request_id
+                ):
+                    predecessor.provider_request_id = identity.previous_provider_request_id
+                    db.flush()
+
             if logical is None:
                 grouping_key = (
                     scoped_logical_key if scoped_logical_key is not None

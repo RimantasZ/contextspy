@@ -145,6 +145,8 @@ export interface ContextSnapshotBlock {
 
 export interface RequestContext {
   request_id: string
+  invocation_seq: number | null
+  selection?: 'final_invocation' | 'largest_reconstructed_snapshot'
   lineage: {
     provider_request_id: string | null
     previous_provider_request_id: string | null
@@ -165,6 +167,12 @@ export interface RequestContext {
     ordinary_input_tokens: number | null
     status: string
   }
+  composition: {
+    total_tokens: number
+    visible_block_tokens: number
+    by_category: Record<string, number>
+  }
+  tools: ToolStat[]
   blocks: ContextSnapshotBlock[]
 }
 
@@ -331,7 +339,7 @@ export const logicalRequestsApi = {
     if (params.sort_dir) qs.set('sort_dir', params.sort_dir)
     return apiFetch<{ logical_requests: LogicalRequest[] }>(`/logical-requests?${qs}`)
   },
-  get: (id: string) => apiFetch<{ logical_request: LogicalRequest; invocations: Request[] }>(`/logical-requests/${id}`),
+  get: (id: string) => apiFetch<{ logical_request: LogicalRequest; invocations: Request[]; context: RequestContext | null }>(`/logical-requests/${id}`),
 }
 
 // ---- Stats API ------------------------------------------------------------

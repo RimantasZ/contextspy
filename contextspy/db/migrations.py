@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, ToolStat
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_VERSION_KEY = "schema_version"
 _PENDING_KEY = "pending_data_migrations"
@@ -381,7 +381,123 @@ def _migrate_to_v3(db: OrmSession) -> None:
     _backfill_logical_requests(db)
 
 
+# ---------------------------------------------------------------------------
+# v4: repair Codex WS lineage and rebuild effective-context composition
+# ---------------------------------------------------------------------------
+
+def _repair_reconstructed_context(db: OrmSession) -> None:
+    """Rebuild snapshots after v3's first-pass logical grouping.
+
+    Older Codex captures sometimes omitted a response id from the canonical
+    response body.  The following request still identifies it through
+    previous_response_id, so sequential invocations in the same explicit
+    logical group let us recover the missing edge without inventing content.
+    """
+    from contextspy.analysis.adapters import get_adapter
+    from contextspy.analysis.blocks import AnalyzedRequest, Usage
+    from contextspy.analysis.classifier import classify
+    from contextspy.analysis.context_reconstruction import reconstruct_context
+    from contextspy.analysis.conversation import get_conversation_adapter
+    from contextspy.db import crud
+
+    logical_ids = db.execute(
+        select(Request.logical_request_id)
+        .where(Request.logical_request_id.isnot(None))
+        .distinct()
+    ).scalars().all()
+    for logical_id in logical_ids:
+        prior: Request | None = None
+        for row in crud.get_logical_invocations(db, logical_id):
+            request_body = _json_object(row.raw_request_body)
+            if not request_body:
+                prior = row
+                continue
+            response_body = _json_object(row.raw_response_body)
+            conversation_adapter = get_conversation_adapter(
+                provider=row.provider,
+                endpoint=row.endpoint,
+                transport=row.transport,
+                request_body=request_body,
+            )
+            wire_adapter = get_adapter(row.endpoint)
+            if conversation_adapter is None or wire_adapter is None:
+                prior = row
+                continue
+            identity = conversation_adapter.identify(
+                provider=row.provider,
+                agent=row.agent or "unknown",
+                request_body=request_body,
+                response_body=response_body,
+            )
+            mutation = conversation_adapter.context_mutation(
+                request_body=request_body, identity=identity,
+            )
+            predecessor = None
+            if identity.previous_provider_request_id:
+                predecessor = crud.get_request_by_provider_id(
+                    db, row.provider, identity.previous_provider_request_id,
+                )
+            if (
+                predecessor is None
+                and mutation.inherit_previous
+                and prior is not None
+                and prior.session_id == row.session_id
+            ):
+                predecessor = prior
+                if (
+                    identity.previous_provider_request_id
+                    and not prior.provider_request_id
+                ):
+                    prior.provider_request_id = identity.previous_provider_request_id
+
+            try:
+                input_blocks, tool_map = wire_adapter.parse_request(request_body)
+                output_blocks, usage = (
+                    wire_adapter.parse_response(response_body)
+                    if response_body else ([], Usage())
+                )
+                analyzed = AnalyzedRequest(
+                    model=row.model,
+                    input_blocks=input_blocks,
+                    output_blocks=output_blocks,
+                    usage=usage,
+                    tool_call_map=tool_map,
+                )
+                breakdown = classify(analyzed)
+                input_fields = breakdown.to_db_fields()
+                for field in (
+                    "tokens_system_prompt", "tokens_tool_definitions",
+                    "tokens_tool_results", "tokens_file_contents",
+                    "tokens_conversation_history", "tokens_current_user_message",
+                    "tokens_assistant_prefill", "tokens_uncategorized",
+                    "tokens_total_input",
+                ):
+                    setattr(row, field, input_fields[field])
+                row.observed_input_tokens = breakdown.total_input
+                if identity.provider_request_id:
+                    row.provider_request_id = identity.provider_request_id
+                row.previous_provider_request_id = identity.previous_provider_request_id
+                reconstruct_context(
+                    db,
+                    request=row,
+                    analyzed=analyzed,
+                    identity=identity,
+                    mutation=mutation,
+                    predecessor=predecessor,
+                )
+            except Exception:
+                row.context_reconstruction_status = "migration_failed"
+            prior = row
+        crud.refresh_logical_request(db, logical_id)
+    db.flush()
+
+
+def _migrate_to_v4(db: OrmSession) -> None:
+    _repair_reconstructed_context(db)
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
+    4: _migrate_to_v4,
 }

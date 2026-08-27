@@ -28,6 +28,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   current_user_message: 'Current User Message',
   assistant_prefill: 'Assistant Prefill',
   uncategorized: 'Uncategorized',
+  protocol_overhead: 'Protocol Overhead',
 };
 
 function categoryDataFromRequest(req: {
@@ -71,8 +72,9 @@ export default function RequestDetail() {
   }
 
   const req = data.request;
-  const catData = categoryDataFromRequest(req);
-  const total = req.tokens_total_input;
+  const catData = context.data?.composition.by_category ?? categoryDataFromRequest(req);
+  const total = context.data?.composition.total_tokens ?? req.tokens_total_input;
+  const effectiveTools = context.data?.tools ?? toolStats.data?.tools ?? [];
   const displayedContext = req.provider_input_tokens ?? req.reconstructed_input_tokens ?? req.tokens_total_input;
   const displayedContextSource = req.provider_input_tokens != null
     ? 'provider reported'
@@ -237,13 +239,14 @@ export default function RequestDetail() {
             <div className="max-h-[480px] overflow-auto border border-gray-700 rounded">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-gray-900"><tr className="text-left text-gray-400">
-                  <th className="p-2">#</th><th className="p-2">Provenance</th><th className="p-2">Category</th><th className="p-2 text-right">Tokens</th><th className="p-2">Content</th>
+                  <th className="p-2">#</th><th className="p-2">Provenance</th><th className="p-2">Category</th><th className="p-2">Tool</th><th className="p-2 text-right">Tokens</th><th className="p-2">Content</th>
                 </tr></thead>
                 <tbody>{context.data.blocks.map(block => (
                   <tr key={block.id} className="border-t border-gray-800 align-top">
                     <td className="p-2 text-gray-600">{block.position + 1}</td>
                     <td className="p-2 text-indigo-300 whitespace-nowrap">{block.provenance}</td>
                     <td className="p-2 text-gray-400 whitespace-nowrap">{block.category ?? block.block_type}</td>
+                    <td className="p-2 text-gray-400 whitespace-nowrap">{block.tool_name ?? '—'}</td>
                     <td className="p-2 text-right text-gray-300">{block.token_count.toLocaleString()}</td>
                     <td className="p-2 text-gray-300 font-mono whitespace-pre-wrap break-all max-w-xl">{block.content ?? (block.content_purged ? '[purged]' : '[hidden]')}</td>
                   </tr>
@@ -257,7 +260,10 @@ export default function RequestDetail() {
       {/* Charts + breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-gray-800 rounded-lg p-4">
-          <p className="text-sm font-medium text-gray-300 mb-3">Observed request composition</p>
+          <p className="text-sm font-medium text-gray-300 mb-1">Effective context composition</p>
+          <p className="text-xs text-gray-500 mb-3">
+            {context.data ? 'Reconstructed from the full captured lineage for this model call.' : 'Observed wire payload only.'}
+          </p>
           <TokenDonut data={catData} />
         </div>
         <div className="bg-gray-800 rounded-lg p-4">
@@ -291,16 +297,16 @@ export default function RequestDetail() {
       </div>
 
       {/* Tool breakdown */}
-      {(toolStats.data?.tools ?? []).length > 0 && (
+      {effectiveTools.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <ToolBreakdownCharts tools={toolStats.data!.tools} />
-          <ToolBreakdownTable tools={toolStats.data!.tools} totalInputTokens={req.tokens_total_input} />
+          <ToolBreakdownCharts tools={effectiveTools} />
+          <ToolBreakdownTable tools={effectiveTools} totalInputTokens={total} />
         </div>
       )}
 
       {/* Raw bodies */}
       <div className="space-y-3">
-        <RawViewer title="Request" requestId={req.id} content={req.raw_request_body} totalInputTokens={req.tokens_total_input} expandToggle={requestToggle} />
+        <RawViewer title={req.transport === 'websocket' ? 'Wire request fragment' : 'Request'} requestId={req.id} content={req.raw_request_body} totalInputTokens={req.tokens_total_input} expandToggle={requestToggle} />
         <RawViewer
           title="Response"
           requestId={req.id}

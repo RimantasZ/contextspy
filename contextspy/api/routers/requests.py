@@ -15,10 +15,55 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
+from contextspy.analysis.context_reconstruction import summarize_context_snapshot
 from contextspy.db import crud
 from contextspy.db.database import get_db
+from contextspy.db.models import Request
 
 router = APIRouter(tags=["requests"])
+
+
+def _context_payload(db, req: Request) -> dict:
+    blocks = crud.get_context_snapshot(db, req.id)
+    analysis = summarize_context_snapshot(
+        blocks, reconstructed_tokens=req.reconstructed_input_tokens,
+    )
+    return {
+        "request_id": req.id,
+        "invocation_seq": req.invocation_seq,
+        "lineage": {
+            "provider_request_id": req.provider_request_id,
+            "previous_provider_request_id": req.previous_provider_request_id,
+            "provider_conversation_id": req.provider_conversation_id,
+            "logical_turn_id": req.logical_turn_id,
+            "lineage_status": req.lineage_status,
+        },
+        "accounting": {
+            "observed_input_tokens": req.observed_input_tokens,
+            "reconstructed_input_tokens": req.reconstructed_input_tokens,
+            "provider_input_tokens": req.provider_input_tokens,
+            "unattributed_input_tokens": req.unattributed_input_tokens,
+            "input_token_variance": req.input_token_variance,
+            "context_coverage_pct": req.context_coverage_pct,
+            "cache_read_tokens": req.cache_read_tokens,
+            "cache_write_tokens": req.cache_creation_tokens,
+            "uncached_input_tokens": (
+                max(req.provider_input_tokens - (req.cache_read_tokens or 0), 0)
+                if req.provider_input_tokens is not None else None
+            ),
+            "ordinary_input_tokens": (
+                max(
+                    req.provider_input_tokens
+                    - (req.cache_read_tokens or 0)
+                    - (req.cache_creation_tokens or 0),
+                    0,
+                ) if req.provider_input_tokens is not None else None
+            ),
+            "status": req.context_reconstruction_status,
+        },
+        **analysis,
+        "blocks": blocks,
+    }
 
 
 @router.get("/logical-requests")
@@ -58,9 +103,22 @@ def get_logical_request(logical_request_id: str):
         if logical is None:
             raise HTTPException(status_code=404, detail="Logical request not found")
         invocations = crud.get_logical_invocations(db, logical_request_id)
+        context = None
+        if invocations:
+            selected = invocations[-1]
+            selection = "final_invocation"
+            if selected.lineage_status == "unresolved_predecessor":
+                selected = max(
+                    invocations,
+                    key=lambda row: row.reconstructed_input_tokens or 0,
+                )
+                selection = "largest_reconstructed_snapshot"
+            context = _context_payload(db, selected)
+            context["selection"] = selection
         return {
             "logical_request": logical.to_dict(),
             "invocations": [row.to_dict(include_raw=False) for row in invocations],
+            "context": context,
         }
 
 
@@ -119,37 +177,4 @@ def get_request_context(request_id: str):
         req = crud.get_request(db, request_id)
         if not req:
             raise HTTPException(status_code=404, detail="Request not found")
-        return {
-            "request_id": request_id,
-            "lineage": {
-                "provider_request_id": req.provider_request_id,
-                "previous_provider_request_id": req.previous_provider_request_id,
-                "provider_conversation_id": req.provider_conversation_id,
-                "logical_turn_id": req.logical_turn_id,
-                "lineage_status": req.lineage_status,
-            },
-            "accounting": {
-                "observed_input_tokens": req.observed_input_tokens,
-                "reconstructed_input_tokens": req.reconstructed_input_tokens,
-                "provider_input_tokens": req.provider_input_tokens,
-                "unattributed_input_tokens": req.unattributed_input_tokens,
-                "input_token_variance": req.input_token_variance,
-                "context_coverage_pct": req.context_coverage_pct,
-                "cache_read_tokens": req.cache_read_tokens,
-                "cache_write_tokens": req.cache_creation_tokens,
-                "uncached_input_tokens": (
-                    max(req.provider_input_tokens - (req.cache_read_tokens or 0), 0)
-                    if req.provider_input_tokens is not None else None
-                ),
-                "ordinary_input_tokens": (
-                    max(
-                        req.provider_input_tokens
-                        - (req.cache_read_tokens or 0)
-                        - (req.cache_creation_tokens or 0),
-                        0,
-                    ) if req.provider_input_tokens is not None else None
-                ),
-                "status": req.context_reconstruction_status,
-            },
-            "blocks": crud.get_context_snapshot(db, request_id),
-        }
+        return _context_payload(db, req)

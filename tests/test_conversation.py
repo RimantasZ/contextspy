@@ -201,10 +201,78 @@ def test_codex_invocations_group_and_reconstruct_context(tmp_path):
     logical_payload = get_logical_request_api(logical_id)
     assert logical_payload["logical_request"]["invocation_count"] == 2
     assert len(logical_payload["invocations"]) == 2
+    assert logical_payload["context"]["request_id"] == second_id
+    assert logical_payload["context"]["composition"]["by_category"]["tool_results"] > 0
+    assert any(
+        tool["tool_name"] == "apply_patch" and tool["result_tokens"] > 0
+        for tool in logical_payload["context"]["tools"]
+    )
     context_payload = get_request_context_api(second_id)
     assert context_payload["lineage"]["lineage_status"] == "resolved"
     assert context_payload["accounting"]["provider_input_tokens"] == 120
+    assert context_payload["composition"]["by_category"]["tool_results"] > 0
     assert context_payload["blocks"]
+
+
+def test_codex_missing_response_id_is_inferred_from_next_invocation(tmp_path):
+    init_db(tmp_path / "inferred_lineage.db")
+    addon = ContextSpyAddon()
+    first_request = {
+        "type": "response.create",
+        "model": "gpt-5-codex",
+        "input": [{"role": "user", "content": "Inspect the repository"}],
+        "client_metadata": _metadata(),
+    }
+    first_completed = {
+        "type": "response.completed",
+        "response": {
+            "model": "gpt-5-codex",
+            "output": [{
+                "type": "function_call", "call_id": "call_exec",
+                "name": "exec", "arguments": "{\"cmd\":\"rg foo\"}",
+            }],
+            "usage": {"input_tokens": 30, "output_tokens": 5},
+        },
+    }
+    addon._handle_ws_exchange(_state(), CompletedExchange(
+        request_body=first_request,
+        raw_request_text=json.dumps(first_request),
+        events=[CapturedEvent(sequence=0, payload=first_completed)],
+        request_ts=1.0, first_event_ts=1.1, last_event_ts=1.2,
+    ))
+
+    second_request = {
+        "type": "response.create",
+        "model": "gpt-5-codex",
+        "previous_response_id": "resp_inferred_from_child",
+        "input": [{
+            "type": "function_call_output", "call_id": "call_exec",
+            "output": "matching lines",
+        }],
+        "client_metadata": _metadata(),
+    }
+    addon._handle_ws_exchange(_state(), _exchange(
+        request=second_request,
+        response_id="resp_second",
+        output=[],
+        input_tokens=40,
+        timestamp=2.0,
+    ))
+
+    with get_db() as db:
+        rows = crud.get_logical_invocations(
+            db, crud.list_logical_requests(db)[0].id,
+        )
+        assert len(rows) == 2
+        assert rows[0].provider_request_id == "resp_inferred_from_child"
+        assert rows[1].lineage_status == "resolved"
+        snapshot = crud.get_context_snapshot(db, rows[1].id)
+        assert any(block["content"] == "Inspect the repository" for block in snapshot)
+        assert any(
+            block["block_type"] == "tool_result"
+            and block["tool_name"] == "exec"
+            for block in snapshot
+        )
 
 
 def test_rest_request_creates_single_logical_request(tmp_path):
@@ -244,7 +312,7 @@ def test_rest_request_creates_single_logical_request(tmp_path):
         assert logical[0].grouping_confidence == "singleton"
 
 
-def test_v3_migration_is_discovered_and_backfills_retained_row(tmp_path):
+def test_context_migrations_are_discovered_and_backfill_retained_row(tmp_path):
     from contextspy.db import migrations
 
     init_db(tmp_path / "migration.db")
@@ -282,8 +350,8 @@ def test_v3_migration_is_discovered_and_backfills_retained_row(tmp_path):
         migrations.set_meta(db, "pending_data_migrations", "[]")
 
     with get_db() as db:
-        assert migrations.check_and_flag_pending_migrations(db) == [3]
-        assert migrations.apply_data_migrations(db) == [3]
+        assert migrations.check_and_flag_pending_migrations(db) == [3, 4]
+        assert migrations.apply_data_migrations(db) == [3, 4]
 
     with get_db() as db:
         row = crud.get_request(db, "legacy")
@@ -292,6 +360,84 @@ def test_v3_migration_is_discovered_and_backfills_retained_row(tmp_path):
         assert row.logical_request_id is not None
         assert row.provider_request_id == "resp_legacy"
         assert crud.get_context_snapshot(db, "legacy")
+
+
+def test_v4_migration_repairs_missing_codex_response_ids(tmp_path):
+    from contextspy.db import migrations
+
+    init_db(tmp_path / "lineage_repair.db")
+    root_request = {
+        "type": "response.create",
+        "model": "gpt-5-codex",
+        "input": [
+            {"type": "additional_tools", "role": "developer", "tools": [{
+                "type": "namespace", "name": "functions", "tools": [{
+                    "type": "custom", "name": "exec", "description": "Run code",
+                }],
+            }]},
+            {"role": "user", "content": "Inspect this project"},
+        ],
+        "client_metadata": _metadata(),
+    }
+    child_request = {
+        "type": "response.create",
+        "model": "gpt-5-codex",
+        "previous_response_id": "resp_recovered",
+        "input": [{
+            "type": "custom_tool_call_output", "call_id": "call_exec",
+            "output": "inspection output",
+        }],
+        "client_metadata": _metadata(),
+    }
+    now = datetime.now(timezone.utc)
+    with get_db() as db:
+        crud.create_logical_request(db, {
+            "id": "logical_repair",
+            "grouping_key": "repair",
+            "provider": "openai_chatgpt",
+            "agent": "codex",
+            "model": "gpt-5-codex",
+            "endpoint": "/backend-api/codex/responses",
+            "transport": "websocket",
+            "started_at": now,
+            "updated_at": now,
+        })
+        for seq, request_body in ((1, root_request), (2, child_request)):
+            crud.create_request(db, {
+                "id": f"repair_{seq}",
+                "logical_request_id": "logical_repair",
+                "invocation_seq": seq,
+                "timestamp": now,
+                "provider": "openai_chatgpt",
+                "agent": "codex",
+                "model": "gpt-5-codex",
+                "endpoint": "/backend-api/codex/responses",
+                "transport": "websocket",
+                "raw_request_body": json.dumps(request_body),
+                "raw_response_body": json.dumps({
+                    "model": "gpt-5-codex", "output": [],
+                    "usage": {"input_tokens": 100 + seq, "output_tokens": 1},
+                }),
+                "provider_input_tokens": 100 + seq,
+            })
+        migrations.set_meta(db, "schema_version", "3")
+        migrations.set_meta(db, "pending_data_migrations", "[]")
+
+    with get_db() as db:
+        assert migrations.check_and_flag_pending_migrations(db) == [4]
+        assert migrations.apply_data_migrations(db) == [4]
+        root = crud.get_request(db, "repair_1")
+        child = crud.get_request(db, "repair_2")
+        assert root is not None and child is not None
+        assert root.provider_request_id == "resp_recovered"
+        assert child.lineage_status == "resolved"
+        snapshot = crud.get_context_snapshot(db, child.id)
+        assert any(block["block_type"] == "tool_definition" for block in snapshot)
+        assert any(
+            block["block_type"] == "tool_result"
+            and block["tool_name"] == "exec"
+            for block in snapshot
+        )
 
 
 def test_websocket_without_http_status_is_success_not_error(tmp_path):

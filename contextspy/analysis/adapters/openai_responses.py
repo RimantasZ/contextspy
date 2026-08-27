@@ -44,6 +44,22 @@ def _reasoning_summary_text(item: dict) -> str:
     return "\n".join(p for p in parts if p)
 
 
+def _iter_tool_definitions(tools: list, namespace: str = ""):
+    """Yield leaf definitions from both public and Codex namespace schemas."""
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name") or (tool.get("function") or {}).get("name") or "unknown")
+        nested = tool.get("tools")
+        if isinstance(nested, list):
+            yield from _iter_tool_definitions(nested, name)
+        else:
+            # Codex namespaces are transport organization; response tool calls
+            # use the leaf name (for example ``exec`` rather than
+            # ``functions.exec``), so keep the join key model-visible.
+            yield name, tool
+
+
 class OpenAIResponsesAdapter(WireFormatAdapter):
     format_id = "openai_responses"
     endpoint_patterns = ("/responses",)
@@ -55,20 +71,24 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
         tool_call_map: dict[str, str] = {}
         pending_tool_results: list[Block] = []
 
-        for tool in req_body.get("tools") or []:
-            name = tool.get("name") or (tool.get("function") or {}).get("name") or "unknown"
+        for name, tool in _iter_tool_definitions(req_body.get("tools") or []):
             blocks.append(Block.make(
-                Direction.INPUT, BlockType.TOOL_DEFINITION, json.dumps(tool), tool_name=name,
+                Direction.INPUT, BlockType.TOOL_DEFINITION, json.dumps(tool),
+                tool_name=name, attrs={"request_configuration": True},
             ))
 
         instructions = req_body.get("instructions", "")
         if instructions:
-            blocks.append(Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, instructions, message_index=-1))
+            blocks.append(Block.make(
+                Direction.INPUT, BlockType.SYSTEM_PROMPT, instructions,
+                message_index=-1, attrs={"request_configuration": True},
+            ))
 
         block_type_for_role = {
             "user": BlockType.USER_MESSAGE,
             "assistant": BlockType.ASSISTANT_MESSAGE,
             "system": BlockType.SYSTEM_PROMPT,
+            "developer": BlockType.SYSTEM_PROMPT,
         }
 
         for i, item in enumerate(req_body.get("input", [])):
@@ -76,15 +96,22 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                 continue
             item_type = item.get("type", "")
             role = item.get("role", "")
+            item_attrs = {"conversation_item": True, "response_item_type": item_type}
 
-            if item_type in ("function_call_output", "custom_tool_call_output"):
+            if item_type == "additional_tools":
+                for name, tool in _iter_tool_definitions(item.get("tools") or []):
+                    blocks.append(Block.make(
+                        Direction.INPUT, BlockType.TOOL_DEFINITION, json.dumps(tool),
+                        message_index=i, tool_name=name, attrs=item_attrs,
+                    ))
+            elif item_type in ("function_call_output", "custom_tool_call_output"):
                 call_id = item.get("call_id")
                 output = item.get("output", "")
                 text = flatten_content(output)
                 b = Block.make(
                     Direction.INPUT, BlockType.TOOL_RESULT, text,
                     message_index=i, tool_call_id=call_id,
-                    attrs={"response_item_type": item_type},
+                    attrs=item_attrs,
                 )
                 blocks.append(b)
                 pending_tool_results.append(b)
@@ -99,16 +126,19 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                 blocks.append(Block.make(
                     Direction.INPUT, BlockType.TOOL_CALL, args,
                     message_index=i, tool_name=name, tool_call_id=call_id,
-                    attrs={"response_item_type": item_type},
+                    attrs=item_attrs,
                 ))
             elif item_type == "reasoning":
                 text = _reasoning_summary_text(item)
-                attrs = {} if text else {"hidden": True}
+                attrs = dict(item_attrs)
+                if not text:
+                    attrs["hidden"] = True
                 blocks.append(Block.make(Direction.INPUT, BlockType.THINKING, text, message_index=i, attrs=attrs))
             elif item_type == "compaction":
                 blocks.append(Block.make(
                     Direction.INPUT, BlockType.OTHER, "", message_index=i,
                     attrs={
+                        **item_attrs,
                         "response_item_type": "compaction",
                         "opaque": True,
                         "encrypted": bool(item.get("encrypted_content")),
@@ -123,15 +153,21 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                             continue
                         ptype = part.get("type")
                         if ptype in ("input_text", "output_text", "text") and part.get("text"):
-                            blocks.append(Block.make(Direction.INPUT, block_type, part["text"], message_index=i))
+                            blocks.append(Block.make(
+                                Direction.INPUT, block_type, part["text"],
+                                message_index=i, attrs=item_attrs,
+                            ))
                         elif ptype == "refusal" and part.get("refusal"):
                             blocks.append(Block.make(Direction.INPUT, block_type, part["refusal"],
-                                                      message_index=i, attrs={"refusal": True}))
+                                                      message_index=i, attrs={**item_attrs, "refusal": True}))
                         else:
                             blocks.append(Block.make(Direction.INPUT, BlockType.OTHER, json.dumps(part),
-                                                      message_index=i, attrs={"content_type": ptype}))
+                                                      message_index=i, attrs={**item_attrs, "content_type": ptype}))
                 elif isinstance(content_raw, str) and content_raw:
-                    blocks.append(Block.make(Direction.INPUT, block_type, content_raw, message_index=i))
+                    blocks.append(Block.make(
+                        Direction.INPUT, block_type, content_raw,
+                        message_index=i, attrs=item_attrs,
+                    ))
 
         for b in pending_tool_results:
             if b.tool_call_id and b.tool_call_id in tool_call_map:

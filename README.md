@@ -98,6 +98,10 @@ but groups them into one **logical request** in the default UI. Each invocation 
 - provider-reported input tokens, which remain the authoritative usage figure;
 - cached, cache-write, and unattributed input when the provider reports or implies them.
 
+The logical-request detail shows the effective composition for the final model invocation. Opening
+an individual model call shows that call's reconstructed composition—not only the small WebSocket
+frame—including inherited tool definitions, tool calls, tool results, and conversation messages.
+
 Unattributed input is the gap between provider usage and context ContextSpy can reconstruct. It can
 represent server-managed instructions, hidden state, compaction, provider formatting, or tokenizer
 differences; it is not added on top of the provider-reported total.

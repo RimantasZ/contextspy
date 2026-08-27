@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session as OrmSession
 from contextspy.analysis.blocks import (
     AnalyzedRequest,
     Block,
+    BlockType,
     Direction,
     Usage,
 )
@@ -82,7 +83,11 @@ def _inherited_entries(
     snapshot_rows = crud.get_raw_context_rows(db, predecessor.id)
     if snapshot_rows:
         for record, content in snapshot_rows:
-            if record.block_type in mutation.drop_inherited_block_types:
+            attrs = json.loads(record.attrs) if record.attrs else {}
+            if (
+                record.block_type in mutation.drop_inherited_block_types
+                and not attrs.get("conversation_item")
+            ):
                 continue
             entries.append({
                 "block": _block_from_record(record, content, direction=Direction.INPUT),
@@ -98,7 +103,11 @@ def _inherited_entries(
         for record, content in crud.get_raw_block_rows(
             db, predecessor.id, direction=Direction.INPUT,
         ):
-            if record.block_type in mutation.drop_inherited_block_types:
+            attrs = json.loads(record.attrs) if record.attrs else {}
+            if (
+                record.block_type in mutation.drop_inherited_block_types
+                and not attrs.get("conversation_item")
+            ):
                 continue
             entries.append({
                 "block": _block_from_record(record, content, direction=Direction.INPUT),
@@ -121,6 +130,46 @@ def _inherited_entries(
                 "context_operation": "append_previous_output",
             })
     return entries, status
+
+
+def _resolve_tool_names(entries: list[dict[str, Any]]) -> None:
+    """Link results to calls after inherited and current blocks are combined."""
+    calls = {
+        entry["block"].tool_call_id: entry["block"].tool_name
+        for entry in entries
+        if entry["block"].block_type == BlockType.TOOL_CALL
+        and entry["block"].tool_call_id
+        and entry["block"].tool_name
+    }
+    custom_definitions: set[str] = set()
+    for entry in entries:
+        block = entry["block"]
+        if block.block_type != BlockType.TOOL_DEFINITION or not block.tool_name:
+            continue
+        try:
+            definition = json.loads(block.content)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(definition, dict) and definition.get("type") == "custom":
+            custom_definitions.add(block.tool_name)
+    for entry in entries:
+        block = entry["block"]
+        if (
+            block.block_type == BlockType.TOOL_RESULT
+            and not block.tool_name
+            and block.tool_call_id in calls
+        ):
+            block.tool_name = calls[block.tool_call_id]
+        elif (
+            block.block_type == BlockType.TOOL_RESULT
+            and not block.tool_name
+            and block.attrs.get("response_item_type") == "custom_tool_call_output"
+            and len(custom_definitions) == 1
+        ):
+            # Older canonical captures could omit the preceding custom call.
+            # A single available custom definition is still an unambiguous
+            # provider-visible join.
+            block.tool_name = next(iter(custom_definitions))
 
 
 def reconstruct_context(
@@ -150,6 +199,7 @@ def reconstruct_context(
         )
 
     entries.extend(_current_entries(db, request, analyzed.input_blocks))
+    _resolve_tool_names(entries)
     _renumber_message_indices(entries)
 
     snapshot_blocks = [entry["block"] for entry in entries]
@@ -179,6 +229,71 @@ def reconstruct_context(
     crud.insert_context_snapshot(db, request.id, entries)
     db.flush()
     return entries
+
+
+_CONTEXT_CATEGORIES = (
+    "system_prompt",
+    "tool_definitions",
+    "tool_results",
+    "file_contents",
+    "conversation_history",
+    "current_user_message",
+    "assistant_prefill",
+    "uncategorized",
+)
+
+
+def summarize_context_snapshot(
+    blocks: list[dict[str, Any]], *, reconstructed_tokens: int | None = None,
+) -> dict[str, Any]:
+    """Return composition and tool statistics for a reconstructed snapshot."""
+    by_category = {category: 0 for category in _CONTEXT_CATEGORIES}
+    call_names: dict[str, str] = {}
+    tools: dict[str, dict[str, Any]] = {}
+
+    for block in blocks:
+        category = block.get("category") or "uncategorized"
+        if category not in by_category:
+            category = "uncategorized"
+        by_category[category] += int(block.get("token_count") or 0)
+        if (
+            block.get("block_type") == BlockType.TOOL_CALL
+            and block.get("tool_call_id")
+            and block.get("tool_name")
+        ):
+            call_names[block["tool_call_id"]] = block["tool_name"]
+
+    for block in blocks:
+        block_type = block.get("block_type")
+        name = block.get("tool_name")
+        if not name and block.get("tool_call_id"):
+            name = call_names.get(block["tool_call_id"])
+        if block_type == BlockType.TOOL_DEFINITION:
+            name = name or "unknown"
+            row = tools.setdefault(name, {
+                "tool_name": name, "definition_tokens": 0, "result_tokens": 0,
+            })
+            row["definition_tokens"] += int(block.get("token_count") or 0)
+        elif block_type == BlockType.TOOL_RESULT:
+            name = name or "unknown"
+            row = tools.setdefault(name, {
+                "tool_name": name, "definition_tokens": 0, "result_tokens": 0,
+            })
+            row["result_tokens"] += int(block.get("token_count") or 0)
+
+    visible_tokens = sum(by_category.values())
+    total_tokens = reconstructed_tokens if reconstructed_tokens is not None else visible_tokens
+    protocol_overhead = max(total_tokens - visible_tokens, 0)
+    if protocol_overhead:
+        by_category["protocol_overhead"] = protocol_overhead
+    return {
+        "composition": {
+            "total_tokens": total_tokens,
+            "visible_block_tokens": visible_tokens,
+            "by_category": by_category,
+        },
+        "tools": sorted(tools.values(), key=lambda row: row["tool_name"]),
+    }
 
 
 __all__ = ["reconstruct_context"]
@@ -278,3 +393,4 @@ def reconcile_unresolved_descendants(db: OrmSession, predecessor: Request) -> in
 
 
 __all__.append("reconcile_unresolved_descendants")
+__all__.append("summarize_context_snapshot")

@@ -1055,6 +1055,30 @@ class TestOpenAIResponsesAdapter:
         blocks, _ = self.adapter.parse_request(req)
         assert any(b.block_type == BlockType.TOOL_DEFINITION for b in blocks)
 
+    def test_codex_additional_tools_namespace_is_composed(self):
+        req = {
+            "model": "gpt-5-codex",
+            "input": [{
+                "type": "additional_tools",
+                "role": "developer",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "functions",
+                    "tools": [{
+                        "type": "custom", "name": "exec",
+                        "description": "Run a command",
+                    }],
+                }],
+            }],
+        }
+        blocks, _ = self.adapter.parse_request(req)
+        definition = next(
+            block for block in blocks
+            if block.block_type == BlockType.TOOL_DEFINITION
+        )
+        assert definition.tool_name == "exec"
+        assert definition.attrs["conversation_item"] is True
+
     def test_function_call_in_output(self):
         resp = {
             "model": "gpt-4o",
