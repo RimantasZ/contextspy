@@ -249,7 +249,7 @@ export default function SessionDetail() {
               r.tokens_total_output.toLocaleString(),
             ]
           : [r.tokens_total_output.toLocaleString()];
-        return [...lead, ...out, String(r.status_code ?? '—')];
+        return [...lead, ...out, String(r.status_code ?? r.invocation_outcome)];
       });
 
       // Totals row, so the per-request numbers can be reconciled against the

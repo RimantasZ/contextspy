@@ -47,9 +47,9 @@ cd ui && npm run build   # outputs to contextspy/_web/
 coding agent → HTTPS_PROXY → mitmproxy (port 8888)
                                   │
                             ContextSpyAddon (intercepts here)
-                              → capture request application JSON
-                              → reconstruct response JSON from SSE/WS when needed
-                              → parse canonical request/response JSON
+                              → identify one provider invocation
+                              → normalize provider state into canonical JSON
+                              → parse canonical request/response JSON only
                               → classify tokens into 8 categories
                               → write to SQLite
                               → broadcast via WebSocket
@@ -83,8 +83,8 @@ All data is stored in `~/.contextspy/`:
 | `~/.contextspy/contextspy.db` | SQLite database — all requests and sessions |
 | `~/.contextspy/config.toml` | Configuration file (auto-created on first run) |
 
-Decoded request payloads, canonical response payloads, normalized SSE/NDJSON/WebSocket event
-logs, plus the content-addressed `block_contents` table (see below), are purged automatically 7
+Observed request payloads, canonical request/response payloads, normalized SSE/NDJSON/WebSocket
+event logs, plus the content-addressed `block_contents` table (see below), are purged automatically 7
 days after capture by default to limit disk usage — configurable via
 `[retention]` in `config.toml` (`raw_body_days`, `block_content_days`; `0` disables purging).
 Purging only runs once, at server startup — there is no background timer, so a `contextspy`
@@ -92,13 +92,40 @@ process left running for many days won't purge again until restarted.
 
 ### Capture and analysis boundary
 
-Buffered JSON responses are analyzed directly. Streaming transports are first decoded into
-ordered `CapturedEvent` records and reconstructed by the provider adapter into its ordinary
-non-streaming response shape. That canonical JSON is both stored in `raw_response_body` and
-passed to `parse_response()`; `response_events` independently retains every normalized stream
-event/frame, including unknown data. Reconstruction and block analysis failures are recorded in
-`capture_error` without discarding the application payload. The UI's “raw” data is normalized
-application content, not byte-identical compressed/chunked wire traffic.
+Transport ingestion first identifies one externally observable provider invocation. HTTP has one
+request/response pair; a registered WebSocket protocol opens an invocation on its provider start
+event and closes it on a terminal event. Deltas and utility frames never become request rows.
+
+Provider normalization then produces a standalone `CanonicalInvocation`. For Responses API
+traffic, an explicit `previous_response_id` is resolved to a persisted predecessor and the visible
+input is expanded as predecessor input + predecessor output + current input. This applies to REST
+as well as WebSocket traffic. Only explicit provider IDs establish lineage.
+
+`canonical_request_body` and `canonical_response_body` store the exact JSON documents passed to
+the provider adapter. Blocks and category/token columns are derived indexes over those documents;
+they intentionally duplicate data. A retained canonical pair is sufficient to rerun analysis
+without replaying transport events. `raw_request_body` and `response_events` remain diagnostic
+evidence, while `raw_response_body` is retained as a compatibility field.
+
+Reconstruction and block-analysis failures are recorded in `capture_error` without discarding the
+canonical application payload. The UI's JSON is provider-level application content, not
+byte-identical compressed/chunked network traffic.
+
+### Context fidelity
+
+Each invocation records one of three fidelity states:
+
+- `complete`: the request was observed in full or its visible lineage was expanded through exact
+  provider IDs;
+- `partial`: a required predecessor was missing or purged;
+- `opaque`: compaction, encryption, truncation, or another provider-side representation prevents
+  inspection of some content.
+
+Provider-reported usage remains authoritative in every case. Locally tokenized composition
+explains the visible canonical JSON; the signed difference can also contain provider-tokenizer or
+server-transformation effects, so it is labelled as unattributed/tokenizer difference rather than
+invented hidden content. These limits apply to provider-managed REST conversations too, not only
+WebSockets.
 
 ### Blocks
 

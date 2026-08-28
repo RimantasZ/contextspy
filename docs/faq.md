@@ -67,28 +67,35 @@ Some agents batch or internally deduplicate requests before sending them to the 
 
 ### Does ContextSpy support WebSocket-based traffic?
 
-For registered WS protocols, yes. ContextSpy's proxy addon hooks mitmproxy's
-`websocket_start`/`websocket_message`/`websocket_end` events and dispatches each connection to a
-per-provider protocol module (`proxy/ws_protocols/`) that reassembles the frame stream into the
-same request/response shape the HTTP path already produces — token counts, category breakdown,
-and dashboard broadcast all work the same way regardless of transport.
+For registered protocols, yes. ContextSpy identifies provider response invocations inside the
+frame stream, reconstructs provider-shaped request/response JSON, and sends those documents
+through the same analysis used for REST. The normal request list and detail page intentionally do
+not expose the transport.
 
-The request detail stores the reconstructed provider response JSON and an ordered normalized
-event/frame log. Unknown JSON events, non-JSON text, errors, rate-limit frames, and binary frame
-contents associated with an active turn remain inspectable even when ContextSpy does not map them
-to blocks. This is application-payload fidelity, not byte-for-byte WebSocket/TLS framing.
+One `response.create` lifecycle produces one row even if it contains hundreds of streaming
+frames. Several tool-loop `response.create` lifecycles produce several rows because each has its
+own provider response and usage. Utility, timing, rate-limit, ping/pong, and delta frames do not
+produce rows.
 
-The concrete case this was built for: **Codex CLI**, when authenticated via a ChatGPT plan
-(rather than an API key), defaults to a WebSocket transport for its private
-`chatgpt.com/backend-api/codex/responses` endpoint. Those turns show a **WS** badge in the
-dashboard instead of an HTTP status code (WebSocket connections don't carry one per turn) — an
-error envelope from the provider is still reflected via the status field. This is scoped to
-**Codex CLI specifically** — it has nothing to do with, and doesn't extend support to, the
-separate ChatGPT desktop app, which ContextSpy does not target at all.
+Codex continuations commonly send only a `previous_response_id` and the latest tool result.
+ContextSpy follows that exact ID and expands the canonical input as prior input + prior output +
+current input. The resulting context composition therefore grows in the same way as an explicitly
+expanded REST conversation. Original frames may be retained as diagnostics but are not the source
+shown in the normal request viewer.
 
-A WS-speaking provider with no registered protocol still shows up as an unsupported connection
-(logged, upgrade row suppressed) rather than a phantom `101` row — support for a new provider is
-a one-module addition, not a redesign. If you hit one, please open an issue.
+### Why can a request say that its context is partial or opaque?
+
+- **Partial** means an explicitly referenced predecessor was not captured or had already been
+  purged. ContextSpy shows the visible items and never guesses from adjacent rows.
+- **Opaque** means the provider supplied compacted, encrypted, truncated, or otherwise
+  non-inspectable state. ContextSpy preserves that provider item but cannot recover its original
+  messages.
+
+Provider-reported input/cache/output/reasoning usage remains the accounting source in both cases.
+The local composition describes the visible canonical JSON, and the detail page shows any
+unattributed/tokenizer difference. Provider-managed REST requests using `previous_response_id` or
+conversation state have the same observability limits, so switching transport alone does not make
+hidden state visible.
 
 ### Port 8888 (or 5173) is already in use
 

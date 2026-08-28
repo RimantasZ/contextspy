@@ -106,7 +106,8 @@ The proxy and dashboard server are bound to localhost, and not exposed to extern
 
 The intended use case is to run ContextSpy as a profiler tool on dedicated profiling and optimisation sessions, rather than keeping it permanently as a monitoring tool.
 
-The contents of requests (decoded/canonical payloads, stream event logs, and block contents) are purged from the database after 7 days
+The contents of requests (observed payloads, canonical request/response JSON, stream event logs,
+and block contents) are purged from the database after 7 days
 by default — configurable via `[retention]` in `~/.contextspy/config.toml`. Aggregated token counts
 and classifications are retained indefinitely. Purging only runs at server startup, not on a
 background timer, so a `contextspy` process left running for many days in a row won't purge again

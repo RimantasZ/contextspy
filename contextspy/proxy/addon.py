@@ -25,11 +25,22 @@ import uuid
 from mitmproxy import http
 
 from contextspy.analysis.adapters import get_adapter
-from contextspy.analysis.blocks import AnalyzedRequest, Usage
+from contextspy.analysis.blocks import AnalyzedRequest
 from contextspy.analysis.capture import decode_ndjson, decode_sse
 from contextspy.analysis.classifier import CategoryBreakdown, classify, per_tool_tokens
+from contextspy.analysis.invocations import (
+    CanonicalInvocation,
+    CanonicalJsonDocument,
+    analyze_invocation,
+)
 from contextspy.db import crud
 from contextspy.db.database import get_db
+from contextspy.normalization import (
+    InvocationLineageRepository,
+    ObservedInvocation,
+    PersistedCanonicalInvocation,
+    normalize_invocation,
+)
 from contextspy.proxy.ws_protocols import CompletedExchange, WsSession, get_ws_protocol
 
 if TYPE_CHECKING:
@@ -123,6 +134,16 @@ def _captured_request_text(flow) -> tuple[str | None, str | None]:
     return raw, error
 
 
+def _invocation_outcome(status_code: int | None, response_complete: bool) -> str:
+    if status_code is not None and status_code >= 400:
+        return "failed"
+    if not response_complete:
+        return "incomplete"
+    if status_code is not None and 200 <= status_code < 300:
+        return "completed"
+    return "unknown"
+
+
 # ---------------------------------------------------------------------------
 # Addon
 # ---------------------------------------------------------------------------
@@ -135,6 +156,36 @@ class _WsFlowState:
     provider: str
     agent: str
     endpoint: str
+    protocol_id: str = "unknown"
+
+
+class _DatabaseLineageRepository(InvocationLineageRepository):
+    """Resolve provider state only through explicit persisted response IDs."""
+
+    def get(
+        self, provider: str, response_id: str,
+    ) -> PersistedCanonicalInvocation | None:
+        with get_db() as db:
+            row = crud.get_request_by_provider_response_id(db, provider, response_id)
+            if row is None:
+                return None
+            request_text = row.canonical_request_body or row.raw_request_body
+            response_text = row.canonical_response_body or row.raw_response_body
+            if request_text is None:
+                return None
+            try:
+                request = CanonicalJsonDocument.from_text(request_text)
+                response = (
+                    CanonicalJsonDocument.from_text(response_text)
+                    if response_text is not None else None
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                return None
+            return PersistedCanonicalInvocation(
+                request=request,
+                response=response,
+                context_fidelity=row.context_fidelity,
+            )
 
 
 class ContextSpyAddon:
@@ -146,11 +197,90 @@ class ContextSpyAddon:
         # Keyed by flow.id — hooks run on the addon's own DumpMaster event loop
         # (single-threaded), so no locking is needed around this dict.
         self._ws_flows: dict[str, _WsFlowState] = {}
+        self._lineage = _DatabaseLineageRepository()
 
     def _get_provider(self, host: str, port: int) -> str | None:
         if self._provider_override is not None:
             return self._provider_override
         return _detect_provider(host, port)
+
+    @staticmethod
+    def _response_document(
+        payload: dict | None, canonical_text: str | None,
+    ) -> CanonicalJsonDocument | None:
+        if payload is None:
+            return None
+        if canonical_text is not None:
+            try:
+                document = CanonicalJsonDocument.from_text(canonical_text)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                pass
+            else:
+                if document.value == payload:
+                    return document
+        return CanonicalJsonDocument.from_value(payload)
+
+    def _normalize_and_analyze(
+        self,
+        *,
+        provider: str,
+        endpoint: str,
+        protocol_id: str,
+        req_body: dict,
+        raw_request_body: str | None,
+        response_payload: dict | None,
+        canonical_response_text: str | None,
+        events: list | None,
+        outcome: str,
+        capture_error: dict | None,
+    ) -> tuple[CanonicalInvocation | None, AnalyzedRequest | None, dict | None]:
+        """Cross the transport boundary once, then analyze only canonical JSON."""
+        adapter = get_adapter(endpoint)
+        if adapter is None:
+            return None, None, capture_error
+
+        observed = ObservedInvocation(
+            provider=provider,
+            provider_protocol=adapter.format_id,
+            protocol_id=protocol_id,
+            request_payload=req_body,
+            observed_request_text=raw_request_body,
+            response=self._response_document(response_payload, canonical_response_text),
+            events=tuple(events or ()),
+            outcome=outcome,
+        )
+        try:
+            canonical = normalize_invocation(observed, self._lineage)
+        except Exception as exc:
+            logger.warning("Invocation normalization error: %s", exc, exc_info=True)
+            capture_error = _add_capture_error(
+                capture_error, "invocation_normalization", exc,
+            )
+            # Preserve a replayable provider document even if provider-state
+            # expansion itself regresses.
+            try:
+                request_document = (
+                    CanonicalJsonDocument.from_text(raw_request_body)
+                    if raw_request_body is not None
+                    else CanonicalJsonDocument.from_value(req_body)
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                request_document = CanonicalJsonDocument.from_value(req_body)
+            canonical = CanonicalInvocation(
+                request=request_document,
+                response=observed.response,
+                outcome=outcome,
+                context_fidelity="partial",
+                context_notes=("Provider-state normalization failed",),
+            )
+
+        analysis = analyze_invocation(canonical, adapter)
+        for issue in analysis.issues:
+            logger.warning("Adapter %s error: %s", issue.stage, issue.error)
+            capture_error = _add_capture_error(
+                capture_error, issue.stage, issue.error,
+            )
+        return canonical, analysis.analyzed, capture_error
 
     def request(self, flow: http.HTTPFlow) -> None:
         flow.metadata["ts_start"] = time.monotonic()
@@ -298,37 +428,28 @@ class ContextSpyAddon:
                 response_complete = False
                 capture_error = _add_capture_error(capture_error, "sse_reconstruction", exc)
 
-            input_blocks = []
-            tool_call_map: dict[str, str] = {}
-            output_blocks = []
-            usage = Usage()
-            try:
-                input_blocks, tool_call_map = adapter.parse_request(req_body)
-            except Exception as exc:
-                logger.warning("Adapter request parse error (sse): %s", exc, exc_info=True)
-                capture_error = _add_capture_error(capture_error, "request_analysis", exc)
-            if canonical_payload is not None:
-                try:
-                    output_blocks, usage = adapter.parse_response(canonical_payload)
-                except Exception as exc:
-                    logger.warning("Adapter response parse error (sse): %s", exc, exc_info=True)
-                    capture_error = _add_capture_error(capture_error, "response_analysis", exc)
-            analyzed = AnalyzedRequest(
-                model=req_body.get("model"),
-                input_blocks=input_blocks,
-                output_blocks=output_blocks,
-                usage=usage,
-                tool_call_map=tool_call_map,
-            )
+        status_code = flow.response.status_code if flow.response else None
+        canonical_invocation, analyzed, capture_error = self._normalize_and_analyze(
+            provider=provider,
+            endpoint=endpoint,
+            protocol_id="http_sse",
+            req_body=req_body,
+            raw_request_body=raw_request_body,
+            response_payload=canonical_payload,
+            canonical_response_text=raw_resp_text if canonical_payload is not None else None,
+            events=events,
+            outcome=_invocation_outcome(status_code, response_complete),
+            capture_error=capture_error,
+        )
 
         self._save_request(
             provider=provider, agent=agent, endpoint=endpoint, req_body=req_body,
             analyzed=analyzed, duration_ms=duration_ms, raw_resp_text=raw_resp_text,
-            status_code=flow.response.status_code if flow.response else None,
+            status_code=status_code,
             raw_request_body=raw_request_body, ttft_ms=ttft_ms,
             response_transport="sse", response_reconstructed=response_reconstructed,
             response_complete=response_complete, response_events=response_events,
-            capture_error=capture_error,
+            capture_error=capture_error, canonical=canonical_invocation,
         )
         flow.metadata["contextspy_saved"] = True
 
@@ -417,6 +538,7 @@ class ContextSpyAddon:
             )
         raw_resp_text = resp_text
         canonical_payload = resp_body
+        events = []
         if is_sse or is_ndjson:
             events = decode_sse(resp_text.encode("utf-8")) if is_sse else decode_ndjson(
                 resp_text.encode("utf-8")
@@ -441,46 +563,38 @@ class ContextSpyAddon:
                     capture_error = _add_capture_error(
                         capture_error, "response_reconstruction", exc,
                     )
-        if adapter is not None:
-            input_blocks = []
-            tool_call_map: dict[str, str] = {}
-            output_blocks = []
-            usage = Usage()
-            try:
-                input_blocks, tool_call_map = adapter.parse_request(req_body)
-            except Exception as exc:
-                logger.warning("Adapter request parse error: %s", exc, exc_info=True)
-                capture_error = _add_capture_error(capture_error, "request_analysis", exc)
-            if canonical_payload is not None:
-                try:
-                    output_blocks, usage = adapter.parse_response(canonical_payload)
-                except Exception as exc:
-                    logger.warning("Adapter response parse error: %s", exc, exc_info=True)
-                    capture_error = _add_capture_error(capture_error, "response_analysis", exc)
-            elif response_is_json:
-                capture_error = _add_capture_error(
-                    capture_error,
-                    "response_shape",
-                    "JSON response is not an object",
-                )
-            analyzed = AnalyzedRequest(
-                model=req_body.get("model"),
-                input_blocks=input_blocks,
-                output_blocks=output_blocks,
-                usage=usage,
-                tool_call_map=tool_call_map,
+        if canonical_payload is None and response_is_json:
+            capture_error = _add_capture_error(
+                capture_error,
+                "response_shape",
+                "JSON response is not an object",
             )
+
+        status_code = flow.response.status_code if flow.response else None
+        canonical_invocation, analyzed, capture_error = self._normalize_and_analyze(
+            provider=provider,
+            endpoint=endpoint,
+            protocol_id=f"http_{response_transport}",
+            req_body=req_body,
+            raw_request_body=raw_request_body,
+            response_payload=canonical_payload,
+            canonical_response_text=raw_resp_text if canonical_payload is not None else None,
+            events=events,
+            outcome=_invocation_outcome(status_code, response_complete),
+            capture_error=capture_error,
+        )
 
         self._save_request(
             provider=provider, agent=agent, endpoint=endpoint, req_body=req_body,
             analyzed=analyzed, duration_ms=duration_ms, raw_resp_text=raw_resp_text,
-            status_code=flow.response.status_code if flow.response else None,
+            status_code=status_code,
             raw_request_body=raw_request_body,
             response_transport=response_transport,
             response_reconstructed=response_reconstructed,
             response_complete=response_complete,
             response_events=response_events,
             capture_error=capture_error,
+            canonical=canonical_invocation,
         )
         flow.metadata["contextspy_saved"] = True
 
@@ -492,7 +606,8 @@ class ContextSpyAddon:
                       response_reconstructed: bool = False,
                       response_complete: bool = True,
                       response_events: str | None = None,
-                      capture_error: dict | None = None) -> None:
+                      capture_error: dict | None = None,
+                      canonical: CanonicalInvocation | None = None) -> None:
         # Skip non-LLM endpoints (telemetry, auth, health checks, etc.)
         # Only persist requests that we could actually parse OR that look like
         # known LLM API paths so telemetry traffic is not stored as empty rows.
@@ -523,6 +638,16 @@ class ContextSpyAddon:
             usage_extra = None
 
         with get_db() as db:
+            if canonical is not None and canonical.provider_response_id:
+                existing = crud.get_request_by_provider_response_id(
+                    db, provider, canonical.provider_response_id,
+                )
+                if existing is not None:
+                    logger.debug(
+                        "Skipping duplicate provider response %s",
+                        canonical.provider_response_id,
+                    )
+                    return
             active_session = crud.get_active_session(db)
             session_id = active_session.id if active_session else None
 
@@ -542,6 +667,24 @@ class ContextSpyAddon:
                 "response_reconstructed": int(response_reconstructed),
                 "response_complete": int(response_complete),
                 "capture_error": json.dumps(capture_error) if capture_error else None,
+                "canonical_request_body": canonical.request.text if canonical else None,
+                "canonical_response_body": (
+                    canonical.response.text if canonical and canonical.response else None
+                ),
+                "provider_response_id": canonical.provider_response_id if canonical else None,
+                "predecessor_response_id": (
+                    canonical.predecessor_response_id if canonical else None
+                ),
+                "invocation_outcome": (
+                    canonical.outcome if canonical else _invocation_outcome(
+                        status_code, response_complete,
+                    )
+                ),
+                "context_fidelity": canonical.context_fidelity if canonical else "complete",
+                "context_notes": (
+                    json.dumps(canonical.context_notes)
+                    if canonical and canonical.context_notes else None
+                ),
                 "provider_input_tokens": provider_input,
                 "provider_output_tokens": provider_output,
                 "provider_reasoning_tokens": provider_reasoning,
@@ -615,7 +758,7 @@ class ContextSpyAddon:
         agent = _detect_agent(f"{user_agent} {originator}".strip())
         self._ws_flows[flow.id] = _WsFlowState(
             session=protocol.new_session(), provider=provider, agent=agent,
-            endpoint=flow.request.path,
+            endpoint=flow.request.path, protocol_id=protocol.protocol_id,
         )
         logger.debug(
             "HOOK websocket_start: %s %s provider=%s agent=%s protocol=%s",
@@ -696,19 +839,20 @@ class ContextSpyAddon:
             req_body = {}
             capture_error = _add_capture_error(capture_error, "request_decode", exc)
 
-        analyzed: AnalyzedRequest | None = None
-        adapter = get_adapter(endpoint)
         if request_capture_error:
             capture_error["request_capture"] = request_capture_error
-        if adapter is not None:
-            try:
-                input_blocks, tool_call_map = adapter.parse_request(req_body)
-                analyzed = AnalyzedRequest(
-                    model=req_body.get("model"), input_blocks=input_blocks,
-                    output_blocks=[], usage=Usage(), tool_call_map=tool_call_map,
-                )
-            except Exception as exc:
-                capture_error["request_analysis"] = str(exc)
+        canonical_invocation, analyzed, capture_error = self._normalize_and_analyze(
+            provider=provider,
+            endpoint=endpoint,
+            protocol_id="http_error",
+            req_body=req_body,
+            raw_request_body=raw_request_body,
+            response_payload=None,
+            canonical_response_text=None,
+            events=[],
+            outcome="failed",
+            capture_error=capture_error,
+        )
 
         user_agent = flow.request.headers.get("user-agent", "")
         self._save_request(
@@ -724,6 +868,7 @@ class ContextSpyAddon:
             response_transport="none",
             response_complete=False,
             capture_error=capture_error,
+            canonical=canonical_invocation,
         )
         flow.metadata["contextspy_saved"] = True
 
@@ -735,6 +880,7 @@ class ContextSpyAddon:
         response_complete = ex.complete
         capture_error: dict | None = None
         captured_events = ex.events
+        canonical_payload: dict | None = None
         raw_resp_text = json.dumps(
             [event.to_dict() for event in captured_events], ensure_ascii=False,
         )
@@ -745,56 +891,43 @@ class ContextSpyAddon:
 
         if adapter is not None:
             try:
-                input_blocks, tool_call_map = adapter.parse_request(ex.request_body)
-            except Exception as exc:
-                logger.warning("WS adapter parse_request error: %s", exc, exc_info=True)
-                input_blocks, tool_call_map = [], {}
-                capture_error = _add_capture_error(capture_error, "request_analysis", exc)
-
-            canonical_payload: dict | None = None
-            try:
-                canonical = adapter.reconstruct_response(
+                canonical_response = adapter.reconstruct_response(
                     captured_events, transport="websocket",
                 )
-                canonical.complete = ex.complete
-                if ex.error and canonical.error is None:
-                    canonical.error = ex.error
-                canonical_payload = canonical.payload
-                raw_resp_text = json.dumps(canonical.payload, ensure_ascii=False)
-                response_reconstructed = canonical.reconstructed
-                response_complete = canonical.complete
+                canonical_response.complete = ex.complete
+                if ex.error and canonical_response.error is None:
+                    canonical_response.error = ex.error
+                canonical_payload = canonical_response.payload
+                raw_resp_text = json.dumps(canonical_response.payload, ensure_ascii=False)
+                response_reconstructed = canonical_response.reconstructed
+                response_complete = canonical_response.complete
             except Exception as exc:
                 logger.warning("WS response reconstruction error: %s", exc, exc_info=True)
                 response_complete = False
-                output_blocks, usage = [], Usage()
                 capture_error = _add_capture_error(
                     capture_error, "websocket_reconstruction", exc,
                 )
 
-            if canonical_payload is not None:
-                try:
-                    output_blocks, usage = adapter.parse_response(canonical_payload)
-                except Exception as exc:
-                    logger.warning("WS response parse error: %s", exc, exc_info=True)
-                    output_blocks, usage = [], Usage()
-                    capture_error = _add_capture_error(
-                        capture_error, "response_analysis", exc,
-                    )
-            else:
-                output_blocks, usage = [], Usage()
-
+        outcome = getattr(ex, "outcome", "unknown")
+        if outcome == "unknown":
             if ex.error:
-                usage.extra["ws_error"] = ex.error
-            if not ex.complete:
-                usage.extra["ws_incomplete"] = True
-
-            analyzed = AnalyzedRequest(
-                model=ex.request_body.get("model"),
-                input_blocks=input_blocks,
-                output_blocks=output_blocks,
-                usage=usage,
-                tool_call_map=tool_call_map,
-            )
+                outcome = "failed"
+            elif not ex.complete:
+                outcome = "incomplete"
+            else:
+                outcome = "completed"
+        canonical_invocation, analyzed, capture_error = self._normalize_and_analyze(
+            provider=state.provider,
+            endpoint=state.endpoint,
+            protocol_id=state.protocol_id,
+            req_body=ex.request_body,
+            raw_request_body=ex.raw_request_text,
+            response_payload=canonical_payload,
+            canonical_response_text=raw_resp_text if canonical_payload is not None else None,
+            events=captured_events,
+            outcome=outcome,
+            capture_error=capture_error,
+        )
 
         duration_ms: int | None = None
         if ex.request_ts is not None and ex.last_event_ts is not None:
@@ -821,4 +954,5 @@ class ContextSpyAddon:
             response_complete=response_complete,
             response_events=response_events,
             capture_error=capture_error,
+            canonical=canonical_invocation,
         )

@@ -57,6 +57,13 @@ def _migrate(engine) -> None:
         ("requests", "response_complete", "INTEGER NOT NULL DEFAULT 0"),
         ("requests", "capture_error", "TEXT"),
         ("requests", "response_events", "TEXT"),
+        ("requests", "canonical_request_body", "TEXT"),
+        ("requests", "canonical_response_body", "TEXT"),
+        ("requests", "provider_response_id", "TEXT"),
+        ("requests", "predecessor_response_id", "TEXT"),
+        ("requests", "invocation_outcome", "TEXT NOT NULL DEFAULT 'unknown'"),
+        ("requests", "context_fidelity", "TEXT NOT NULL DEFAULT 'complete'"),
+        ("requests", "context_notes", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_columns:
@@ -66,6 +73,15 @@ def _migrate(engine) -> None:
             except Exception:
                 # Column already exists — ignore
                 pass
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_requests_provider_response "
+            "ON requests (provider, provider_response_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_requests_predecessor_response "
+            "ON requests (predecessor_response_id)"
+        ))
+        conn.commit()
 
 
 def get_engine():
@@ -116,10 +132,14 @@ def startup_vacuum(settings=None) -> None:
                     UPDATE requests
                     SET raw_request_body = NULL,
                         raw_response_body = NULL,
+                        canonical_request_body = NULL,
+                        canonical_response_body = NULL,
                         response_events = NULL
                     WHERE timestamp < :cutoff
                       AND (raw_request_body IS NOT NULL
                            OR raw_response_body IS NOT NULL
+                           OR canonical_request_body IS NOT NULL
+                           OR canonical_response_body IS NOT NULL
                            OR response_events IS NOT NULL)
                     """
                 ),

@@ -34,12 +34,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, ToolStat
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_VERSION_KEY = "schema_version"
 _PENDING_KEY = "pending_data_migrations"
@@ -291,6 +291,262 @@ def _migrate_to_v2(db: OrmSession) -> None:
     _backfill_blocks_from_raw_bodies(db)
 
 
+# ---------------------------------------------------------------------------
+# v3: retain canonical provider JSON independently from transport evidence
+# ---------------------------------------------------------------------------
+
+def _is_json_object(text_value: str | None) -> bool:
+    if not text_value:
+        return False
+    try:
+        return isinstance(json.loads(text_value), dict)
+    except (json.JSONDecodeError, TypeError):
+        return False
+
+
+def _backfill_canonical_bodies(db: OrmSession) -> None:
+    rows = db.execute(select(Request)).scalars().all()
+    for row in rows:
+        if row.canonical_request_body is None and _is_json_object(row.raw_request_body):
+            row.canonical_request_body = row.raw_request_body
+        if row.canonical_response_body is None and _is_json_object(row.raw_response_body):
+            row.canonical_response_body = row.raw_response_body
+
+        if row.invocation_outcome == "unknown":
+            if row.status_code is not None and row.status_code >= 400:
+                row.invocation_outcome = "failed"
+            elif row.status_code is not None and 200 <= row.status_code < 300:
+                row.invocation_outcome = "completed"
+            elif row.transport == "websocket" and not row.response_complete:
+                row.invocation_outcome = "incomplete"
+
+        # Old stateful rows contain only the sparse observed request. Retain it
+        # for diagnostics but do not present it as a complete reconstructed
+        # context until an exact-ID backfill has actually expanded the chain.
+        if row.transport == "websocket" and row.canonical_request_body:
+            try:
+                request_value = json.loads(row.canonical_request_body)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            predecessor = request_value.get("previous_response_id")
+            if isinstance(predecessor, str) and predecessor:
+                row.predecessor_response_id = row.predecessor_response_id or predecessor
+                row.context_fidelity = "partial"
+                if row.context_notes is None:
+                    row.context_notes = json.dumps([
+                        "Existing capture has not been reconstructed from its predecessor"
+                    ])
+    db.flush()
+
+
+def _decode_captured_events(value: str | None):
+    from contextspy.analysis.capture import CapturedEvent
+
+    if not value:
+        return []
+    try:
+        raw_events = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(raw_events, list):
+        return []
+    fields = {
+        "sequence", "direction", "kind", "payload", "text", "event",
+        "event_id", "retry_ms", "comments", "done",
+    }
+    events = []
+    for index, raw_event in enumerate(raw_events):
+        if not isinstance(raw_event, dict):
+            continue
+        data = {key: value for key, value in raw_event.items() if key in fields}
+        data.setdefault("sequence", index)
+        events.append(CapturedEvent(**data))
+    return events
+
+
+def _backfill_responses_websocket_rows(db: OrmSession) -> None:
+    """Rebuild retained WS rows only through exact Responses provider IDs."""
+    from dataclasses import replace
+
+    from contextspy.analysis.adapters import get_adapter
+    from contextspy.analysis.classifier import classify, per_tool_tokens
+    from contextspy.analysis.invocations import (
+        CanonicalJsonDocument,
+        analyze_invocation,
+    )
+    from contextspy.db.crud import insert_blocks, upsert_tool_stats
+    from contextspy.normalization import (
+        ObservedInvocation,
+        PersistedCanonicalInvocation,
+        normalize_invocation,
+    )
+
+    class MemoryLineage:
+        def __init__(self) -> None:
+            self.values: dict[tuple[str, str], PersistedCanonicalInvocation] = {}
+
+        def get(self, provider: str, response_id: str):
+            return self.values.get((provider, response_id))
+
+        def put(self, provider: str, response_id: str, value) -> None:
+            self.values[(provider, response_id)] = value
+
+    candidates = []
+    rows = db.execute(
+        select(Request).where(Request.transport == "websocket")
+    ).scalars().all()
+    for row in rows:
+        adapter = get_adapter(row.endpoint)
+        if adapter is None or adapter.format_id != "openai_responses":
+            continue
+        request_text = row.raw_request_body or row.canonical_request_body
+        if not request_text:
+            continue
+        try:
+            request_payload = json.loads(request_text)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(request_payload, dict):
+            continue
+
+        events = _decode_captured_events(row.response_events)
+        response_document = None
+        if events:
+            try:
+                reconstructed = adapter.reconstruct_response(events, transport="websocket")
+                response_document = CanonicalJsonDocument.from_value(reconstructed.payload)
+            except Exception:
+                response_document = None
+        if response_document is None:
+            response_text = row.canonical_response_body or row.raw_response_body
+            if response_text:
+                try:
+                    response_document = CanonicalJsonDocument.from_text(response_text)
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    response_document = None
+
+        predecessor = request_payload.get("previous_response_id")
+        predecessor = predecessor if isinstance(predecessor, str) and predecessor else None
+        candidates.append((row, adapter, request_text, request_payload, events, response_document, predecessor))
+
+    lineage = MemoryLineage()
+    pending = list(candidates)
+
+    def apply_candidate(candidate, *, allow_missing: bool) -> bool:
+        row, adapter, request_text, request_payload, events, response_document, predecessor = candidate
+        if predecessor and lineage.get(row.provider, predecessor) is None and not allow_missing:
+            return False
+        outcome = row.invocation_outcome
+        if outcome == "unknown":
+            if row.status_code is not None and row.status_code >= 400:
+                outcome = "failed"
+            elif not row.response_complete:
+                outcome = "incomplete"
+            else:
+                response_status = response_document.value.get("status") if response_document else None
+                outcome = (
+                    "failed" if response_status == "failed"
+                    else "incomplete" if response_status == "incomplete"
+                    else "completed"
+                )
+
+        canonical = normalize_invocation(
+            ObservedInvocation(
+                provider=row.provider,
+                provider_protocol=adapter.format_id,
+                protocol_id="codex_responses",
+                request_payload=request_payload,
+                observed_request_text=request_text,
+                response=response_document,
+                events=tuple(events),
+                outcome=outcome,
+            ),
+            lineage,
+        )
+        if (
+            not events
+            and canonical.response is not None
+            and canonical.response.value.get("output") == []
+            and canonical.context_fidelity == "complete"
+        ):
+            canonical = replace(
+                canonical,
+                context_fidelity="partial",
+                context_notes=canonical.context_notes + (
+                    "The retained response has no output-event evidence",
+                ),
+            )
+        analysis = analyze_invocation(canonical, adapter)
+
+        row.canonical_request_body = canonical.request.text
+        row.canonical_response_body = canonical.response.text if canonical.response else None
+        row.provider_response_id = canonical.provider_response_id
+        row.predecessor_response_id = canonical.predecessor_response_id
+        row.invocation_outcome = canonical.outcome
+        row.context_fidelity = canonical.context_fidelity
+        row.context_notes = json.dumps(canonical.context_notes) if canonical.context_notes else None
+
+        # A provider-schema parser failure should not destroy previously useful
+        # derived data. Canonical bodies remain retained for a later retry.
+        if not analysis.issues:
+            analyzed = analysis.analyzed
+            breakdown = classify(analyzed)
+            for field, value in breakdown.to_db_fields().items():
+                setattr(row, field, value)
+            row.model = analyzed.model
+            row.provider_input_tokens = analyzed.usage.input_tokens
+            row.provider_output_tokens = analyzed.usage.output_tokens
+            row.provider_reasoning_tokens = analyzed.usage.reasoning_tokens
+            row.cache_read_tokens = analyzed.usage.cache_read_tokens
+            row.cache_creation_tokens = analyzed.usage.cache_creation_tokens
+            row.usage_extra = (
+                json.dumps(analyzed.usage.extra) if analyzed.usage.extra else None
+            )
+            db.execute(delete(BlockRecord).where(BlockRecord.request_id == row.id))
+            db.execute(delete(ToolStat).where(ToolStat.request_id == row.id))
+            all_blocks = analyzed.input_blocks + analyzed.output_blocks
+            if all_blocks:
+                insert_blocks(db, row.id, all_blocks)
+            tool_rows = per_tool_tokens(analyzed)
+            if tool_rows:
+                upsert_tool_stats(db, row.id, tool_rows)
+
+        if canonical.provider_response_id:
+            lineage.put(
+                row.provider,
+                canonical.provider_response_id,
+                PersistedCanonicalInvocation(
+                    request=canonical.request,
+                    response=canonical.response,
+                    context_fidelity=canonical.context_fidelity,
+                ),
+            )
+        return True
+
+    # Roots and resolved descendants first. Remaining nodes are normalized as
+    # explicitly partial; no adjacency or timestamp inference is permitted.
+    while pending:
+        next_pending = []
+        progressed = False
+        for candidate in pending:
+            if apply_candidate(candidate, allow_missing=False):
+                progressed = True
+            else:
+                next_pending.append(candidate)
+        pending = next_pending
+        if not progressed:
+            break
+    for candidate in pending:
+        apply_candidate(candidate, allow_missing=True)
+    db.flush()
+
+
+def _migrate_to_v3(db: OrmSession) -> None:
+    _backfill_canonical_bodies(db)
+    _backfill_responses_websocket_rows(db)
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
+    3: _migrate_to_v3,
 }

@@ -132,6 +132,20 @@ def get_request(db: OrmSession, request_id: str) -> Request | None:
     return db.get(Request, request_id)
 
 
+def get_request_by_provider_response_id(
+    db: OrmSession, provider: str, response_id: str,
+) -> Request | None:
+    """Resolve explicit provider lineage without relying on row adjacency."""
+    return db.execute(
+        select(Request)
+        .where(
+            Request.provider == provider,
+            Request.provider_response_id == response_id,
+        )
+        .order_by(Request.timestamp.desc())
+    ).scalars().first()
+
+
 _SORT_COLUMNS = {
     'timestamp': Request.timestamp,
     'tokens_total_input': Request.tokens_total_input,
@@ -179,11 +193,15 @@ def list_requests(
             )
         )
     if status_category == "success":
-        stmt = stmt.where(Request.status_code >= 200, Request.status_code < 300)
+        stmt = stmt.where(or_(
+            Request.invocation_outcome == "completed",
+            (Request.status_code >= 200) & (Request.status_code < 300),
+        ))
     elif status_category == "error":
-        stmt = stmt.where(
-            or_(Request.status_code == None, Request.status_code >= 400)  # noqa: E711
-        )
+        stmt = stmt.where(or_(
+            Request.invocation_outcome == "failed",
+            Request.status_code >= 400,
+        ))
     col = Session.name if sort_by == 'session' else _SORT_COLUMNS.get(sort_by, Request.timestamp)
     stmt = stmt.order_by(col.asc() if sort_dir == 'asc' else col.desc())
     stmt = stmt.limit(limit).offset(offset)
@@ -266,15 +284,22 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         "max_ms": latency_vals[-1] if latency_vals else None,
     }
 
-    # by_status (exact HTTP status codes)
+    # Preserve exact HTTP codes when present, otherwise use the
+    # transport-neutral provider invocation outcome.
     by_status: dict[str, int] = {}
     for r in rows:
-        key = str(r.status_code) if r.status_code is not None else "unknown"
+        key = str(r.status_code) if r.status_code is not None else r.invocation_outcome
         by_status[key] = by_status.get(key, 0) + 1
 
-    # error/unknown counts derived from by_status (status_code >= 400 is an error)
-    error_count = sum(n for code, n in by_status.items() if code != "unknown" and int(code) >= 400)
-    unknown_status_count = by_status.get("unknown", 0)
+    error_count = sum(
+        1 for r in rows
+        if r.invocation_outcome == "failed"
+        or (r.status_code is not None and r.status_code >= 400)
+    )
+    unknown_status_count = sum(
+        1 for r in rows
+        if r.status_code is None and r.invocation_outcome == "unknown"
+    )
 
     # session timing derived from request timestamps
     timestamps = [r.timestamp for r in rows]

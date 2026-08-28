@@ -1,4 +1,6 @@
 import sqlite3
+import json
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -19,7 +21,7 @@ def test_inspect_migration_state_is_read_only_for_legacy_database(tmp_path):
     version_from, pending = migrations.inspect_migration_state(db_path)
 
     assert version_from == 1
-    assert pending == [2]
+    assert pending == [2, 3]
     assert db_path.read_bytes() == original_bytes
     with sqlite3.connect(db_path) as conn:
         tables = {
@@ -75,7 +77,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
     settings = Settings(config_dir=tmp_path)
     settings.storage.db_path = db_path
     monkeypatch.setattr(Settings, "load", classmethod(lambda cls: settings))
-    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2]))
+    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3]))
 
     events = []
     real_create_backup = migrations.create_migration_backup
@@ -98,8 +100,8 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
         yield object()
 
     monkeypatch.setattr(migrations, "create_migration_backup", create_backup)
-    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2])
-    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2])
+    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3])
+    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3])
     monkeypatch.setattr(database, "init_db", init_db)
     monkeypatch.setattr(database, "get_db", get_db)
 
@@ -113,7 +115,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
 
     cli.db_upgrade()
 
-    backup_path = tmp_path / "profile_backup_v1_to_v2_2026-08-27-0000.back"
+    backup_path = tmp_path / "profile_backup_v1_to_v3_2026-08-27-0000.back"
     assert events == ["backup", "init"]
     assert backup_path.read_bytes() == original_bytes
     assert db_path.read_bytes() == b"database changed by init"
@@ -138,3 +140,119 @@ def test_list_migration_backups_only_returns_backups_for_database(tmp_path):
     (tmp_path / "other_1_2_20260827T000000000000Z.back").write_bytes(b"other db")
 
     assert migrations.list_migration_backups(db_path) == matching
+
+
+def test_v3_backfill_retains_canonical_json_and_marks_sparse_ws_partial(tmp_path):
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "canonical_backfill.db")
+    request_text = json.dumps({
+        "type": "response.create",
+        "previous_response_id": "resp_previous",
+        "input": [{"type": "custom_tool_call_output", "output": "result"}],
+    })
+    response_text = json.dumps({"id": "resp_current", "output": []})
+
+    with get_db() as db:
+        row = crud.create_request(db, {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc),
+            "provider": "openai_chatgpt",
+            "endpoint": "/backend-api/codex/responses",
+            "transport": "websocket",
+            "response_complete": 1,
+            "raw_request_body": request_text,
+            "raw_response_body": response_text,
+        })
+        request_id = row.id
+
+    with get_db() as db:
+        migrations._backfill_canonical_bodies(db)
+
+    with get_db() as db:
+        row = crud.get_request(db, request_id)
+        assert row is not None
+        assert row.canonical_request_body == request_text
+        assert row.canonical_response_body == response_text
+        assert row.predecessor_response_id == "resp_previous"
+        assert row.context_fidelity == "partial"
+
+
+def test_v3_backfill_reconstructs_exact_websocket_lineage_and_blocks(tmp_path):
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "lineage_backfill.db")
+
+    def event_text(events):
+        return json.dumps([
+            {"sequence": index, "direction": "server_to_client", "kind": "json", "payload": event}
+            for index, event in enumerate(events)
+        ])
+
+    root_request = json.dumps({
+        "type": "response.create",
+        "model": "gpt-test",
+        "tools": [{"type": "custom", "name": "shell"}],
+        "input": [{"role": "user", "content": "where am I?"}],
+    })
+    root_events = event_text([
+        {"type": "response.created", "response": {"id": "resp_root", "output": []}},
+        {"type": "response.output_item.done", "output_index": 0, "item": {
+            "type": "custom_tool_call", "call_id": "call_1", "name": "shell", "input": "pwd",
+        }},
+        {"type": "response.completed", "response": {
+            "id": "resp_root", "output": [],
+            "usage": {"input_tokens": 20, "output_tokens": 4},
+        }},
+    ])
+    child_request = json.dumps({
+        "type": "response.create",
+        "previous_response_id": "resp_root",
+        "model": "gpt-test",
+        "tools": [{"type": "custom", "name": "shell"}],
+        "input": [{
+            "type": "custom_tool_call_output", "call_id": "call_1", "output": "/project",
+        }],
+    })
+    child_events = event_text([
+        {"type": "response.created", "response": {"id": "resp_child", "output": []}},
+        {"type": "response.completed", "response": {
+            "id": "resp_child", "output": [],
+            "usage": {"input_tokens": 40, "output_tokens": 2},
+        }},
+    ])
+
+    with get_db() as db:
+        for request_text, response_id, events in (
+            (child_request, "resp_child", child_events),
+            (root_request, "resp_root", root_events),
+        ):
+            crud.create_request(db, {
+                "id": str(uuid.uuid4()),
+                "timestamp": datetime.now(timezone.utc),
+                "provider": "openai_chatgpt",
+                "endpoint": "/backend-api/codex/responses",
+                "transport": "websocket",
+                "response_complete": 1,
+                "raw_request_body": request_text,
+                "raw_response_body": json.dumps({"id": response_id, "output": []}),
+                "response_events": events,
+            })
+
+    with get_db() as db:
+        migrations._migrate_to_v3(db)
+
+    with get_db() as db:
+        child = crud.get_request_by_provider_response_id(
+            db, "openai_chatgpt", "resp_child",
+        )
+        assert child is not None
+        canonical = json.loads(child.canonical_request_body)
+        blocks = crud.get_blocks(db, child.id)
+        assert [item.get("type", "message") for item in canonical["input"]] == [
+            "message", "custom_tool_call", "custom_tool_call_output",
+        ]
+        assert child.context_fidelity == "complete"
+        assert any(block["block_type"] == "tool_result" for block in blocks)

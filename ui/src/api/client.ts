@@ -52,6 +52,11 @@ export interface Request {
   response_reconstructed: boolean
   response_complete: boolean
   capture_error: Record<string, unknown> | null
+  provider_response_id: string | null
+  predecessor_response_id: string | null
+  invocation_outcome: 'completed' | 'failed' | 'incomplete' | 'unknown'
+  context_fidelity: 'complete' | 'partial' | 'opaque'
+  context_notes: string[]
   tokens_system_prompt: number
   tokens_tool_definitions: number
   tokens_tool_results: number
@@ -72,8 +77,21 @@ export interface Request {
   usage_extra: Record<string, unknown> | null
   session_seq: number | null
   tokenizer: string
+  context_accounting: {
+    visible_input_tokens: number
+    provider_input_tokens: number | null
+    cached_input_tokens: number | null
+    cache_write_tokens: number | null
+    unattributed_difference: number | null
+    visible_coverage_pct: number | null
+    cached_share_pct: number | null
+  }
   raw_request_body?: string | null
   raw_response_body?: string | null
+  canonical_request_body?: string | null
+  canonical_response_body?: string | null
+  request_body?: string | null
+  response_body?: string | null
   response_events?: unknown[] | null
 }
 

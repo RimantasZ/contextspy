@@ -96,6 +96,7 @@ class CodexResponsesSession(WsSession):
         flushed: list[CompletedExchange] = []
         if self._pending is not None:
             self._pending.complete = False
+            self._pending.outcome = "incomplete"
             flushed.append(self._pending)
         self._pending = CompletedExchange(
             request_body=obj, raw_request_text=text, request_ts=timestamp,
@@ -127,6 +128,7 @@ class CodexResponsesSession(WsSession):
                 "message": error_obj.get("message"),
             }
             pending.complete = True
+            pending.outcome = "failed"
             self._pending = None
             return [pending]
         if etype in ("response.completed", "response.failed", "response.incomplete"):
@@ -142,6 +144,11 @@ class CodexResponsesSession(WsSession):
                     "message": response_error.get("message"),
                 }
             pending.complete = True
+            pending.outcome = {
+                "response.completed": "completed",
+                "response.failed": "failed",
+                "response.incomplete": "incomplete",
+            }[etype]
             self._pending = None
             return [pending]
         return []
@@ -174,6 +181,7 @@ class CodexResponsesSession(WsSession):
             return []
         pending = self._pending
         pending.complete = False
+        pending.outcome = "incomplete"
         self._pending = None
         return [pending]
 
