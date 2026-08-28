@@ -852,6 +852,52 @@ class TestAnthropicThinking:
         assert tool_block.attrs.get("cache_control") == {"type": "ephemeral"}
         assert user_block.attrs.get("cache_control") == {"type": "ephemeral"}
 
+    def test_tool_result_with_tool_reference_is_preserved(self):
+        """Claude Code can return structural references inside tool results."""
+        req = {
+            "model": "claude-sonnet-5",
+            "messages": [
+                {"role": "assistant", "content": [{
+                    "type": "tool_use",
+                    "id": "call-1",
+                    "name": "read_file",
+                    "input": {"path": "README.md"},
+                }]},
+                {"role": "user", "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "call-1",
+                    "content": [{
+                        "type": "tool_reference",
+                        "tool_name": "read_file",
+                    }],
+                }]},
+            ],
+        }
+
+        blocks, tool_call_map = self.adapter.parse_request(req)
+
+        result = next(b for b in blocks if b.block_type == BlockType.TOOL_RESULT)
+        assert json.loads(result.content) == {
+            "type": "tool_reference",
+            "tool_name": "read_file",
+        }
+        assert result.tool_name == "read_file"
+        assert tool_call_map == {"call-1": "read_file"}
+
+    def test_system_role_inside_messages_is_a_system_prompt(self):
+        req = {
+            "model": "claude-sonnet-5",
+            "messages": [
+                {"role": "user", "content": "Start"},
+                {"role": "system", "content": "Use the following tool reference."},
+            ],
+        }
+
+        blocks, _ = self.adapter.parse_request(req)
+
+        system = next(b for b in blocks if b.content == "Use the following tool reference.")
+        assert system.block_type == BlockType.SYSTEM_PROMPT
+
 
 # ---------------------------------------------------------------------------
 # Anthropic adapter — assistant prefill

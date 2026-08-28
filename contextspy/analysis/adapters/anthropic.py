@@ -77,7 +77,10 @@ class AnthropicAdapter(WireFormatAdapter):
             role = msg.get("role", "user")
             content = msg.get("content", "")
             is_prefill = is_prefill_msg = (i == len(raw_messages) - 1 and is_last_assistant)
-            msg_block_type = BlockType.ASSISTANT_MESSAGE if role == "assistant" else BlockType.USER_MESSAGE
+            msg_block_type = {
+                "assistant": BlockType.ASSISTANT_MESSAGE,
+                "system": BlockType.SYSTEM_PROMPT,
+            }.get(role, BlockType.USER_MESSAGE)
 
             if isinstance(content, str):
                 if content:
