@@ -83,6 +83,10 @@ current input. The resulting context composition therefore grows in the same way
 expanded REST conversation. Original frames may be retained as diagnostics but are not the source
 shown in the normal request viewer.
 
+See [REST, streaming, and WebSocket request handling](transport-normalization.md) for the complete
+invocation, reconstruction, storage, and token-accounting model, including why a reconstructed
+Codex response can be much larger than a Claude REST response.
+
 ### Why can a request say that its context is partial or opaque?
 
 - **Partial** means an explicitly referenced predecessor was not captured or had already been

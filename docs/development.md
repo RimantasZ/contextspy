@@ -111,6 +111,9 @@ Reconstruction and block-analysis failures are recorded in `capture_error` witho
 canonical application payload. The UI's JSON is provider-level application content, not
 byte-identical compressed/chunked network traffic.
 
+The user-facing behavior and storage implications are described in
+[REST, streaming, and WebSocket request handling](transport-normalization.md).
+
 ### Context fidelity
 
 Each invocation records one of three fidelity states:
