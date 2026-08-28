@@ -71,23 +71,20 @@ function SortHeader({
   );
 }
 
-function statusBadge(code: number | null) {
-  if (code === null) return null;
+function statusBadge(code: number | null, outcome: Request['invocation_outcome']) {
+  if (code === null && outcome === 'unknown') return null;
   let cls = 'bg-gray-700 text-gray-400';
-  if (code >= 200 && code < 300) cls = 'bg-green-900 text-green-300';
-  else if (code >= 400 && code < 500) cls = 'bg-orange-900 text-orange-300';
-  else if (code >= 500) cls = 'bg-red-900 text-red-300';
+  if (outcome === 'completed' || (code !== null && code >= 200 && code < 300)) {
+    cls = 'bg-green-900 text-green-300';
+  } else if (outcome === 'failed' || (code !== null && code >= 500)) {
+    cls = 'bg-red-900 text-red-300';
+  } else if (outcome === 'incomplete' || (code !== null && code >= 400)) {
+    cls = 'bg-orange-900 text-orange-300';
+  }
+  const label = code ?? outcome;
   return (
     <span className={`px-1.5 py-0.5 rounded text-xs font-mono font-medium ${cls}`}>
-      {code}
-    </span>
-  );
-}
-
-function wsBadge() {
-  return (
-    <span className="px-1.5 py-0.5 rounded text-xs font-mono font-medium bg-indigo-900 text-indigo-300">
-      WS
+      {label}
     </span>
   );
 }
@@ -238,10 +235,7 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortK
                 {formatDuration(req.duration_ms)}
               </td>
               <td className="py-2 pr-3 text-right">
-                <span className="inline-flex items-center gap-1">
-                  {req.transport === 'websocket' && wsBadge()}
-                  {statusBadge(req.status_code)}
-                </span>
+                {statusBadge(req.status_code, req.invocation_outcome)}
               </td>
               <td className="py-2 pr-3">
                 {req.session_id && sessionMap.has(req.session_id) ? (

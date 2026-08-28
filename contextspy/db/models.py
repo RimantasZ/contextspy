@@ -86,6 +86,15 @@ class Request(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     capture_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+    provider_response_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    predecessor_response_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    invocation_outcome: Mapped[str] = mapped_column(
+        String, nullable=False, default="unknown", server_default="unknown"
+    )
+    context_fidelity: Mapped[str] = mapped_column(
+        String, nullable=False, default="complete", server_default="complete"
+    )
+    context_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
 
     # Token counts by category
     tokens_system_prompt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -123,6 +132,9 @@ class Request(Base):
 
     # Raw content (Nulled after a retention period, if configured)
     raw_request_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Exact provider-shaped JSON documents used by the analysis adapters.
+    canonical_request_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    canonical_response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Canonical provider response JSON for JSON/SSE/WS captures. The historical
     # name remains for API compatibility; streamed rows are reconstructed before
     # this value is analyzed and persisted.
@@ -149,6 +161,11 @@ class Request(Base):
             "response_reconstructed": bool(self.response_reconstructed),
             "response_complete": bool(self.response_complete),
             "capture_error": json.loads(self.capture_error) if self.capture_error else None,
+            "provider_response_id": self.provider_response_id,
+            "predecessor_response_id": self.predecessor_response_id,
+            "invocation_outcome": self.invocation_outcome,
+            "context_fidelity": self.context_fidelity,
+            "context_notes": json.loads(self.context_notes) if self.context_notes else [],
             "tokens_system_prompt": self.tokens_system_prompt,
             "tokens_tool_definitions": self.tokens_tool_definitions,
             "tokens_tool_results": self.tokens_tool_results,
@@ -170,9 +187,35 @@ class Request(Base):
             "session_seq": self.session_seq,
             "tokenizer": self.tokenizer,
         }
+        provider_input = self.provider_input_tokens
+        visible_input = self.tokens_total_input
+        difference = provider_input - visible_input if provider_input is not None else None
+        coverage = (
+            visible_input / provider_input * 100
+            if provider_input is not None and provider_input > 0
+            else None
+        )
+        cached_share = (
+            (self.cache_read_tokens or 0) / provider_input * 100
+            if provider_input is not None and provider_input > 0
+            else None
+        )
+        d["context_accounting"] = {
+            "visible_input_tokens": visible_input,
+            "provider_input_tokens": provider_input,
+            "cached_input_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_creation_tokens,
+            "unattributed_difference": difference,
+            "visible_coverage_pct": coverage,
+            "cached_share_pct": cached_share,
+        }
         if include_raw:
             d["raw_request_body"] = self.raw_request_body
             d["raw_response_body"] = self.raw_response_body
+            d["canonical_request_body"] = self.canonical_request_body
+            d["canonical_response_body"] = self.canonical_response_body
+            d["request_body"] = self.canonical_request_body or self.raw_request_body
+            d["response_body"] = self.canonical_response_body or self.raw_response_body
             d["response_events"] = json.loads(self.response_events) if self.response_events else None
         return d
 
@@ -181,6 +224,8 @@ class Request(Base):
 Index("idx_requests_session", Request.session_id)
 Index("idx_requests_timestamp", Request.timestamp)
 Index("idx_requests_provider", Request.provider)
+Index("idx_requests_provider_response", Request.provider, Request.provider_response_id)
+Index("idx_requests_predecessor_response", Request.predecessor_response_id)
 
 
 class ToolStat(Base):

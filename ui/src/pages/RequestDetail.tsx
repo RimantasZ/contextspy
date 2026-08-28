@@ -87,8 +87,7 @@ export default function RequestDetail() {
     { label: 'Provider', value: req.provider },
     { label: 'Agent', value: req.agent ?? '—' },
     { label: 'Model', value: req.model ?? '—' },
-    { label: 'Status', value: req.status_code ?? '—' },
-    ...(req.transport === 'websocket' ? [{ label: 'Transport', value: 'WebSocket' as React.ReactNode }] : []),
+    { label: 'Status', value: req.status_code ?? req.invocation_outcome },
     { label: 'Time', value: new Date(req.timestamp).toLocaleString() },
     { label: 'Duration', value: req.duration_ms != null ? `${req.duration_ms}ms` : '—' },
     { label: 'TTFT', value: req.ttft_ms != null ? `${req.ttft_ms}ms` : <span className="text-gray-500">N/A</span> },
@@ -148,6 +147,31 @@ export default function RequestDetail() {
         </button>
         <h1 className="text-xl font-bold text-white">Request detail</h1>
       </div>
+
+      {req.context_fidelity !== 'complete' && (
+        <div className="rounded-lg border border-amber-800 bg-amber-950/40 px-4 py-3 text-sm">
+          <p className="font-medium text-amber-300">
+            {req.context_fidelity === 'partial'
+              ? 'Only part of this invocation context is observable.'
+              : 'Some of this invocation context is opaque.'}
+          </p>
+          <p className="mt-1 text-xs text-amber-200/70">
+            Visible composition: {req.context_accounting.visible_input_tokens.toLocaleString()} tokens
+            {req.context_accounting.provider_input_tokens != null && (
+              <> · Provider input: {req.context_accounting.provider_input_tokens.toLocaleString()} tokens</>
+            )}
+            {req.context_accounting.visible_coverage_pct != null && (
+              <> · Coverage: {req.context_accounting.visible_coverage_pct.toFixed(1)}%</>
+            )}
+            {req.context_accounting.unattributed_difference != null && (
+              <> · Unattributed/tokenizer difference: {req.context_accounting.unattributed_difference.toLocaleString()} tokens</>
+            )}
+          </p>
+          {req.context_notes.length > 0 && (
+            <p className="mt-1 text-xs text-gray-400">{req.context_notes.join(' ')}</p>
+          )}
+        </div>
+      )}
 
       {/* Metadata: token stat panels left | fields right */}
       <div className="flex gap-4">
@@ -233,16 +257,12 @@ export default function RequestDetail() {
 
       {/* Raw bodies */}
       <div className="space-y-3">
-        <RawViewer title="Request" requestId={req.id} content={req.raw_request_body} totalInputTokens={req.tokens_total_input} expandToggle={requestToggle} />
+        <RawViewer title="Request" requestId={req.id} content={req.request_body} totalInputTokens={req.tokens_total_input} expandToggle={requestToggle} />
         <RawViewer
           title="Response"
           requestId={req.id}
-          content={req.raw_response_body}
+          content={req.response_body}
           responseMode
-          responseEvents={req.response_events}
-          responseTransport={req.response_transport}
-          responseReconstructed={req.response_reconstructed}
-          responseComplete={req.response_complete}
           captureError={req.capture_error}
           totalInputTokens={req.tokens_total_output}
           expandToggle={responseToggle}

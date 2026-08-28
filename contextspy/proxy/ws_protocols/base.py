@@ -21,7 +21,7 @@ from contextspy.analysis.capture import CapturedEvent
 
 @dataclass
 class CompletedExchange:
-    """One request/response turn assembled from a WS connection's frame stream."""
+    """One provider invocation assembled from a WS connection's frame stream."""
 
     request_body: dict          # request JSON (may be synthesized by a protocol)
     raw_request_text: str       # verbatim client frame -> raw_request_body
@@ -34,10 +34,11 @@ class CompletedExchange:
     last_event_ts: float | None = None
     error: dict | None = None   # {"status", "code", "message"}
     complete: bool = True       # False when flushed early (close / superseded by a new turn)
+    outcome: str = "unknown"   # completed / failed / incomplete / unknown
 
 
 class WsSession(ABC):
-    """Stateful per-connection assembler: frames in, completed exchanges out."""
+    """Stateful per-connection assembler: frames in, observed invocations out."""
 
     @abstractmethod
     def on_message(

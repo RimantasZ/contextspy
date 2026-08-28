@@ -274,7 +274,7 @@ call — nothing else in the pipeline changes.
 Requests to unrecognised endpoints (`get_adapter` returns `None`) are recorded with
 `tokens_uncategorized = tokens_total_input` and no `Block` rows.
 
-#### Canonical response capture and streaming
+#### Canonical invocation normalization
 
 Because Claude Code and most modern LLM clients use streaming responses
 (`Content-Type: text/event-stream`), the `response()` mitmproxy hook never fires for these flows.
@@ -285,13 +285,18 @@ ordered application records, multiline `data`, SSE metadata, non-JSON text, and 
 the adapter reconstructs canonical provider response JSON. Ollama's JSON-lines streams and Codex
 WebSocket events follow the same boundary.
 
-`raw_response_body` stores this canonical provider JSON; `response_events` stores the complete
-normalized application event/frame log. Unknown fields and events remain visible there even when
-no current block or usage rule understands them. HTTP JSON bodies go directly to the same
-`parse_response()` boundary. Reconstruction and analysis have separate error boundaries, so a
-parser failure does not discard the captured body/event log. “Raw” therefore means complete
-normalized application payload, not compressed bytes, HTTP chunks, TLS records, or exact JSON
-whitespace.
+Transport ingestion emits one observed invocation, not one row per frame. Provider normalization
+then resolves explicit state references such as Responses API `previous_response_id` and emits a
+standalone `CanonicalInvocation`. A resolved continuation expands to predecessor canonical input
++ predecessor canonical output + current input. The same normalizer applies to stateful REST and
+WebSocket traffic; only explicit provider IDs establish lineage.
+
+`canonical_request_body` and `canonical_response_body` store the exact JSON documents supplied to
+`parse_request()`/`parse_response()`. Blocks, category totals, tools, output, thinking, and usage
+are derived from those documents once. `raw_request_body` retains observed transport evidence,
+`raw_response_body` remains a compatibility field, and `response_events` optionally stores the
+normalized application event/frame log. Reconstruction and analysis have separate error
+boundaries, so a parser failure does not discard canonical JSON.
 
 #### Content Categories (`analysis/classifier.py`)
 
@@ -421,6 +426,12 @@ CREATE TABLE requests (
     response_reconstructed          INTEGER NOT NULL DEFAULT 0,
     response_complete               INTEGER NOT NULL DEFAULT 0,
     capture_error                   TEXT,               -- structured JSON warning/error
+    provider_response_id            TEXT,
+    predecessor_response_id         TEXT,
+    invocation_outcome              TEXT NOT NULL DEFAULT 'unknown',
+    context_fidelity                TEXT NOT NULL DEFAULT 'complete',
+        -- 'complete' | 'partial' | 'opaque'
+    context_notes                   TEXT,               -- JSON array
 
     -- Estimated token counts by category (aggregated from `blocks`, see below)
     tokens_system_prompt            INTEGER NOT NULL DEFAULT 0,
@@ -450,13 +461,17 @@ CREATE TABLE requests (
 
     -- Raw content — purged per [retention] settings
     raw_request_body                TEXT,               -- complete decoded request payload
-    raw_response_body               TEXT,               -- canonical response JSON or text fallback
+    canonical_request_body          TEXT,               -- exact JSON analyzed/displayed
+    canonical_response_body         TEXT,               -- exact JSON analyzed/displayed
+    raw_response_body               TEXT,               -- compatibility JSON/text fallback
     response_events                 TEXT                -- normalized SSE/NDJSON/WS events as JSON
 );
 
 CREATE INDEX idx_requests_session ON requests(session_id);
 CREATE INDEX idx_requests_timestamp ON requests(timestamp);
 CREATE INDEX idx_requests_provider ON requests(provider);
+CREATE INDEX idx_requests_provider_response ON requests(provider, provider_response_id);
+CREATE INDEX idx_requests_predecessor_response ON requests(predecessor_response_id);
 
 CREATE TABLE tool_stats (
     id                TEXT PRIMARY KEY,
@@ -516,7 +531,7 @@ Linking".
   content hash), and (if any tools were used) one `ToolStat` row per tool.
 - **Retention (configurable, see §10):** on server startup only (no background timer),
   `startup_vacuum()`:
-  - NULLs `raw_request_body`/`raw_response_body`/`response_events` together on `Request` rows older than
+  - NULLs raw/canonical request/response bodies and `response_events` together on `Request` rows older than
     `retention.raw_body_days` (default 7; `0` = keep forever).
   - Deletes `block_contents` rows whose hash is no longer referenced by any `blocks` row from a
     request newer than `retention.block_content_days` (default 7; `0` = keep forever) — content
@@ -543,11 +558,13 @@ both of:
    user at `db-upgrade` or `reset-db`) if any data migration is pending — this prevents the app
    from running against a DB with stale/missing derived data.
 
-Currently `SCHEMA_VERSION = 2`; `_migrate_to_v2` backfills `session_seq` (per-session request
+Currently `SCHEMA_VERSION = 3`; `_migrate_to_v2` backfills `session_seq` (per-session request
 ordinal, assigned by `timestamp` order) and reconstructs `blocks`/`block_contents` rows for
 pre-existing requests from their still-present `raw_request_body`/`raw_response_body` (re-running
-the adapter → classify → insert_blocks pipeline), skipping requests whose raw bodies have already
-been purged by retention.
+the adapter → classify → insert_blocks pipeline). `_migrate_to_v3` copies retained provider JSON
+into explicit canonical columns and reconstructs retained Responses WebSocket chains only through
+exact provider response IDs, replacing derived blocks/tool stats transactionally when parsing
+succeeds. Missing predecessors remain explicitly partial.
 
 ---
 
@@ -573,7 +590,7 @@ been purged by retention.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
-| `GET` | `/api/requests/{id}` | Full request detail including canonical request/response payloads, normalized streamed `response_events`, and `response_transport`/`response_reconstructed`/`response_complete`/`capture_error` metadata (if not purged). 404 if missing. |
+| `GET` | `/api/requests/{id}` | Full transport-neutral request detail. `request_body`/`response_body` resolve to the stored canonical documents, with blocks, outcome, context fidelity/accounting, usage, and compatibility diagnostics when retained. 404 if missing. |
 | `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, linked_call_id, linked_definition_id, linked_previous_message_id`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. 404 if request missing. |
 
 #### Stats
@@ -858,7 +875,7 @@ ContextSpy session start "feat/auth-refactor"
         │
         ▼
   All proxy captures → session_id = this session
-  Raw request/response bodies stored in DB
+  Observed and canonical request/response bodies stored in DB
         │
         ▼
 ContextSpy session end   (or UI button)
@@ -866,9 +883,9 @@ ContextSpy session end   (or UI button)
         ▼
   UPDATE sessions SET ended_at=now, is_active=0
         │
-        ▼   (background task)
-  UPDATE requests SET raw_request_body=NULL, raw_response_body=NULL
-  WHERE session_id = this session
+        ▼   (retention runs on next application startup)
+  Raw/canonical bodies, event logs, and expired block content are purged
+  according to [retention] settings
 ```
 
 ### Rules
@@ -876,7 +893,7 @@ ContextSpy session end   (or UI button)
 - Only one session is active at a time.
 - Starting a new session automatically ends the active one (with a warning message).
 - Requests captured while no session is active have `session_id = NULL`.
-- Raw bodies for session-less requests older than 24 hours are vacuumed on startup.
+- Sensitive payload retention applies consistently to session and session-less requests.
 
 ---
 
