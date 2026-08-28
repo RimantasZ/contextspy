@@ -1087,6 +1087,63 @@ class TestOpenAIResponsesAdapter:
         blocks, _ = self.adapter.parse_request(req)
         assert any(b.block_type == BlockType.TOOL_DEFINITION for b in blocks)
 
+    def test_namespace_tools_become_individual_definitions(self):
+        namespace = {
+            "type": "namespace",
+            "name": "functions",
+            "description": "General purpose tools",
+            "tools": [
+                {"type": "function", "name": "wait", "parameters": {}},
+                {"type": "function", "name": "request_user_input", "parameters": {}},
+                {"type": "custom", "name": "exec", "format": {"type": "text"}},
+            ],
+        }
+
+        blocks, _ = self.adapter.parse_request({"tools": [namespace]})
+        definitions = [b for b in blocks if b.block_type == BlockType.TOOL_DEFINITION]
+
+        assert [b.tool_name for b in definitions] == ["wait", "request_user_input", "exec"]
+        assert all(b.attrs.get("tool_namespace") == "functions" for b in definitions)
+        assert sum(b.token_count for b in definitions) == count_tokens(
+            json.dumps(namespace, ensure_ascii=False)
+        )
+
+    def test_repeated_namespace_definitions_aggregate_by_callable_name(self):
+        namespace = {
+            "type": "namespace",
+            "name": "functions",
+            "tools": [
+                {"type": "function", "name": "wait", "parameters": {}},
+                {"type": "custom", "name": "exec", "format": {"type": "text"}},
+            ],
+        }
+        req = {
+            "tools": [namespace],
+            "input": [
+                {"type": "additional_tools", "tools": [namespace]},
+                {"type": "custom_tool_call", "call_id": "call-1", "name": "exec", "input": "pwd"},
+                {"type": "custom_tool_call_output", "call_id": "call-1", "output": "/project"},
+            ],
+        }
+
+        input_blocks, tool_call_map = self.adapter.parse_request(req)
+        analyzed = AnalyzedRequest(
+            model="gpt-test",
+            input_blocks=input_blocks,
+            output_blocks=[],
+            usage=Usage(),
+            tool_call_map=tool_call_map,
+        )
+        rows = per_tool_tokens(analyzed)
+
+        assert [row["tool_name"] for row in rows] == ["wait", "exec"]
+        assert rows[1]["result_tokens"] > 0
+        assert sum(row["definition_tokens"] for row in rows) == sum(
+            block.token_count
+            for block in input_blocks
+            if block.block_type == BlockType.TOOL_DEFINITION
+        )
+
     def test_function_call_in_output(self):
         resp = {
             "model": "gpt-4o",

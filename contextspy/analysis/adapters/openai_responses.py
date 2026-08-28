@@ -55,6 +55,65 @@ def _tool_name(tool: dict) -> str:
     return tool.get("name") or (function.get("name") if isinstance(function, dict) else None) or "unknown"
 
 
+def _tool_definition_blocks(
+    tool: dict,
+    *,
+    message_index: int | None = None,
+    attrs: dict | None = None,
+) -> list[Block]:
+    """Expand Codex namespace containers into one block per callable tool.
+
+    ChatGPT's Codex Responses endpoint groups callable definitions under
+    ``{"type": "namespace", "tools": [...]}``. Treating that container as a
+    single tool collapses the per-tool breakdown to namespace names such as
+    ``functions`` and ``collaboration``. The container's token count is
+    apportioned across its children so the overall tool-definition total stays
+    identical to the canonical request.
+    """
+    base_attrs = dict(attrs or {})
+    nested_tools = tool.get("tools")
+    if tool.get("type") == "namespace" and isinstance(nested_tools, list):
+        namespace = _tool_name(tool)
+        parent_namespace = base_attrs.get("tool_namespace")
+        namespace_path = f"{parent_namespace}.{namespace}" if parent_namespace else namespace
+        child_attrs = {**base_attrs, "tool_namespace": namespace_path}
+        blocks = [
+            block
+            for child in nested_tools
+            if isinstance(child, dict)
+            for block in _tool_definition_blocks(
+                child,
+                message_index=message_index,
+                attrs=child_attrs,
+            )
+        ]
+        if blocks:
+            parent_tokens = Block.make(
+                Direction.INPUT,
+                BlockType.TOOL_DEFINITION,
+                json.dumps(tool, ensure_ascii=False),
+            ).token_count
+            weight_total = sum(block.token_count for block in blocks)
+            if weight_total:
+                assigned = 0
+                for block in blocks[:-1]:
+                    block.token_count = parent_tokens * block.token_count // weight_total
+                    assigned += block.token_count
+                blocks[-1].token_count = parent_tokens - assigned
+            else:
+                blocks[0].token_count = parent_tokens
+            return blocks
+
+    return [Block.make(
+        Direction.INPUT,
+        BlockType.TOOL_DEFINITION,
+        json.dumps(tool, ensure_ascii=False),
+        message_index=message_index,
+        tool_name=_tool_name(tool),
+        attrs=base_attrs,
+    )]
+
+
 class OpenAIResponsesAdapter(WireFormatAdapter):
     format_id = "openai_responses"
     endpoint_patterns = ("/responses",)
@@ -75,10 +134,7 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
         for tool in top_level_tools:
             if not isinstance(tool, dict):
                 continue
-            blocks.append(Block.make(
-                Direction.INPUT, BlockType.TOOL_DEFINITION,
-                json.dumps(tool, ensure_ascii=False), tool_name=_tool_name(tool),
-            ))
+            blocks.extend(_tool_definition_blocks(tool))
 
         instructions = req_body.get("instructions", "")
         if instructions:
@@ -153,10 +209,9 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                 embedded_tools = item.get("tools") or []
                 for tool in embedded_tools if isinstance(embedded_tools, list) else []:
                     if isinstance(tool, dict):
-                        blocks.append(Block.make(
-                            Direction.INPUT, BlockType.TOOL_DEFINITION,
-                            json.dumps(tool, ensure_ascii=False), message_index=i,
-                            tool_name=_tool_name(tool),
+                        blocks.extend(_tool_definition_blocks(
+                            tool,
+                            message_index=i,
                             attrs={"provider_item_type": item_type},
                         ))
             elif role in block_type_for_role:

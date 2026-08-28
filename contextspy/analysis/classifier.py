@@ -183,6 +183,9 @@ def per_tool_tokens(analyzed: AnalyzedRequest) -> list[dict]:
     name_to_idx: dict[str, int] = {}
     for b in def_blocks:
         name = b.tool_name or "unknown"
+        if name in name_to_idx:
+            rows[name_to_idx[name]]["definition_tokens"] += b.token_count
+            continue
         name_to_idx[name] = len(rows)
         rows.append({"tool_name": name, "definition_tokens": b.token_count, "result_tokens": 0})
 
