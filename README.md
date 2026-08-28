@@ -130,7 +130,10 @@ brew upgrade contextspy
 At this stage, the database schema is subject to change. Structural changes (new tables/columns)
 are applied automatically on next startup. If a data migration is needed (e.g. backfilling new
 derived data for existing requests), `contextspy start` will print a warning — run
-`contextspy db-upgrade` to backfill, or `contextspy reset-db` to start fresh.
+`contextspy db-upgrade` to backfill, or `contextspy reset-db` to start fresh. Before an upgrade
+makes any database changes, it copies the SQLite file to a backup beside it named
+`<db_name>_backup_v<version_from>_to_v<version_to>_<YYYY-MM-DD-HHMM>.back` (UTC).
+If that name already exists, `-1`, `-2`, and so on is added before `.back`.
 
 ## Tech stack
 

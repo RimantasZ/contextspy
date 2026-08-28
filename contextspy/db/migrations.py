@@ -27,6 +27,11 @@ table and applied explicitly with ``contextspy db-upgrade``.
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable
 
 from sqlalchemy import func, select
@@ -43,6 +48,115 @@ _PENDING_KEY = "pending_data_migrations"
 # ---------------------------------------------------------------------------
 # schema_meta helpers
 # ---------------------------------------------------------------------------
+
+def _pending_versions(
+    version_from: int, recorded_pending: list[int] | None = None
+) -> list[int]:
+    """Return recorded and newly-required migrations in version order."""
+    pending = set(recorded_pending or [])
+    pending.update(version for version in _DATA_MIGRATIONS if version > version_from)
+    return sorted(pending)
+
+
+def inspect_migration_state(db_path: Path) -> tuple[int, list[int]]:
+    """Read the current version and pending migrations without changing the DB.
+
+    Legacy databases with requests but no ``schema_meta`` value are version 1.
+    A missing or unused database has no data to migrate and is treated as current.
+    The read-only connection is important: ``db-upgrade`` uses this result to make
+    a byte-for-byte backup before ``init_db`` can apply structural changes.
+    """
+    db_path = Path(db_path)
+    if not db_path.is_file() or db_path.stat().st_size == 0:
+        return SCHEMA_VERSION, []
+
+    uri = f"{db_path.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+
+        stored_version: str | None = None
+        recorded_pending: list[int] = []
+        if "schema_meta" in tables:
+            values = dict(
+                conn.execute(
+                    "SELECT key, value FROM schema_meta WHERE key IN (?, ?)",
+                    (_SCHEMA_VERSION_KEY, _PENDING_KEY),
+                )
+            )
+            stored_version = values.get(_SCHEMA_VERSION_KEY)
+            recorded_pending = json.loads(values.get(_PENDING_KEY, "[]") or "[]")
+
+        if stored_version is None:
+            has_requests = (
+                "requests" in tables
+                and (conn.execute("SELECT COUNT(*) FROM requests").fetchone() or (0,))[0] > 0
+            )
+            if not has_requests:
+                return SCHEMA_VERSION, []
+            version_from = 1
+        else:
+            version_from = int(stored_version)
+
+    return version_from, _pending_versions(version_from, recorded_pending)
+
+
+def create_migration_backup(
+    db_path: Path,
+    version_from: int,
+    version_to: int,
+    *,
+    timestamp: datetime | None = None,
+) -> Path:
+    """Copy the untouched SQLite file to a versioned backup beside it."""
+    db_path = Path(db_path)
+    timestamp = timestamp or datetime.now(timezone.utc)
+    timestamp_text = timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d-%H%M")
+    backup_stem = (
+        f"{db_path.stem}_backup_v{version_from}_to_v{version_to}_{timestamp_text}"
+    )
+    backup_path = db_path.with_name(f"{backup_stem}.back")
+    suffix = 1
+    while backup_path.exists():
+        backup_path = db_path.with_name(f"{backup_stem}-{suffix}.back")
+        suffix += 1
+    shutil.copy2(db_path, backup_path)
+    return backup_path
+
+
+def list_migration_backups(db_path: Path) -> list[Path]:
+    """Return versioned migration backups belonging to ``db_path``."""
+    db_path = Path(db_path)
+    if not db_path.parent.is_dir():
+        return []
+
+    escaped_stem = re.escape(db_path.stem)
+    current_name = re.compile(
+        rf"(?P<base>{escaped_stem}_backup_v\d+_to_v\d+_"
+        r"\d{4}-\d{2}-\d{2}-\d{4})"
+        r"(?:-(?P<sequence>\d+))?\.back"
+    )
+    legacy_name = re.compile(
+        rf"{escaped_stem}_\d+_\d+_\d{{8}}T\d{{12}}Z\.back"
+    )
+    backups: list[Path] = []
+    for candidate in db_path.parent.iterdir():
+        if candidate.is_file() and (
+            current_name.fullmatch(candidate.name)
+            or legacy_name.fullmatch(candidate.name)
+        ):
+            backups.append(candidate)
+
+    def sort_key(backup: Path) -> tuple[str, int]:
+        match = current_name.fullmatch(backup.name)
+        if match is None:
+            return backup.name, 0
+        return match.group("base"), int(match.group("sequence") or 0)
+
+    return sorted(backups, key=sort_key)
+
 
 def get_meta(db: OrmSession, key: str, default: str | None = None) -> str | None:
     row = db.get(SchemaMeta, key)
@@ -64,7 +178,8 @@ def check_and_flag_pending_migrations(db: OrmSession) -> list[int]:
     - Empty DB (no requests yet): nothing to backfill, mark up to date.
     - Existing DB with no schema_meta row yet (upgrading from before this
       feature existed): flag every known data migration as pending.
-    - Otherwise: return whatever is already recorded as pending.
+    - Otherwise: merge recorded pending migrations with every known migration
+      newer than the stored version.
     """
     stored_version = get_meta(db, _SCHEMA_VERSION_KEY)
     if stored_version is None:
@@ -73,12 +188,17 @@ def check_and_flag_pending_migrations(db: OrmSession) -> list[int]:
             set_meta(db, _SCHEMA_VERSION_KEY, str(SCHEMA_VERSION))
             set_meta(db, _PENDING_KEY, "[]")
             return []
-        pending = sorted(_DATA_MIGRATIONS.keys())
+        pending = _pending_versions(1)
         set_meta(db, _SCHEMA_VERSION_KEY, "1")
         set_meta(db, _PENDING_KEY, json.dumps(pending))
         return pending
 
-    return json.loads(get_meta(db, _PENDING_KEY, "[]") or "[]")
+    version_from = int(stored_version)
+    recorded_pending = json.loads(get_meta(db, _PENDING_KEY, "[]") or "[]")
+    pending = _pending_versions(version_from, recorded_pending)
+    if pending != recorded_pending:
+        set_meta(db, _PENDING_KEY, json.dumps(pending))
+    return pending
 
 
 def apply_data_migrations(db: OrmSession) -> list[int]:
