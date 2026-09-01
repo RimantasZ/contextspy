@@ -13,7 +13,7 @@
 // limitations under the License.
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useRequests, useStatsOverview } from '../api/hooks';
+import { useRequests, useSessions, useStatsOverview } from '../api/hooks';
 import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
 
@@ -36,6 +36,7 @@ export default function Requests() {
   }
 
   const stats = useStatsOverview();
+  const sessions = useSessions();
   const modelOptions = Object.keys(stats.data?.by_model ?? {}).sort();
 
   const { data, isLoading } = useRequests({
@@ -118,6 +119,7 @@ export default function Requests() {
         ) : (
           <RequestTable
             requests={reqs}
+            sessions={sessions.data?.sessions}
             onRowClick={(id) => navigate(`/requests/${id}`)}
             sortKey={sortKey}
             sortDir={sortDir}

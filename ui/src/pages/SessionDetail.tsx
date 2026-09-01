@@ -449,6 +449,7 @@ export default function SessionDetail() {
         <p className="text-sm font-medium text-gray-300 mb-4">Requests in this session</p>
         <RequestTable
           requests={requests.data?.requests ?? []}
+          sessions={[s]}
           onRowClick={(reqId) => navigate(`/requests/${reqId}`)}
           sortKey={reqSortKey}
           sortDir={reqSortDir}
