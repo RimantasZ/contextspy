@@ -10,6 +10,19 @@
 - Reconstruction, persistence, and block analysis now have separate failure boundaries. Failed or
   incomplete upstream calls remain inspectable, with capture status metadata, and stream event
   logs are purged alongside request/response bodies by the existing retention policy.
+- **Database backups before migration** (`#33`) — `contextspy db-upgrade` now backs up the
+  database before applying a data migration, and `contextspy status` lists previous backups.
+- **Nested tool call parsing fixed** — Anthropic requests with tool calls nested inside other
+  content no longer lose or miscount those blocks.
+- **GPT tool classification fixed** — namespaced tool names in OpenAI Responses API requests are
+  now unwrapped before classification, so those tools are no longer miscategorized.
+- Fixed a session reporting mismatch on the Requests and Session Detail pages (`#35`).
+- Fixed a mitmproxy race condition when multiple local reverse proxies start at once (`#29`).
+- Fixed `start-local` provider detection.
+- Blocks now track when their content first appeared in a session (dedup-aware "first seen"),
+  surfaced in the request detail view.
+- Moved remaining request-parsing logic from the UI into the Python backend, per the
+  [analysis-in-Python policy](../CLAUDE.md).
 
 ## v0.3.4
 
