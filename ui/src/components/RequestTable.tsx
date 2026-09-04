@@ -115,9 +115,11 @@ interface Props {
   sortKey?: SortKey | null;
   sortDir?: 'asc' | 'desc';
   onSortChange?: (key: SortKey | null, dir: 'asc' | 'desc') => void;
+  /** Show the Session column — default true; pass false on pages already scoped to one session */
+  showSession?: boolean;
 }
 
-export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortKey, sortDir: extSortDir, onSortChange }: Props) {
+export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortKey, sortDir: extSortDir, onSortChange, showSession = true }: Props) {
   const [hideEmpty, setHideEmpty] = useState(true);
   const [internalSortKey, setInternalSortKey] = useState<SortKey | null>(null);
   const [internalSortDir, setInternalSortDir] = useState<'asc' | 'desc'>('asc');
@@ -203,7 +205,9 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortK
             <th className="pb-2 pr-3 font-medium whitespace-nowrap" style={{ minWidth: 256 }}>Context</th>
             <SortHeader label="Duration" col="duration_ms" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
             <SortHeader label="Status" col="status_code" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-            <SortHeader label="Session" col="session" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            {showSession && (
+              <SortHeader label="Session" col="session" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            )}
             <SortHeader label="Provider" col="provider" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortHeader label="Agent" col="agent" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortHeader label="Model" col="model" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -237,15 +241,17 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortK
               <td className="py-2 pr-3 text-right">
                 {statusBadge(req.status_code, req.invocation_outcome)}
               </td>
-              <td className="py-2 pr-3">
-                {req.session_id && sessionMap.has(req.session_id) ? (
-                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900 text-indigo-300 truncate max-w-[100px] inline-block" title={sessionMap.get(req.session_id)}>
-                    {sessionMap.get(req.session_id)}
-                  </span>
-                ) : (
-                  <span className="text-gray-600 text-xs">n/a</span>
-                )}
-              </td>
+              {showSession && (
+                <td className="py-2 pr-3">
+                  {req.session_id && sessionMap.has(req.session_id) ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900 text-indigo-300 truncate max-w-[100px] inline-block" title={sessionMap.get(req.session_id)}>
+                      {sessionMap.get(req.session_id)}
+                    </span>
+                  ) : (
+                    <span className="text-gray-600 text-xs">n/a</span>
+                  )}
+                </td>
+              )}
               <td className="py-2 pr-3">
                 <span
                   className={`px-2 py-0.5 rounded-full text-xs font-medium ${

@@ -454,6 +454,7 @@ export default function SessionDetail() {
           sortKey={reqSortKey}
           sortDir={reqSortDir}
           onSortChange={handleReqSortChange}
+          showSession={false}
         />
       </div>
 
