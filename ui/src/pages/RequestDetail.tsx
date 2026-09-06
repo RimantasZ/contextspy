@@ -148,31 +148,6 @@ export default function RequestDetail() {
         <h1 className="text-xl font-bold text-white">Request detail</h1>
       </div>
 
-      {req.context_fidelity !== 'complete' && (
-        <div className="rounded-lg border border-amber-800 bg-amber-950/40 px-4 py-3 text-sm">
-          <p className="font-medium text-amber-300">
-            {req.context_fidelity === 'partial'
-              ? 'Only part of this invocation context is observable.'
-              : 'Some of this invocation context is opaque.'}
-          </p>
-          <p className="mt-1 text-xs text-amber-200/70">
-            Visible composition: {req.context_accounting.visible_input_tokens.toLocaleString()} tokens
-            {req.context_accounting.provider_input_tokens != null && (
-              <> · Provider input: {req.context_accounting.provider_input_tokens.toLocaleString()} tokens</>
-            )}
-            {req.context_accounting.visible_coverage_pct != null && (
-              <> · Coverage: {req.context_accounting.visible_coverage_pct.toFixed(1)}%</>
-            )}
-            {req.context_accounting.unattributed_difference != null && (
-              <> · Unattributed/tokenizer difference: {req.context_accounting.unattributed_difference.toLocaleString()} tokens</>
-            )}
-          </p>
-          {req.context_notes.length > 0 && (
-            <p className="mt-1 text-xs text-gray-400">{req.context_notes.join(' ')}</p>
-          )}
-        </div>
-      )}
-
       {/* Metadata: token stat panels left | fields right */}
       <div className="flex gap-4">
         {/* Left: stacked stat panels (~25%) */}
