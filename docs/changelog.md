@@ -1,8 +1,10 @@
 # What's New
 
-## Unreleased
+## v0.3.5
 
 ### Fixes & improvements
+- Removed the "opaque context" warning block from the request detail page.
+- The Session Detail page's requests table no longer repeats a redundant Session column.
 - **Complete normalized stream capture** — SSE, Ollama NDJSON, and registered WebSocket responses
   are reconstructed into canonical provider JSON before analysis. The request detail now exposes
   both that JSON and the ordered normalized event/frame log, retaining unknown fields, errors,
