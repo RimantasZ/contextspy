@@ -1,248 +1,108 @@
-﻿// Copyright 2026 Rimantas Zukaitis
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useRequest, useRequestToolStats } from '../api/hooks';
-import { TokenDonut } from '../components/TokenDonut';
-import { RawViewer } from '../components/RawViewer';
-import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
-import { OutputSplit } from '../components/OutputSplit';
+// Copyright 2026 Rimantas Zukaitis
+import { useState } from 'react'
+import type { ReactNode } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useRequest, useRequestToolStats } from '../api/hooks'
+import { TokenDonut } from '../components/TokenDonut'
+import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown'
+import { CaptureNotice } from '../components/request/CaptureNotice'
+import { RequestSummaryHeader } from '../components/request/RequestSummaryHeader'
+import { RequestWorkbench } from '../components/request/RequestWorkbench'
+import type { WorkbenchDirection } from '../components/request/RequestWorkbench'
 
-const CATEGORY_LABELS: Record<string, string> = {
-  system_prompt: 'System Prompt',
-  tool_definitions: 'Tool Definitions',
-  tool_results: 'Tool Results',
-  file_contents: 'File Contents',
-  conversation_history: 'Conversation History',
-  current_user_message: 'Current User Message',
-  assistant_prefill: 'Assistant Prefill',
-  uncategorized: 'Uncategorized',
-};
-
-function categoryDataFromRequest(req: {
-  tokens_system_prompt: number;
-  tokens_tool_definitions: number;
-  tokens_tool_results: number;
-  tokens_file_contents: number;
-  tokens_conversation_history: number;
-  tokens_current_user_message: number;
-  tokens_assistant_prefill: number;
-  tokens_uncategorized: number;
+function categoryData(request: {
+  tokens_system_prompt: number; tokens_tool_definitions: number; tokens_tool_results: number
+  tokens_file_contents: number; tokens_conversation_history: number; tokens_current_user_message: number
+  tokens_assistant_prefill: number; tokens_uncategorized: number
 }): Record<string, number> {
   return {
-    system_prompt: req.tokens_system_prompt,
-    tool_definitions: req.tokens_tool_definitions,
-    tool_results: req.tokens_tool_results,
-    file_contents: req.tokens_file_contents,
-    conversation_history: req.tokens_conversation_history,
-    current_user_message: req.tokens_current_user_message,
-    assistant_prefill: req.tokens_assistant_prefill,
-    uncategorized: req.tokens_uncategorized,
-  };
+    system_prompt: request.tokens_system_prompt,
+    tool_definitions: request.tokens_tool_definitions,
+    tool_results: request.tokens_tool_results,
+    file_contents: request.tokens_file_contents,
+    conversation_history: request.tokens_conversation_history,
+    current_user_message: request.tokens_current_user_message,
+    assistant_prefill: request.tokens_assistant_prefill,
+    uncategorized: request.tokens_uncategorized,
+  }
+}
+
+function Disclosure({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details className="surface overflow-hidden rounded-lg border border-[var(--border)]">
+      <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold hover:bg-[var(--surface-muted)]">{title}</summary>
+      <div className="border-t border-[var(--border)] p-4">{children}</div>
+    </details>
+  )
 }
 
 export default function RequestDetail() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const { data, isLoading, error } = useRequest(id ?? '');
-  const toolStats = useRequestToolStats(id ?? '');
+  const { id = '' } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const requestQuery = useRequest(id)
+  const toolStats = useRequestToolStats(id)
+  const [activeDirection, setActiveDirection] = useState<WorkbenchDirection>('input')
 
-  const [requestToggle, setRequestToggle] = useState(0);
-  const [responseToggle, setResponseToggle] = useState(0);
+  if (requestQuery.isLoading) return <div className="page-shell text-sm text-[var(--text-muted)]">Loading request…</div>
+  if (requestQuery.error || !requestQuery.data) return <div className="page-shell text-sm text-[var(--danger)]">Request not found.</div>
 
-  if (isLoading) {
-    return <div className="p-6 text-gray-400">Loading\u2026</div>;
-  }
-  if (error || !data) {
-    return <div className="p-6 text-red-400">Request not found.</div>;
-  }
-
-  const req = data.request;
-  const catData = categoryDataFromRequest(req);
-  const total = req.tokens_total_input;
-
-  function pctDiff(reported: number, estimated: number): string {
-    if (estimated === 0) return '';
-    const diff = ((reported - estimated) / estimated) * 100;
-    const sign = diff >= 0 ? '+' : '';
-    return ` (${sign}${diff.toFixed(1)}%)`;
-  }
-
-  const cacheHasData = req.cache_read_tokens != null || req.cache_creation_tokens != null;
-  const cacheReadVal = req.cache_read_tokens ?? 0;
-  const cacheWriteVal = req.cache_creation_tokens ?? 0;
-
-  const metaFields: Array<{ label: string; value: React.ReactNode }> = [
-    { label: 'Provider', value: req.provider },
-    { label: 'Agent', value: req.agent ?? '—' },
-    { label: 'Model', value: req.model ?? '—' },
-    { label: 'Status', value: req.status_code ?? req.invocation_outcome },
-    { label: 'Time', value: new Date(req.timestamp).toLocaleString() },
-    { label: 'Duration', value: req.duration_ms != null ? `${req.duration_ms}ms` : '—' },
-    { label: 'TTFT', value: req.ttft_ms != null ? `${req.ttft_ms}ms` : <span className="text-gray-500">N/A</span> },
-    {
-      label: 'Cache',
-      value: !cacheHasData ? (
-        <span className="text-gray-500">N/A</span>
-      ) : cacheReadVal === 0 && cacheWriteVal === 0 ? (
-        <span className="text-gray-500">none</span>
-      ) : (
-        <span className="space-x-2">
-          {cacheReadVal > 0 && (
-            <span className="text-teal-400">↓ {cacheReadVal.toLocaleString()} read</span>
-          )}
-          {cacheWriteVal > 0 && (
-            <span className="text-amber-400">↑ {cacheWriteVal.toLocaleString()} write</span>
-          )}
-        </span>
-      ),
-    },
-    {
-      label: 'API reported context tokens',
-      value: req.provider_input_tokens != null ? (
-        <span>
-          {req.provider_input_tokens.toLocaleString()}
-          <span className="text-gray-400 text-xs ml-1">
-            {pctDiff(req.provider_input_tokens, req.tokens_total_input)}
-          </span>
-        </span>
-      ) : (
-        <span className="text-gray-500">N/A</span>
-      ),
-    },
-    {
-      label: 'API reported output tokens',
-      value: req.provider_output_tokens != null ? (
-        <span>
-          {req.provider_output_tokens.toLocaleString()}
-          <span className="text-gray-400 text-xs ml-1">
-            {pctDiff(req.provider_output_tokens, req.tokens_total_output)}
-          </span>
-        </span>
-      ) : (
-        <span className="text-gray-500">N/A</span>
-      ),
-    },
-  ];
+  const request = requestQuery.data.request
+  const categories = categoryData(request)
+  const tools = toolStats.data?.tools ?? []
+  const metadata = [
+    ['Provider', request.provider],
+    ['Agent', request.agent ?? '—'],
+    ['Model', request.model ?? '—'],
+    ['Endpoint', request.endpoint],
+    ['Timestamp', new Date(request.timestamp).toLocaleString()],
+    ['Status', request.status_code ?? request.invocation_outcome],
+    ['Transport', `${request.transport} / ${request.response_transport}`],
+    ['Time to first token', request.ttft_ms != null ? `${request.ttft_ms}ms` : '—'],
+    ['Tokenizer', request.tokenizer],
+    ['Session sequence', request.session_seq ?? '—'],
+    ['Provider request ID', request.provider_response_id ?? '—'],
+    ['Previous response ID', request.predecessor_response_id ?? '—'],
+    ['API context tokens', request.provider_input_tokens?.toLocaleString() ?? '—'],
+    ['API output tokens', request.provider_output_tokens?.toLocaleString() ?? '—'],
+    ['API reasoning tokens', request.provider_reasoning_tokens?.toLocaleString() ?? '—'],
+    ['Cache read / write', `${(request.cache_read_tokens ?? 0).toLocaleString()} / ${(request.cache_creation_tokens ?? 0).toLocaleString()}`],
+    ['Visible coverage', request.context_accounting.visible_coverage_pct != null ? `${request.context_accounting.visible_coverage_pct.toFixed(1)}%` : '—'],
+    ['Cached share', request.context_accounting.cached_share_pct != null ? `${request.context_accounting.cached_share_pct.toFixed(1)}%` : '—'],
+  ]
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => navigate(-1)}
-          className="text-gray-400 hover:text-white text-sm"
-        >
-          ← Back
-        </button>
-        <h1 className="text-xl font-bold text-white">Request detail</h1>
-      </div>
+    <div className="page-shell">
+      <RequestSummaryHeader request={request} onBack={() => navigate(-1)} onDirection={setActiveDirection} />
+      <CaptureNotice request={request} />
+      <RequestWorkbench request={request} activeDirection={activeDirection} onDirectionChange={setActiveDirection} />
 
-      {/* Metadata: token stat panels left | fields right */}
-      <div className="flex gap-4">
-        {/* Left: stacked stat panels (~25%) */}
-        <div className="flex flex-col gap-4 w-1/4 shrink-0">
-          <button
-            onClick={() => setRequestToggle(v => v + 1)}
-            className="bg-gray-800 rounded-lg p-4 text-left hover:bg-gray-750 hover:ring-1 hover:ring-indigo-500 transition-all cursor-pointer"
-          >
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Context tokens</p>
-            <p className="text-2xl font-semibold text-white">{req.tokens_total_input.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 mt-1">click to view request ↓</p>
-          </button>
-          <button
-            onClick={() => setResponseToggle(v => v + 1)}
-            className="bg-gray-800 rounded-lg p-4 text-left hover:bg-gray-750 hover:ring-1 hover:ring-indigo-500 transition-all cursor-pointer"
-          >
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Generated tokens</p>
-            <p className="text-2xl font-semibold text-white">{req.tokens_total_output.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 mt-1">
-              <OutputSplit
-                text={req.tokens_output_text}
-                thinking={req.tokens_output_thinking}
-                fallback="click to view response ↓"
-              />
-            </p>
-          </button>
+      <Disclosure title="Analytics">
+        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="panel">
+            <h3 className="section-title mb-3">Category composition</h3>
+            <TokenDonut data={categories} />
+          </div>
+          {tools.length > 0 ? <ToolBreakdownCharts tools={tools} /> : <div className="panel flex min-h-52 items-center justify-center text-sm text-[var(--text-muted)]">No tool usage recorded.</div>}
+          {tools.length > 0 && <div className="xl:col-span-2"><ToolBreakdownTable tools={tools} totalInputTokens={request.tokens_total_input} /></div>}
         </div>
-        {/* Right: metadata grid (~75%) */}
-        <div className="flex-1 bg-gray-800 rounded-lg p-4 grid grid-cols-3 gap-x-6 gap-y-4 text-sm">
-          {metaFields.map(({ label, value }) => (
-            <div key={label}>
-              <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">{label}</p>
-              <p className="text-white font-medium">{value}</p>
+      </Disclosure>
+
+      <Disclosure title="Metadata and diagnostics">
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          {metadata.map(([label, value]) => (
+            <div key={label} className="min-w-0">
+              <dt className="eyebrow mb-0.5">{label}</dt>
+              <dd className="break-words font-medium tabular-nums">{value}</dd>
             </div>
           ))}
-        </div>
-      </div>
-
-      {/* Charts + breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-gray-800 rounded-lg p-4">
-          <p className="text-sm font-medium text-gray-300 mb-3">Token composition</p>
-          <TokenDonut data={catData} />
-        </div>
-        <div className="bg-gray-800 rounded-lg p-4">
-          <p className="text-sm font-medium text-gray-300 mb-3">Category breakdown</p>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-400 border-b border-gray-700">
-                <th className="pb-2 font-medium">Category</th>
-                <th className="pb-2 font-medium text-right">Tokens</th>
-                <th className="pb-2 font-medium text-right">%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(catData)
-                .filter(([, v]) => (v as number) > 0)
-                .sort(([, a], [, b]) => (b as number) - (a as number))
-                .map(([key, val]) => (
-                  <tr key={key} className="border-b border-gray-800">
-                    <td className="py-1.5 text-gray-300">{CATEGORY_LABELS[key] ?? key}</td>
-                    <td className="py-1.5 text-right text-gray-300">{(val as number).toLocaleString()}</td>
-                    <td className="py-1.5 text-right text-gray-400">
-                      {total > 0 ? `${(((val as number) / total) * 100).toFixed(1)}%` : '—'}
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-
-
-        </div>
-      </div>
-
-      {/* Tool breakdown */}
-      {(toolStats.data?.tools ?? []).length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <ToolBreakdownCharts tools={toolStats.data!.tools} />
-          <ToolBreakdownTable tools={toolStats.data!.tools} totalInputTokens={req.tokens_total_input} />
-        </div>
-      )}
-
-      {/* Raw bodies */}
-      <div className="space-y-3">
-        <RawViewer title="Request" requestId={req.id} content={req.request_body} totalInputTokens={req.tokens_total_input} expandToggle={requestToggle} />
-        <RawViewer
-          title="Response"
-          requestId={req.id}
-          content={req.response_body}
-          responseMode
-          captureError={req.capture_error}
-          totalInputTokens={req.tokens_total_output}
-          expandToggle={responseToggle}
-        />
-      </div>
+        </dl>
+        {request.usage_extra && Object.keys(request.usage_extra).length > 0 && (
+          <details className="mt-4 border-t border-[var(--border)] pt-3">
+            <summary className="cursor-pointer text-xs font-medium text-[var(--text-muted)]">Additional API usage fields</summary>
+            <pre className="mt-2 max-h-60 overflow-auto rounded-md bg-[var(--surface-muted)] p-3 text-xs [overflow-wrap:anywhere] [white-space:pre-wrap]">{JSON.stringify(request.usage_extra, null, 2)}</pre>
+          </details>
+        )}
+      </Disclosure>
     </div>
-  );
+  )
 }

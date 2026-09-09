@@ -24,12 +24,12 @@ import type { SessionSummaryEntry, LatencyStats } from '../api/client';
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: ReactNode }) {
   return (
-    <div className="bg-gray-800 rounded-lg p-4">
-      <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>
-      <p className="text-2xl font-semibold text-white">
+    <div className="panel">
+      <p className="eyebrow mb-1">{label}</p>
+      <p className="text-2xl font-semibold text-[var(--text)]">
         {typeof value === 'number' ? value.toLocaleString() : value}
       </p>
-      {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
+      {sub && <p className="mt-0.5 text-xs text-[var(--text-muted)]">{sub}</p>}
     </div>
   );
 }
@@ -71,14 +71,14 @@ function SessionsTable({ entries, onSessionClick }: {
   const visible = entries.slice(page * SESSIONS_PAGE_SIZE, (page + 1) * SESSIONS_PAGE_SIZE);
 
   if (entries.length === 0) {
-    return <p className="text-gray-500 text-sm py-4 text-center">No sessions yet</p>;
+    return <p className="py-4 text-center text-sm text-[var(--text-muted)]">No sessions yet</p>;
   }
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-xs text-gray-400 uppercase tracking-wide border-b border-gray-700">
+          <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--text-muted)]">
             <th className="pb-2 pr-4 font-medium">Name</th>
             <th className="pb-2 pr-4 font-medium">Start</th>
             <th className="pb-2 pr-4 font-medium">Duration</th>
@@ -97,8 +97,8 @@ function SessionsTable({ entries, onSessionClick }: {
             return (
               <tr
                 key={entry.session_id ?? `gap-${page}-${i}`}
-                className={`border-b border-gray-700/50 last:border-0 ${
-                  !isGap ? 'cursor-pointer hover:bg-gray-700/40 transition-colors' : ''
+                className={`border-b border-[var(--border)] last:border-0 ${
+                  !isGap ? 'cursor-pointer transition-colors hover:bg-[var(--surface-hover)]' : ''
                 }`}
                 onClick={() => {
                   if (!isGap && entry.session_id) onSessionClick(entry.session_id);
@@ -106,26 +106,26 @@ function SessionsTable({ entries, onSessionClick }: {
               >
                 <td className="py-2 pr-4">
                   {isGap ? (
-                    <span className="text-gray-500 italic">{name}</span>
+                    <span className="italic text-[var(--text-muted)]">{name}</span>
                   ) : (
-                    <span className={`text-white ${isActive ? 'font-medium' : ''}`}>
+                    <span className={`text-[var(--text)] ${isActive ? 'font-medium' : ''}`}>
                       {name}
                       {isActive && (
-                        <span className="ml-2 text-xs text-green-400 font-normal">● active</span>
+                        <span className="ml-2 text-xs font-normal text-[var(--success)]">● active</span>
                       )}
                     </span>
                   )}
                 </td>
-                <td className="py-2 pr-4 text-gray-400 whitespace-nowrap">
+                <td className="whitespace-nowrap py-2 pr-4 text-[var(--text-muted)]">
                   {formatStart(entry.started_at)}
                 </td>
-                <td className="py-2 pr-4 text-gray-400 whitespace-nowrap">
+                <td className="whitespace-nowrap py-2 pr-4 text-[var(--text-muted)]">
                   {formatDuration(entry.duration_ms)}
                 </td>
-                <td className="py-2 pr-4 text-gray-300 text-right tabular-nums">
+                <td className="py-2 pr-4 text-right tabular-nums text-[var(--text)]">
                   {entry.request_count.toLocaleString()}
                 </td>
-                <td className="py-2 text-gray-300 text-right tabular-nums whitespace-nowrap">
+                <td className="whitespace-nowrap py-2 text-right tabular-nums text-[var(--text)]">
                   {entry.tokens_in.toLocaleString()} / {entry.tokens_out.toLocaleString()}
                 </td>
               </tr>
@@ -134,21 +134,21 @@ function SessionsTable({ entries, onSessionClick }: {
         </tbody>
       </table>
       {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-700">
+        <div className="mt-3 flex items-center justify-between border-t border-[var(--border)] pt-3">
           <button
             disabled={page === 0}
             onClick={() => setPage((p) => p - 1)}
-            className="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded disabled:opacity-40 hover:bg-gray-600 transition-colors"
+            className="app-button min-h-8 py-1 text-xs"
           >
             ← Prev
           </button>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-[var(--text-muted)]">
             {page + 1} / {totalPages}
           </span>
           <button
             disabled={page === totalPages - 1}
             onClick={() => setPage((p) => p + 1)}
-            className="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded disabled:opacity-40 hover:bg-gray-600 transition-colors"
+            className="app-button min-h-8 py-1 text-xs"
           >
             Next →
           </button>
@@ -168,7 +168,7 @@ function ModelBreakdown({ byModel, onModelClick }: {
   const total = entries.reduce((s, [, n]) => s + n, 0);
 
   if (entries.length === 0) {
-    return <p className="text-gray-500 text-sm py-4 text-center">No data</p>;
+    return <p className="py-4 text-center text-sm text-[var(--text-muted)]">No data</p>;
   }
 
   return (
@@ -180,13 +180,13 @@ function ModelBreakdown({ byModel, onModelClick }: {
             className="flex items-center gap-2 cursor-pointer group"
             onClick={() => onModelClick(model)}
           >
-            <span className="text-xs text-gray-300 truncate w-40 group-hover:text-white transition-colors" title={model}>
+            <span className="w-40 truncate text-xs text-[var(--text)] transition-colors group-hover:text-[var(--accent-soft-text)]" title={model}>
               {model}
             </span>
-            <div className="flex-1 bg-gray-700 rounded-full h-1.5 overflow-hidden">
-              <div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--surface-muted)]">
+              <div className="h-1.5 rounded-full bg-[var(--chart-line)]" style={{ width: `${pct}%` }} />
             </div>
-            <span className="text-xs text-gray-400 w-16 text-right tabular-nums">
+            <span className="w-16 text-right text-xs tabular-nums text-[var(--text-muted)]">
               {count.toLocaleString()} ({pct}%)
             </span>
           </div>
@@ -212,21 +212,21 @@ function LatencyPanel({ latency, errorCount, unknownCount }: {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         {rows.map(({ label, value }) => (
-          <div key={label} className="bg-gray-700/50 rounded p-3">
-            <p className="text-xs text-gray-400 mb-0.5">{label}</p>
-            <p className="text-lg font-semibold text-white">{value}</p>
+          <div key={label} className="rounded bg-[var(--surface-muted)] p-3">
+            <p className="mb-0.5 text-xs text-[var(--text-muted)]">{label}</p>
+            <p className="text-lg font-semibold text-[var(--text)]">{value}</p>
           </div>
         ))}
       </div>
       {(errorCount > 0 || unknownCount > 0) && (
         <div className="flex gap-3">
           {errorCount > 0 && (
-            <span className="text-xs bg-red-900/60 text-red-300 px-2 py-1 rounded">
+            <span className="status-danger rounded px-2 py-1 text-xs">
               {errorCount} error{errorCount !== 1 ? 's' : ''}
             </span>
           )}
           {unknownCount > 0 && (
-            <span className="text-xs bg-gray-700 text-gray-400 px-2 py-1 rounded">
+            <span className="rounded bg-[var(--surface-muted)] px-2 py-1 text-xs text-[var(--text-muted)]">
               {unknownCount} unknown status
             </span>
           )}
@@ -248,9 +248,9 @@ export default function Overview() {
   const s = stats.data;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="page-shell">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Overview</h1>
+        <h1 className="text-2xl font-bold text-[var(--text)]">Overview</h1>
         <SessionControls />
       </div>
 
@@ -268,20 +268,20 @@ export default function Overview() {
 
       {/* Charts + sessions row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-gray-800 rounded-lg p-4">
-          <p className="text-sm font-medium text-gray-300 mb-3">Token composition</p>
+        <div className="panel">
+          <p className="section-title mb-3">Token composition</p>
           {s ? (
             <TokenDonut data={Object.fromEntries(Object.entries(s.by_category).map(([k, v]) => [k, v.tokens]))} />
           ) : (
-            <div className="h-60 flex items-center justify-center text-gray-500 text-sm">
+            <div className="flex h-60 items-center justify-center text-sm text-[var(--text-muted)]">
               {stats.isLoading ? 'Loading…' : 'No data'}
             </div>
           )}
         </div>
-        <div className="bg-gray-800 rounded-lg p-4">
-          <p className="text-sm font-medium text-gray-300 mb-3">Sessions</p>
+        <div className="panel">
+          <p className="section-title mb-3">Sessions</p>
           {summary.isLoading ? (
-            <div className="h-40 flex items-center justify-center text-gray-500 text-sm">Loading…</div>
+            <div className="flex h-40 items-center justify-center text-sm text-[var(--text-muted)]">Loading…</div>
           ) : (
             <SessionsTable
               entries={summary.data?.entries ?? []}
@@ -299,22 +299,22 @@ export default function Overview() {
 
       {/* Model breakdown + Latency */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-gray-800 rounded-lg p-4">
-          <p className="text-sm font-medium text-gray-300 mb-3">Models ({s ? Object.keys(s.by_model).length : '—'} total)</p>
+        <div className="panel">
+          <p className="section-title mb-3">Models ({s ? Object.keys(s.by_model).length : '—'} total)</p>
           <ModelBreakdown
             byModel={s?.by_model ?? {}}
             onModelClick={(model) => navigate(`/requests?model=${encodeURIComponent(model)}`)}
           />
         </div>
-        <div className="bg-gray-800 rounded-lg p-4">
-          <p className="text-sm font-medium text-gray-300 mb-3">Latency &amp; Errors</p>
+        <div className="panel">
+          <p className="section-title mb-3">Latency &amp; Errors</p>
           <LatencyPanel latency={s?.latency} errorCount={s?.error_count ?? 0} unknownCount={s?.unknown_status_count ?? 0} />
         </div>
       </div>
 
       {/* Recent requests */}
-      <div className="bg-gray-800 rounded-lg p-4">
-        <p className="text-sm font-medium text-gray-300 mb-4">Recent requests</p>
+      <div className="panel">
+        <p className="section-title mb-4">Recent requests</p>
         <RequestTable
           requests={requests.data?.requests ?? []}
           sessions={sessions.data?.sessions}

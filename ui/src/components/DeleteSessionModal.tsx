@@ -45,15 +45,15 @@ export function DeleteSessionModal({ sessionId, sessionName, onClose, onDeleted 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="modal-backdrop"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl w-full max-w-sm mx-4 p-6 space-y-4">
-        <h2 className="text-white font-semibold text-base">
+      <div className="modal-dialog mx-4 w-full max-w-sm space-y-4" role="dialog" aria-modal="true" aria-labelledby="delete-session-title">
+        <h2 id="delete-session-title" className="text-base font-semibold">
           Delete session &ldquo;{sessionName}&rdquo;
         </h2>
 
-        <p className="text-gray-400 text-sm">
+        <p className="text-sm text-[var(--text-muted)]">
           This will permanently remove the session record. Requests can be kept or deleted.
         </p>
 
@@ -62,9 +62,9 @@ export function DeleteSessionModal({ sessionId, sessionName, onClose, onDeleted 
             type="checkbox"
             checked={deleteRequests}
             onChange={(e) => setDeleteRequests(e.target.checked)}
-            className="w-4 h-4 rounded border-gray-500 bg-gray-700 text-red-500 focus:ring-red-500 focus:ring-offset-gray-800"
+            className="h-4 w-4 rounded"
           />
-          <span className="text-sm text-gray-300">
+          <span className="text-sm text-[var(--text)]">
             Also delete all requests in this session
           </span>
         </label>
@@ -73,14 +73,14 @@ export function DeleteSessionModal({ sessionId, sessionName, onClose, onDeleted 
           <button
             ref={cancelRef}
             onClick={onClose}
-            className="px-4 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 rounded"
+            className="app-button"
           >
             Cancel
           </button>
           <button
             onClick={handleDelete}
             disabled={deleteSession.isPending}
-            className="px-4 py-1.5 text-sm bg-red-700 hover:bg-red-600 text-white rounded disabled:opacity-50"
+            className="app-button-danger"
           >
             {deleteSession.isPending ? 'Deleting…' : 'Delete'}
           </button>

@@ -13,14 +13,14 @@
 // limitations under the License.
 
 export const CATEGORY_COLORS: Record<string, string> = {
-  system_prompt: '#6366f1',
-  tool_definitions: '#8b5cf6',
-  tool_results: '#a78bfa',
-  file_contents: '#22c55e',
-  conversation_history: '#3b82f6',
-  current_user_message: '#06b6d4',
-  assistant_prefill: '#f59e0b',
-  uncategorized: '#6b7280',
+  system_prompt: 'var(--category-system)',
+  tool_definitions: 'var(--category-tool-definitions)',
+  tool_results: 'var(--category-tool-results)',
+  file_contents: 'var(--category-file-contents)',
+  conversation_history: 'var(--category-conversation)',
+  current_user_message: 'var(--category-user)',
+  assistant_prefill: 'var(--category-prefill)',
+  uncategorized: 'var(--category-other)',
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -65,7 +65,7 @@ export function ContextBar({ data }: { data: TokenCategories }) {
 
   if (total === 0) {
     return (
-      <div style={{ width: 240, height: 12, backgroundColor: '#1f2937' }} />
+      <div className="h-3 w-full rounded-sm bg-[var(--surface-muted)]" aria-label="No context tokens" />
     );
   }
 
@@ -78,7 +78,7 @@ export function ContextBar({ data }: { data: TokenCategories }) {
     }));
 
   return (
-    <div style={{ display: 'flex', width: 240, height: 12, overflow: 'hidden', gap: 1 }}>
+    <div className="flex h-3 w-full min-w-[80px] max-w-[240px] gap-px overflow-hidden rounded-sm" aria-label={`${total.toLocaleString()} context tokens`}>
       {segments.map(seg => (
         <div
           key={seg.key}

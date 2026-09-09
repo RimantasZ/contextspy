@@ -31,12 +31,13 @@ function SortHeader({
   const active = sortKey === col;
   return (
     <th
-      className={`px-4 py-3 font-medium cursor-pointer select-none whitespace-nowrap hover:text-gray-200 ${className}`}
+      aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      className={`cursor-pointer select-none whitespace-nowrap px-4 py-3 font-medium hover:text-[var(--text)] ${className}`}
       onClick={() => onSort(col)}
     >
       <span className="inline-flex items-center gap-1">
         {label}
-        {active && <span className="text-indigo-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+        {active && <span className="text-[var(--accent-soft-text)]">{sortDir === 'asc' ? '↑' : '↓'}</span>}
       </span>
     </th>
   );
@@ -72,10 +73,11 @@ function InlineRename({ id, currentName, onDone }: { id: string; currentName: st
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onDone(); }}
-        className="bg-gray-700 text-white text-sm rounded px-2 py-0.5 border border-gray-500 focus:outline-none focus:border-indigo-400 w-48"
+        aria-label="Session name"
+        className="app-field w-48 py-1"
       />
-      <button onClick={save} className="text-green-400 hover:text-green-300 text-xs px-1" title="Save">✓</button>
-      <button onClick={onDone} className="text-gray-400 hover:text-gray-300 text-xs px-1" title="Cancel">✕</button>
+      <button onClick={save} className="app-button h-8 w-8 px-0 text-[var(--success)]" title="Save" aria-label="Save session name">✓</button>
+      <button onClick={onDone} className="app-button h-8 w-8 px-0" title="Cancel" aria-label="Cancel rename">✕</button>
     </div>
   );
 }
@@ -129,23 +131,23 @@ export default function Sessions() {
     : sessions;
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="page-shell">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Sessions</h1>
+        <h1 className="text-2xl font-bold text-[var(--text)]">Sessions</h1>
         <SessionControls />
       </div>
 
-      <div className="bg-gray-800 rounded-lg overflow-hidden">
+      <div className="surface overflow-x-auto rounded-lg border border-[var(--border)]">
         {isLoading ? (
-          <div className="text-center py-12 text-gray-500 text-sm">Loading\u2026</div>
+          <div className="py-12 text-center text-sm text-[var(--text-muted)]">Loading\u2026</div>
         ) : sessions.length === 0 ? (
-          <div className="text-center py-12 text-gray-500 text-sm">
+          <div className="py-12 text-center text-sm text-[var(--text-muted)]">
             No sessions yet. Start one to group your requests.
           </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-gray-400 uppercase tracking-wide border-b border-gray-700 bg-gray-900">
+              <tr className="surface-inset border-b border-[var(--border)] text-left text-xs text-[var(--text-muted)]">
                 <SortHeader label="Name" col="name" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Started" col="started_at" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Duration" col="duration" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -161,41 +163,41 @@ export default function Sessions() {
               {sorted.map((s) => (
                 <tr
                   key={s.session_id}
-                  className="border-b border-gray-700 hover:bg-gray-750 cursor-pointer transition-colors"
+                  className="cursor-pointer border-b border-[var(--border)] transition-colors hover:bg-[var(--surface-hover)]"
                   onClick={() => navigate(`/sessions/${s.session_id}`)}
                 >
-                  <td className="px-4 py-3 text-white font-medium">
+                  <td className="px-4 py-3 font-medium text-[var(--text)]">
                     {editingId === s.session_id ? (
                       <InlineRename id={s.session_id} currentName={s.name ?? ''} onDone={() => setEditingId(null)} />
                     ) : (
                       s.name
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-400">
+                  <td className="px-4 py-3 text-[var(--text-muted)]">
                     {new Date(s.started_at).toLocaleString()}
                   </td>
-                  <td className="px-4 py-3 text-gray-400">
+                  <td className="px-4 py-3 text-[var(--text-muted)]">
                     {formatDuration(getDurationMs(s))}
                   </td>
                   <td className="px-4 py-3">
                     {s.ended_at === null ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-900 text-green-300 text-xs">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                      <span className="app-badge status-success gap-1">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--success)]" />
                         Active
                       </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-gray-700 text-gray-400 text-xs">
+                      <span className="app-badge">
                         Ended
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-400">
+                  <td className="px-4 py-3 text-right text-[var(--text-muted)]">
                     {s.request_count}
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-300">
+                  <td className="px-4 py-3 text-right text-[var(--text)]">
                     {s.tokens_in > 0 ? s.tokens_in.toLocaleString() : '—'}
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-300">
+                  <td className="px-4 py-3 text-right text-[var(--text)]">
                     {s.tokens_out > 0 ? s.tokens_out.toLocaleString() : '—'}
                   </td>
                   <td className="px-4 py-3">
@@ -208,13 +210,13 @@ export default function Sessions() {
                     <div className="flex items-center justify-end gap-3">
                       <button
                         onClick={() => setEditingId(s.session_id)}
-                        className="text-xs text-gray-400 hover:text-white"
+                        className="app-button-ghost min-h-8 px-2 py-1 text-xs"
                       >
                         Rename
                       </button>
                       <button
                         onClick={() => setDeletingSession({ id: s.session_id, name: s.name ?? '' })}
-                        className="text-xs text-red-400 hover:text-red-300"
+                        className="app-button-danger-ghost min-h-8 px-2 py-1 text-xs"
                       >
                         Delete
                       </button>

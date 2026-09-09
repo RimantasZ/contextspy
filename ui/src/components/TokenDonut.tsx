@@ -12,17 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
-
-const CATEGORY_COLORS: Record<string, string> = {
-  system_prompt: '#6366f1',
-  tool_definitions: '#8b5cf6',
-  tool_results: '#a78bfa',
-  file_contents: '#22c55e',
-  conversation_history: '#3b82f6',
-  current_user_message: '#06b6d4',
-  assistant_prefill: '#f59e0b',
-  uncategorized: '#6b7280',
-};
+import { CATEGORY_COLORS } from './ContextBar';
 
 const CATEGORY_LABELS: Record<string, string> = {
   system_prompt: 'System Prompt',
@@ -46,12 +36,12 @@ export function TokenDonut({ data }: Props) {
     .map(([key, value]) => ({
       name: CATEGORY_LABELS[key] ?? key,
       value,
-      color: CATEGORY_COLORS[key] ?? '#6b7280',
+      color: CATEGORY_COLORS[key] ?? 'var(--category-other)',
     }));
 
   if (entries.length === 0) {
     return (
-      <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+      <div className="flex h-48 items-center justify-center text-sm text-[var(--text-muted)]">
         No token data
       </div>
     );
@@ -60,17 +50,16 @@ export function TokenDonut({ data }: Props) {
   const total = entries.reduce((sum, e) => sum + e.value, 0);
 
   return (
-    <div className="flex items-center gap-4">
-      {/* Donut — left 50% */}
-      <div style={{ width: '50%', minWidth: 0 }}>
-        <ResponsiveContainer width="100%" height={220}>
+    <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] items-center gap-4">
+      <div className="min-w-0" role="img" aria-label={`Token composition. ${entries.map((entry) => `${entry.name}: ${entry.value.toLocaleString()}`).join('; ')}`}>
+        <ResponsiveContainer width="100%" height={210}>
           <PieChart>
             <Pie
               data={entries}
               cx="50%"
               cy="50%"
-              innerRadius={60}
-              outerRadius={90}
+              innerRadius={54}
+              outerRadius={82}
               paddingAngle={2}
               dataKey="value"
             >
@@ -82,33 +71,32 @@ export function TokenDonut({ data }: Props) {
               formatter={(value: number) => [
                 `${value.toLocaleString()} tokens (${((value / total) * 100).toFixed(1)}%)`,
               ]}
-              contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '6px' }}
-              labelStyle={{ color: '#f9fafb' }}
-              itemStyle={{ color: '#d1d5db' }}
+              contentStyle={{ backgroundColor: 'var(--chart-tooltip)', border: '1px solid var(--border)', borderRadius: '6px' }}
+              labelStyle={{ color: 'var(--chart-tooltip-text)' }}
+              itemStyle={{ color: 'var(--text-muted)' }}
             />
           </PieChart>
         </ResponsiveContainer>
       </div>
 
-      {/* Table — right 50% */}
-      <div style={{ width: '50%', minWidth: 0 }} className="overflow-auto max-h-[220px]">
-        <table className="w-full text-xs text-gray-300 border-separate border-spacing-0">
-          <thead className="sticky top-0 bg-gray-800 z-10">
-            <tr className="text-gray-500 uppercase tracking-wide">
-              <th className="text-left pb-2 pr-3 font-medium border-b border-gray-700">Category</th>
-              <th className="text-right pb-2 font-medium border-b border-gray-700 whitespace-nowrap">Tokens</th>
+      <div className="min-w-0 max-h-[220px] overflow-auto">
+        <table className="w-full border-separate border-spacing-0 text-xs text-[var(--text)]">
+          <thead className="sticky top-0 z-10 bg-[var(--surface)]">
+            <tr className="text-[var(--text-muted)]">
+              <th className="border-b border-[var(--border)] pb-2 pr-3 text-left font-medium">Category</th>
+              <th className="whitespace-nowrap border-b border-[var(--border)] pb-2 text-right font-medium">Tokens</th>
             </tr>
           </thead>
           <tbody>
             {entries.map((entry) => (
-              <tr key={entry.name} className="hover:bg-gray-700/30">
-                <td className="py-1.5 pr-3 border-b border-gray-700/40">
+              <tr key={entry.name} className="hover:bg-[var(--surface-muted)]">
+                <td className="border-b border-[var(--border)] py-1.5 pr-3">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span className="w-2 h-2 rounded-full shrink-0" style={{ background: entry.color }} />
                     <span className="truncate" title={entry.name}>{entry.name}</span>
                   </div>
                 </td>
-                <td className="py-1.5 text-right tabular-nums border-b border-gray-700/40 whitespace-nowrap">
+                <td className="whitespace-nowrap border-b border-[var(--border)] py-1.5 text-right tabular-nums">
                   {entry.value.toLocaleString()}
                 </td>
               </tr>
@@ -119,4 +107,3 @@ export function TokenDonut({ data }: Props) {
     </div>
   );
 }
-

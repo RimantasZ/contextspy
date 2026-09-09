@@ -55,22 +55,27 @@ export default function Requests() {
   function resetPage() { setPage(0); }
 
   return (
-    <div className="p-6 space-y-4">
-      <h1 className="text-2xl font-bold text-white">All Requests</h1>
+    <div className="page-shell">
+      <h1 className="text-2xl font-bold text-[var(--text)]">All Requests</h1>
 
       {/* Filter bar */}
       <div className="flex gap-3 flex-wrap items-center">
-        <input
-          type="search"
-          placeholder="Search model, endpoint, agent…"
-          value={q}
-          onChange={(e) => { setQ(e.target.value); resetPage(); }}
-          className="bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-indigo-500 w-56"
-        />
+        <label className="min-w-[220px] flex-1 sm:max-w-xs">
+          <span className="sr-only">Search requests</span>
+          <input
+            type="search"
+            aria-label="Search requests"
+            placeholder="Search model, endpoint, agent…"
+            value={q}
+            onChange={(e) => { setQ(e.target.value); resetPage(); }}
+            className="app-field w-full py-1.5"
+          />
+        </label>
         <select
+          aria-label="Filter by provider"
           value={provider}
           onChange={(e) => { setProvider(e.target.value); resetPage(); }}
-          className="bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-indigo-500"
+          className="app-field py-1.5"
         >
           <option value="">All providers</option>
           <option value="openai">OpenAI</option>
@@ -78,9 +83,10 @@ export default function Requests() {
           <option value="ollama">Ollama</option>
         </select>
         <select
+          aria-label="Filter by agent"
           value={agent}
           onChange={(e) => { setAgent(e.target.value); resetPage(); }}
-          className="bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-indigo-500"
+          className="app-field py-1.5"
         >
           <option value="">All agents</option>
           <option value="copilot">Copilot</option>
@@ -89,9 +95,10 @@ export default function Requests() {
           <option value="unknown">Unknown</option>
         </select>
         <select
+          aria-label="Filter by status"
           value={statusCategory}
           onChange={(e) => { setStatusCategory(e.target.value); resetPage(); }}
-          className="bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-indigo-500"
+          className="app-field py-1.5"
         >
           <option value="">All statuses</option>
           <option value="success">Success (2xx)</option>
@@ -100,22 +107,22 @@ export default function Requests() {
         {(provider || agent || q || statusCategory) && (
           <button
             onClick={() => { setProvider(''); setAgent(''); setQ(''); setStatusCategory(''); resetPage(); }}
-            className="text-sm text-gray-400 hover:text-white px-2"
+            className="app-button-ghost"
           >
             Clear filters
           </button>
         )}
         {modelOptions.length > 0 && (
-          <span className="text-xs text-gray-500 ml-auto">
+          <span className="ml-auto text-xs text-[var(--text-muted)]">
             {modelOptions.length} model{modelOptions.length !== 1 ? 's' : ''} seen
           </span>
         )}
       </div>
 
       {/* Table */}
-      <div className="bg-gray-800 rounded-lg p-4">
+      <div className="panel">
         {isLoading ? (
-          <div className="text-center py-12 text-gray-500 text-sm">Loading…</div>
+          <div className="py-12 text-center text-sm text-[var(--text-muted)]">Loading…</div>
         ) : (
           <RequestTable
             requests={reqs}
@@ -134,15 +141,15 @@ export default function Requests() {
           <button
             disabled={page === 0}
             onClick={() => setPage((p) => p - 1)}
-            className="px-3 py-1 text-sm bg-gray-700 text-gray-300 rounded disabled:opacity-40 hover:bg-gray-600"
+            className="app-button"
           >
             Previous
           </button>
-          <span className="text-sm text-gray-500">Page {page + 1}</span>
+          <span className="text-sm text-[var(--text-muted)]">Page {page + 1}</span>
           <button
             disabled={reqs.length < PAGE_SIZE}
             onClick={() => setPage((p) => p + 1)}
-            className="px-3 py-1 text-sm bg-gray-700 text-gray-300 rounded disabled:opacity-40 hover:bg-gray-600"
+            className="app-button"
           >
             Next
           </button>
