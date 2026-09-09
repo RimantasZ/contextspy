@@ -23,6 +23,7 @@ from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
+    contains_media_content,
     flatten_content,
     reconcile_thinking,
 )
@@ -143,8 +144,10 @@ class AnthropicAdapter(WireFormatAdapter):
                         message_index=i, attrs=attrs,
                     ))
                 else:
+                    if contains_media_content(part):
+                        attrs.update({"contains_media": True, "token_estimate": "text_only"})
                     blocks.append(Block.make(
-                        Direction.INPUT, BlockType.OTHER, json.dumps(part),
+                        Direction.INPUT, BlockType.OTHER, flatten_content(part),
                         message_index=i, attrs={**attrs, "content_type": ptype},
                     ))
 

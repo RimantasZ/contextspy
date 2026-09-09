@@ -21,7 +21,7 @@ def test_inspect_migration_state_is_read_only_for_legacy_database(tmp_path):
     version_from, pending = migrations.inspect_migration_state(db_path)
 
     assert version_from == 1
-    assert pending == [2, 3]
+    assert pending == [2, 3, 4]
     assert db_path.read_bytes() == original_bytes
     with sqlite3.connect(db_path) as conn:
         tables = {
@@ -77,7 +77,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
     settings = Settings(config_dir=tmp_path)
     settings.storage.db_path = db_path
     monkeypatch.setattr(Settings, "load", classmethod(lambda cls: settings))
-    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3]))
+    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3, 4]))
 
     events = []
     real_create_backup = migrations.create_migration_backup
@@ -100,8 +100,8 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
         yield object()
 
     monkeypatch.setattr(migrations, "create_migration_backup", create_backup)
-    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3])
-    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3])
+    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3, 4])
+    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3, 4])
     monkeypatch.setattr(database, "init_db", init_db)
     monkeypatch.setattr(database, "get_db", get_db)
 
@@ -115,7 +115,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
 
     cli.db_upgrade()
 
-    backup_path = tmp_path / "profile_backup_v1_to_v3_2026-08-27-0000.back"
+    backup_path = tmp_path / "profile_backup_v1_to_v4_2026-08-27-0000.back"
     assert events == ["backup", "init"]
     assert backup_path.read_bytes() == original_bytes
     assert db_path.read_bytes() == b"database changed by init"
@@ -256,3 +256,70 @@ def test_v3_backfill_reconstructs_exact_websocket_lineage_and_blocks(tmp_path):
         ]
         assert child.context_fidelity == "complete"
         assert any(block["block_type"] == "tool_result" for block in blocks)
+
+
+def test_v4_reanalyzes_inline_media_without_tokenizing_base64(tmp_path):
+    from contextspy.analysis.blocks import Block, BlockType, Direction
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "inline_media_backfill.db")
+    image_data = "data:image/jpeg;base64," + "A" * 100_000
+    tool_output = [
+        {"type": "input_text", "text": "Screenshot captured"},
+        {"type": "input_image", "image_url": image_data},
+    ]
+    request_text = json.dumps({
+        "model": "gpt-test",
+        "tools": [{"type": "custom", "name": "js"}],
+        "input": [
+            {"type": "custom_tool_call", "call_id": "call_1", "name": "js", "input": "{}"},
+            {"type": "custom_tool_call_output", "call_id": "call_1", "output": tool_output},
+        ],
+    })
+
+    with get_db() as db:
+        row = crud.create_request(db, {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc),
+            "provider": "openai_chatgpt",
+            "endpoint": "/backend-api/codex/responses",
+            "canonical_request_body": request_text,
+            "tokens_tool_results": 50_000,
+            "tokens_total_input": 50_000,
+            "tokens_total_output": 17,
+            "tokens_output_text": 17,
+        })
+        request_id = row.id
+        old_block = Block.make(
+            Direction.INPUT,
+            BlockType.TOOL_RESULT,
+            json.dumps(tool_output),
+            message_index=1,
+            tool_name="js",
+            tool_call_id="call_1",
+        )
+        old_block.category = "tool_results"
+        crud.insert_blocks(db, request_id, [old_block])
+        crud.upsert_tool_stats(db, request_id, [{
+            "tool_name": "js", "definition_tokens": 0,
+            "result_tokens": old_block.token_count,
+        }])
+
+    with get_db() as db:
+        migrations._migrate_to_v4(db)
+
+    with get_db() as db:
+        row = crud.get_request(db, request_id)
+        blocks = crud.get_blocks(db, request_id)
+        tool_stats = crud.get_tool_stats(db, request_id=request_id)
+        assert row is not None
+        assert row.tokens_tool_results < 20
+        assert row.tokens_total_input < 100
+        assert row.tokens_total_output == 17
+        assert row.tokens_output_text == 17
+
+    result = next(block for block in blocks if block["block_type"] == "tool_result")
+    assert result["content"] == "Screenshot captured\n[input_image]"
+    assert result["attrs"]["contains_media"] is True
+    assert tool_stats[0]["result_tokens"] < 20
