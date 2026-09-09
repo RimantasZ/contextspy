@@ -74,7 +74,7 @@ export default function Layout() {
         </div>
       </header>
 
-      <nav className="hidden h-screen w-16 shrink-0 flex-col gap-1 border-r border-[var(--border)] bg-[var(--surface-elevated)] px-2 py-5 lg:sticky lg:top-0 lg:flex xl:w-48 xl:px-3">
+      <nav className="fixed inset-y-0 left-0 hidden h-screen w-16 flex-col gap-1 border-r border-[var(--border)] bg-[var(--surface-elevated)] px-2 py-5 lg:flex xl:w-48 xl:px-3">
         {navigation}
       </nav>
 
@@ -89,7 +89,7 @@ export default function Layout() {
         </div>
       )}
 
-      <main className="min-w-0 flex-1 overflow-x-hidden">
+      <main className="min-w-0 flex-1 overflow-x-hidden lg:ml-16 xl:ml-48">
         <Outlet />
       </main>
     </div>
