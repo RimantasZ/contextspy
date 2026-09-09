@@ -300,6 +300,56 @@ def test_responses_adapter_handles_developer_and_custom_tool_items():
     assert any(block.block_type == "tool_result" and block.tool_name == "shell" for block in blocks)
 
 
+def test_responses_multimodal_tool_output_does_not_tokenize_inline_image_data():
+    image_data = "data:image/jpeg;base64," + "A" * 100_000
+    request = {
+        "input": [{
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": [
+                {"type": "input_text", "text": "Screenshot captured"},
+                {"type": "input_image", "image_url": image_data},
+            ],
+        }],
+    }
+
+    blocks, _ = OpenAIResponsesAdapter().parse_request(request)
+
+    assert len(blocks) == 1
+    block = blocks[0]
+    assert block.content == "Screenshot captured\n[input_image]"
+    assert "base64" not in block.content
+    assert block.token_count < 20
+    assert block.attrs == {
+        "provider_item_type": "function_call_output",
+        "contains_media": True,
+        "token_estimate": "text_only",
+    }
+
+
+def test_responses_multimodal_message_does_not_tokenize_inline_image_data():
+    request = {
+        "input": [{
+            "role": "user",
+            "content": [{
+                "type": "input_image",
+                "image_url": "data:image/png;base64," + "A" * 100_000,
+            }],
+        }],
+    }
+
+    blocks, _ = OpenAIResponsesAdapter().parse_request(request)
+
+    assert len(blocks) == 1
+    assert blocks[0].content == "[input_image]"
+    assert blocks[0].token_count < 10
+    assert blocks[0].attrs == {
+        "content_type": "input_image",
+        "contains_media": True,
+        "token_estimate": "text_only",
+    }
+
+
 def test_responses_usage_includes_cache_and_reasoning_breakdowns():
     _, usage = OpenAIResponsesAdapter().parse_response({
         "output": [],

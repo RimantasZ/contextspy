@@ -78,6 +78,39 @@ def get_adapter(endpoint: str) -> WireFormatAdapter | None:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+_MEDIA_CONTENT_TYPES = frozenset({
+    "audio",
+    "computer_screenshot",
+    "document",
+    "file",
+    "image",
+    "image_url",
+    "input_audio",
+    "input_file",
+    "input_image",
+    "input_video",
+    "output_audio",
+    "output_image",
+    "video",
+})
+
+
+def contains_media_content(content: Any) -> bool:
+    """Return whether a nested provider content value contains media.
+
+    Inline image/audio/file payloads are transport encodings, not text shown to
+    the model.  Adapters use this marker to explain why a block's local token
+    count covers only its textual content.
+    """
+    if isinstance(content, dict):
+        if content.get("type") in _MEDIA_CONTENT_TYPES:
+            return True
+        return any(contains_media_content(value) for value in content.values())
+    if isinstance(content, list):
+        return any(contains_media_content(value) for value in content)
+    return False
+
+
 def reconcile_thinking(blocks: list[Block], usage: Usage) -> None:
     """Give a response's thinking a token count, whatever the provider disclosed.
 
@@ -185,25 +218,24 @@ def flatten_content(content: Any) -> str:
 
     Used for content that stays a single block even though it may itself be
     a nested list — e.g. a tool_result's inner content array, or a plain
-    multimodal message with no text/tool parts worth splitting out.
+    multimodal message with no text/tool parts worth splitting out. Media is
+    represented by a short marker: tokenizing an inline base64 transport value
+    as text can overstate a screenshot by tens of thousands of tokens.
     """
     if isinstance(content, str):
         return content
+    if isinstance(content, dict):
+        content_type = content.get("type")
+        if content_type in _MEDIA_CONTENT_TYPES:
+            return f"[{content_type}]"
+        if content_type in ("text", "output_text", "input_text"):
+            return str(content.get("text", ""))
+        if content_type == "tool_result":
+            return flatten_content(content.get("content", ""))
+        if "text" in content:
+            return str(content["text"])
+        return json.dumps(content, ensure_ascii=False)
     if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, dict):
-                if block.get("type") == "text":
-                    parts.append(block.get("text", ""))
-                elif block.get("type") in ("output_text", "input_text"):
-                    parts.append(block.get("text", ""))
-                elif block.get("type") == "tool_result":
-                    parts.append(flatten_content(block.get("content", "")))
-                elif "text" in block:
-                    parts.append(str(block["text"]))
-                else:
-                    parts.append(json.dumps(block))
-            else:
-                parts.append(str(block))
+        parts = [flatten_content(block) for block in content]
         return "\n".join(p for p in parts if p)
-    return json.dumps(content) if content is not None else ""
+    return json.dumps(content, ensure_ascii=False) if content is not None else ""

@@ -24,6 +24,7 @@ from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
+    contains_media_content,
     flatten_content,
     reconcile_thinking,
 )
@@ -80,9 +81,12 @@ class OpenAIChatAdapter(WireFormatAdapter):
                     if part.get("type") == "text" and part.get("text"):
                         blocks.append(Block.make(Direction.INPUT, msg_block_type, part["text"], message_index=i))
                     elif part.get("type") not in ("text",):
+                        attrs = {"content_type": part.get("type")}
+                        if contains_media_content(part):
+                            attrs.update({"contains_media": True, "token_estimate": "text_only"})
                         blocks.append(Block.make(
-                            Direction.INPUT, BlockType.OTHER, json.dumps(part),
-                            message_index=i, attrs={"content_type": part.get("type")},
+                            Direction.INPUT, BlockType.OTHER, flatten_content(part),
+                            message_index=i, attrs=attrs,
                         ))
             elif isinstance(content, str) and content:
                 blocks.append(Block.make(Direction.INPUT, msg_block_type, content, message_index=i))

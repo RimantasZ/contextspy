@@ -155,6 +155,14 @@ Token counts are **estimates** using tiktoken `o200k_base` encoding
 When the provider reports exact token counts in the API response, those are stored
 alongside the estimate and shown on the request detail page for comparison.
 
+Inline image, audio, document, and other media payloads need different accounting. A base64 data
+URL is only a transport encoding; the provider does not tokenize those characters as prompt text.
+ContextSpy therefore replaces media parts with short typed markers in analyzed blocks and marks
+mixed blocks with `contains_media` plus `token_estimate: text_only`. The canonical request still
+retains the original payload for raw inspection. For multimodal requests, use the provider-reported
+input total as the authoritative total because the local estimate covers the visible text but not
+provider-specific media tokens.
+
 ### Encoder choice, and the 0.3.4 switch
 
 ContextSpy counted with `cl100k_base` up to 0.3.3 and with `o200k_base` from 0.3.4 onwards.

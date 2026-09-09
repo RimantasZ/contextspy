@@ -32,6 +32,7 @@ from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
+    contains_media_content,
     flatten_content,
     reconcile_thinking,
 )
@@ -172,10 +173,13 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
             if item_type in ("function_call_output", "custom_tool_call_output"):
                 call_id = item.get("call_id")
                 output = item.get("output", "")
+                attrs = {"provider_item_type": item_type}
+                if contains_media_content(output):
+                    attrs.update({"contains_media": True, "token_estimate": "text_only"})
                 b = Block.make(
-                    Direction.INPUT, BlockType.TOOL_RESULT, _json_text(output),
+                    Direction.INPUT, BlockType.TOOL_RESULT, flatten_content(output),
                     message_index=i, tool_call_id=call_id,
-                    attrs={"provider_item_type": item_type},
+                    attrs=attrs,
                 )
                 blocks.append(b)
                 pending_tool_results.append(b)
@@ -228,8 +232,13 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                             blocks.append(Block.make(Direction.INPUT, block_type, part["refusal"],
                                                       message_index=i, attrs={"refusal": True}))
                         else:
-                            blocks.append(Block.make(Direction.INPUT, BlockType.OTHER, json.dumps(part, ensure_ascii=False),
-                                                      message_index=i, attrs={"content_type": ptype}))
+                            attrs = {"content_type": ptype}
+                            if contains_media_content(part):
+                                attrs.update({"contains_media": True, "token_estimate": "text_only"})
+                            blocks.append(Block.make(
+                                Direction.INPUT, BlockType.OTHER, flatten_content(part),
+                                message_index=i, attrs=attrs,
+                            ))
                 elif isinstance(content_raw, str) and content_raw:
                     blocks.append(Block.make(Direction.INPUT, block_type, content_raw, message_index=i))
                 elif content_raw:
