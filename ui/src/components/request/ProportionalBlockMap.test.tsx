@@ -27,4 +27,10 @@ describe('ProportionalBlockMap', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: /200 tokens/i }), { key: 'Escape' })
     expect(onSelect).toHaveBeenLastCalledWith(null)
   })
+
+  it('marks zero-token blocks in proportional view', () => {
+    const zero = makeBlock({ id: 4, token_count: 0 })
+    render(<ProportionalBlockMap blocks={[zero]} selectedId={null} density={26} onSelect={vi.fn()} />)
+    expect(screen.getByRole('button', { name: /0 tokens/i }).className).toContain('composition-block-zero')
+  })
 })

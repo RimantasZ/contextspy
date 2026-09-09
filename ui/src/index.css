@@ -100,6 +100,7 @@
   --syntax-boolean: #9a641c;
   --search-mark: #f4d46a;
   --search-mark-text: #30280d;
+  --zero-token-marker: rgb(23 26 24 / 42%);
 
   /* Per-token highlighting and generated tool colors */
   --token-highlight-1: #e5e1f8;
@@ -201,6 +202,7 @@
   --syntax-boolean: #f1bd70;
   --search-mark: #776424;
   --search-mark-text: #fff4c7;
+  --zero-token-marker: rgb(8 11 9 / 48%);
 
   --token-highlight-1: #40395e;
   --token-highlight-2: #294b45;
@@ -308,6 +310,13 @@ pre, code { overflow-wrap: anywhere; }
     @apply relative rounded-[3px] border text-[9px] font-bold leading-none text-[var(--block-ink)] transition-transform;
   }
   .composition-block:hover { @apply z-[1] scale-110; }
+  /* An X preserves the category color while making zero-token structural blocks unmistakable. */
+  .composition-block-zero {
+    background-image:
+      linear-gradient(to top right, transparent calc(50% - 1px), var(--zero-token-marker) calc(50% - 1px), var(--zero-token-marker) calc(50% + 1px), transparent calc(50% + 1px)),
+      linear-gradient(to bottom right, transparent calc(50% - 1px), var(--zero-token-marker) calc(50% - 1px), var(--zero-token-marker) calc(50% + 1px), transparent calc(50% + 1px));
+  }
+  .search-match-active { outline: 2px solid var(--focus); outline-offset: 1px; }
 
   .workbench-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); }
 }

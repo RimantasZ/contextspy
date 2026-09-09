@@ -1,111 +1,101 @@
-import { useEffect, useRef, useState } from 'react'
 import type { RequestBlock } from '../../api/client'
-import { tokenizeApi } from '../../api/client'
 import { BLOCK_VISUALS, blockLabel, visualOf } from '../../lib/blockVisuals'
 
-const TOKEN_COLORS = Array.from({ length: 7 }, (_, index) => `var(--token-highlight-${index + 1})`)
+const TOOL_VISUAL_ORDER = { tool_definition: 0, tool_call: 1, tool_result: 2 } as const
 
-export function BlockInspector({ block, onJump, onClear }: {
+function isToolBlock(block: RequestBlock): boolean {
+  return block.block_type === 'tool_definition' || block.block_type === 'tool_call' || block.block_type === 'tool_result'
+}
+
+function BlockCue({ block, selected, onJump }: {
+  block: RequestBlock
+  selected: boolean
+  onJump: (targetId: number) => void
+}) {
+  const visual = visualOf(block)
+  const style = BLOCK_VISUALS[visual]
+  const content = (
+    <>
+      <span className="shrink-0">{style.short}</span>
+      <span className="min-w-0 flex-1 truncate text-left">{block.tool_name ?? style.label}</span>
+      <span className="shrink-0 tabular-nums opacity-70">{block.token_count.toLocaleString()}</span>
+    </>
+  )
+  const shared = `composition-block flex h-[26px] w-full min-w-0 items-center gap-1.5 overflow-hidden px-2 ${block.token_count <= 0 ? 'composition-block-zero' : ''}`
+  const cueStyle = { backgroundColor: style.color, borderColor: style.border }
+
+  return selected ? (
+    <div className={shared} style={cueStyle} aria-label={`Selected ${blockLabel(block)}`}>{content}</div>
+  ) : (
+    <button type="button" className={shared} style={cueStyle} onClick={() => onJump(block.id)} aria-label={`Jump to ${blockLabel(block)}`}>
+      {content}
+    </button>
+  )
+}
+
+export function BlockInspector({ block, blocks, onJump, onClear }: {
   block: RequestBlock | null
+  blocks: RequestBlock[]
   onJump: (targetId: number) => void
   onClear: () => void
 }) {
-  const cache = useRef(new Map<number, string[]>())
-  const [highlight, setHighlight] = useState(false)
-  const [tokens, setTokens] = useState<string[] | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    setTokens(block ? (cache.current.get(block.id) ?? null) : null)
-  }, [block])
-
-  useEffect(() => {
-    if (!highlight || !block?.content || block.content_purged || cache.current.has(block.id)) return
-    let current = true
-    setLoading(true)
-    tokenizeApi.tokenize([block.content])
-      .then((result) => {
-        if (!current) return
-        const next = result.results[0] ?? []
-        cache.current.set(block.id, next)
-        setTokens(next)
-      })
-      .catch(() => { if (current) setTokens(null) })
-      .finally(() => { if (current) setLoading(false) })
-    return () => { current = false }
-  }, [block, highlight])
-
   if (!block) {
     return (
       <aside className="panel-elevated flex min-h-48 items-center justify-center text-center text-sm text-[var(--text-muted)]" aria-label="Block inspector">
-        Select a block to inspect its content and relationships.
+        Select a block to inspect its metadata and relationships.
       </aside>
     )
   }
 
-  const visual = visualOf(block)
-  const links = [
-    { id: block.linked_previous_message_id, label: 'Previous message' },
-    { id: block.linked_call_id, label: 'Tool call' },
-    { id: block.linked_definition_id, label: 'Tool definition' },
-  ].filter((link): link is { id: number; label: string } => link.id != null)
+  const linkedIds = [block.linked_definition_id, block.linked_call_id].filter((id): id is number => id != null)
+  if (block.block_type === 'tool_call') {
+    const result = blocks.find((candidate) => candidate.linked_call_id === block.id)
+    if (result) linkedIds.push(result.id)
+  }
+  const toolFlow = [block, ...linkedIds.map((id) => blocks.find((candidate) => candidate.id === id))]
+    .filter((candidate): candidate is RequestBlock => candidate != null && isToolBlock(candidate))
+    .filter((candidate, index, values) => values.findIndex((other) => other.id === candidate.id) === index)
+    .sort((a, b) => TOOL_VISUAL_ORDER[visualOf(a) as keyof typeof TOOL_VISUAL_ORDER] - TOOL_VISUAL_ORDER[visualOf(b) as keyof typeof TOOL_VISUAL_ORDER])
 
   return (
     <aside className="panel-elevated min-w-0 self-start overflow-hidden lg:sticky lg:top-4" aria-label="Block inspector">
-      <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <span
-            className="mb-1 inline-flex rounded border border-[var(--graphical-border)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--block-ink)]"
-            style={{ background: BLOCK_VISUALS[visual].color, borderColor: BLOCK_VISUALS[visual].border }}
-          >
-            {BLOCK_VISUALS[visual].short} · {BLOCK_VISUALS[visual].label}
-          </span>
-          <h3 className="truncate text-sm font-semibold" title={blockLabel(block)}>{blockLabel(block)}</h3>
-        </div>
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">Selected block</h3>
         <button type="button" onClick={onClear} className="app-button h-8 w-8 shrink-0 px-0" aria-label="Close block inspector">×</button>
       </div>
 
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+      {!isToolBlock(block) && <BlockCue block={block} selected onJump={onJump} />}
+
+      <dl className={`${isToolBlock(block) ? '' : 'mt-3'} grid grid-cols-2 gap-x-3 gap-y-2 text-xs`}>
+        <div><dt className="text-[var(--text-muted)]">Type</dt><dd className="font-medium">{BLOCK_VISUALS[visualOf(block)].label}</dd></div>
         <div><dt className="text-[var(--text-muted)]">Tokens</dt><dd className="font-medium tabular-nums">{block.token_count.toLocaleString()}</dd></div>
         <div><dt className="text-[var(--text-muted)]">Position</dt><dd className="font-medium tabular-nums">{block.position + 1}</dd></div>
         <div><dt className="text-[var(--text-muted)]">Message</dt><dd className="font-medium">{block.message_index ?? 'Structural'}</dd></div>
         <div><dt className="text-[var(--text-muted)]">First seen</dt><dd className="font-medium">{block.first_seen_session_seq != null ? `Request #${block.first_seen_session_seq}` : '—'}</dd></div>
-        <div className="col-span-2"><dt className="text-[var(--text-muted)]">Tool</dt><dd className="break-all font-medium">{block.tool_name ?? '—'}</dd></div>
-        <div className="col-span-2"><dt className="text-[var(--text-muted)]">Content state</dt><dd className="font-medium">{block.content_purged ? 'Purged by retention policy' : block.content == null ? 'No content captured' : 'Available'}</dd></div>
+        <div><dt className="text-[var(--text-muted)]">Content</dt><dd className="font-medium">{block.content_purged ? 'Purged' : block.content == null ? 'Not captured' : 'Available'}</dd></div>
+        {block.tool_call_id && <div className="col-span-2"><dt className="text-[var(--text-muted)]">Tool call ID</dt><dd className="truncate font-mono text-[11px]" title={block.tool_call_id}>{block.tool_call_id}</dd></div>}
       </dl>
 
-      {links.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[var(--border)] pt-3">
-          {links.map((link) => (
-            <button key={link.label} type="button" onClick={() => onJump(link.id)} className="app-button min-h-8 py-1 text-xs" aria-label={`Jump to ${link.label.toLowerCase()}`}>
-              {link.label} →
-            </button>
+      {toolFlow.length > 0 && (
+        <div className="mt-4 space-y-2 border-t border-[var(--border)] pt-3">
+          <h4 className="text-xs font-semibold">Tool relationship</h4>
+          {toolFlow.map((related, index) => (
+            <div key={related.id}>
+              {index > 0 && <div className="py-0.5 pl-3 text-xs text-[var(--text-subtle)]" aria-hidden="true">↓</div>}
+              <div className="mb-1 text-[10px] text-[var(--text-muted)]">{BLOCK_VISUALS[visualOf(related)].label}</div>
+              <BlockCue block={related} selected={related.id === block.id} onJump={onJump} />
+            </div>
           ))}
         </div>
       )}
 
-      <div className="surface-inset mt-3 min-w-0 overflow-hidden rounded-md border border-[var(--border)]">
-        <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
-          <span className="text-xs font-medium">Content</span>
-          {block.content && !block.content_purged && (
-            <label className="flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]">
-              <input type="checkbox" checked={highlight} onChange={(event) => setHighlight(event.target.checked)} />
-              Token highlight
-            </label>
-          )}
+      {block.linked_previous_message_id != null && (
+        <div className="mt-4 border-t border-[var(--border)] pt-3">
+          <button type="button" onClick={() => onJump(block.linked_previous_message_id!)} className="app-button min-h-8 w-full py-1 text-xs" aria-label="Jump to previous message">
+            Previous message →
+          </button>
         </div>
-        <div className="max-h-[440px] min-h-28 overflow-auto p-3 font-mono text-xs leading-5 [overflow-wrap:anywhere] [white-space:pre-wrap]">
-          {block.content_purged ? (
-            <span className="italic text-[var(--text-muted)]">Content was purged, but its structure and token count are retained.</span>
-          ) : block.content == null ? (
-            <span className="italic text-[var(--text-muted)]">No content was captured for this structural block.</span>
-          ) : highlight && loading ? (
-            <span className="italic text-[var(--text-muted)]">Tokenizing selected block…</span>
-          ) : highlight && tokens ? (
-            tokens.map((token, index) => <span key={index} className="rounded-[2px]" style={{ background: TOKEN_COLORS[index % TOKEN_COLORS.length] }}>{token}</span>)
-          ) : block.content}
-        </div>
-      </div>
+      )}
     </aside>
   )
 }

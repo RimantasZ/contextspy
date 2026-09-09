@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Request, RequestBlock } from '../../api/client'
 import { useRequestBlocks } from '../../api/hooks'
 import type { BlockVisual } from '../../lib/blockVisuals'
-import { sortedBlocks, visualOf } from '../../lib/blockVisuals'
+import { BLOCK_VISUALS, sortedBlocks, visualOf } from '../../lib/blockVisuals'
 import { SegmentedControl } from '../ui/SegmentedControl'
+import { SearchableContentViewer } from '../ui/SearchableContentViewer'
 import { BlockInspector } from './BlockInspector'
 import { BlockLegend } from './BlockLegend'
 import { BlockToolbar } from './BlockToolbar'
@@ -25,28 +26,28 @@ function RawPayload({ request, direction }: { request: Request; direction: Workb
   const content = rawPayload(request, direction)
   const [source, setSource] = useState<'payload' | 'events'>('payload')
   const hasEvents = direction === 'output' && (request.response_events?.length ?? 0) > 0
-  const shown = source === 'events' ? JSON.stringify(request.response_events, null, 2) : content
-  let pretty = shown ?? ''
-  if (source === 'payload' && shown) {
-    try { pretty = JSON.stringify(JSON.parse(shown), null, 2) } catch { /* preserve non-JSON payload */ }
-  }
+  const shown = source === 'events' ? JSON.stringify(request.response_events) : content
+  const title = source === 'events' ? 'Raw response events' : `Raw ${direction === 'input' ? 'request' : 'response'} payload`
 
   useEffect(() => { setSource('payload') }, [direction])
 
   return (
     <div className="min-w-0">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-3 py-2">
+      <div className="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2">
         <div className="flex gap-1">
           <button type="button" onClick={() => setSource('payload')} className={`app-button min-h-8 py-1 text-xs ${source === 'payload' ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}>Payload</button>
           {hasEvents && <button type="button" onClick={() => setSource('events')} className={`app-button min-h-8 py-1 text-xs ${source === 'events' ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}>Events</button>}
         </div>
-        {shown != null && <button type="button" onClick={() => navigator.clipboard.writeText(shown)} className="app-button min-h-8 py-1 text-xs">Copy</button>}
       </div>
-      {shown == null ? (
-        <p className="p-8 text-center text-sm italic text-[var(--text-muted)]">Raw content has been purged or was not captured.</p>
-      ) : (
-        <pre className="max-h-[560px] min-w-0 overflow-auto p-4 text-xs leading-5 text-[var(--text)] [overflow-wrap:anywhere] [white-space:pre-wrap]">{pretty}</pre>
-      )}
+      <div className="p-3">
+        <SearchableContentViewer
+          key={`${direction}-${source}`}
+          title={title}
+          content={shown}
+          emptyMessage="Raw content has been purged or was not captured."
+          maxHeight={560}
+        />
+      </div>
     </div>
   )
 }
@@ -61,7 +62,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
   const [activeTypes, setActiveTypes] = useState<Set<BlockVisual>>(() => new Set(ALL_VISUALS))
   const [search, setSearch] = useState('')
   const [grouping, setGrouping] = useState<GroupMode>('sequence')
-  const [hideZero, setHideZero] = useState(true)
+  const [hideZero, setHideZero] = useState(false)
   const [density, setDensity] = useState(26)
   const [selection, setSelection] = useState<Record<WorkbenchDirection, number | null>>({ input: null, output: null })
 
@@ -157,18 +158,31 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
             onDensity={setDensity}
             onLargest={jumpLargest}
           />
-          <div className="workbench-grid grid min-w-0 gap-3 bg-[var(--surface-muted)] p-3">
-            <div className="surface min-w-0 overflow-hidden rounded-md border border-[var(--border)]">
-              <div className="max-h-[480px] min-h-32 overflow-auto">
-                {view === 'compact' ? (
-                  <CompactBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={grouping} onSelect={select} />
-                ) : (
-                  <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} onSelect={select} />
-                )}
+          <div className="workbench-grid grid min-w-0 items-start gap-3 bg-[var(--surface-muted)] p-3">
+            <div className="min-w-0 space-y-3" data-workbench-primary-pane>
+              <div className="surface min-w-0 overflow-hidden rounded-md border border-[var(--border)]">
+                <div className="max-h-[480px] min-h-32 overflow-auto">
+                  {view === 'compact' ? (
+                    <CompactBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={grouping} onSelect={select} />
+                  ) : (
+                    <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} onSelect={select} />
+                  )}
+                </div>
+                <BlockLegend blocks={visibleBlocks} />
               </div>
-              <BlockLegend blocks={visibleBlocks} />
+              {selected && (
+                <SearchableContentViewer
+                  key={selected.id}
+                  title={`${BLOCK_VISUALS[visualOf(selected)].label} content`}
+                  content={selected.content_purged ? null : selected.content}
+                  emptyMessage={selected.content_purged
+                    ? 'Content was purged, but its structure and token count are retained.'
+                    : 'No content was captured for this structural block.'}
+                  maxHeight={420}
+                />
+              )}
             </div>
-            <BlockInspector block={selected} onJump={jumpTo} onClear={() => select(null)} />
+            <BlockInspector block={selected} blocks={allBlocks} onJump={jumpTo} onClear={() => select(null)} />
           </div>
         </>
       )}

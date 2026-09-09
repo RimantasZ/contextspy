@@ -26,4 +26,12 @@ describe('CompactBlockMap', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: /User/i }), { key: 'Escape' })
     expect(onSelect).toHaveBeenLastCalledWith(null)
   })
+
+  it('marks zero-token blocks without replacing their category color', () => {
+    const zero = makeBlock({ id: 3, token_count: 0 })
+    render(<CompactBlockMap blocks={[zero]} selectedId={null} density={26} grouping="sequence" onSelect={vi.fn()} />)
+    const tile = screen.getByRole('button', { name: /0 tokens/i })
+    expect(tile.className).toContain('composition-block-zero')
+    expect(tile.style.backgroundColor).toBe('var(--block-user)')
+  })
 })

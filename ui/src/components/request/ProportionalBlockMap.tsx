@@ -99,10 +99,10 @@ export function ProportionalBlockMap({ blocks, selectedId, density, onSelect }: 
                 title={blockAccessibleName(item.block)}
                 onClick={() => onSelect(selected ? null : item.block)}
                 onKeyDown={(event) => onKeyDown(event, item.blockId)}
-                className="composition-block flex min-w-0 items-center justify-center overflow-hidden border-[var(--graphical-border)] text-center"
+                className={`composition-block flex min-w-0 items-center justify-center overflow-hidden border-[var(--graphical-border)] text-center ${item.block.token_count <= 0 ? 'composition-block-zero' : ''}`}
                 style={{
                   gridColumn: `${item.columnStart + 1} / span ${item.span}`,
-                  background: blockStyle.color,
+                  backgroundColor: blockStyle.color,
                   borderColor: blockStyle.border,
                   boxShadow: selected ? '0 0 0 3px var(--focus)' : undefined,
                 }}

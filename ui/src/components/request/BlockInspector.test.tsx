@@ -5,28 +5,23 @@ import { makeBlock } from '../../test/fixtures'
 import { BlockInspector } from './BlockInspector'
 
 describe('BlockInspector', () => {
-  it('shows details and invokes linked navigation', async () => {
+  it('shows a block-shaped tool flow and invokes linked navigation', async () => {
     const jump = vi.fn()
-    render(<BlockInspector block={makeBlock({ tool_name: 'search', linked_call_id: 42 })} onJump={jump} onClear={() => {}} />)
-    expect(screen.getByText('10')).toBeTruthy()
-    expect(screen.getByText('search')).toBeTruthy()
-    await userEvent.click(screen.getByRole('button', { name: 'Jump to tool call' }))
+    const definition = makeBlock({ id: 42, position: 0, block_type: 'tool_definition', tool_name: 'search', token_count: 120 })
+    const call = makeBlock({ id: 43, position: 1, block_type: 'tool_call', tool_name: 'search', linked_definition_id: 42, tool_call_id: 'call-1' })
+    const result = makeBlock({ id: 44, position: 2, block_type: 'tool_result', tool_name: 'search', linked_definition_id: 42, linked_call_id: 43, tool_call_id: 'call-1' })
+    render(<BlockInspector block={call} blocks={[definition, call, result]} onJump={jump} onClear={() => {}} />)
+
+    expect(screen.getByText('Tool relationship')).toBeTruthy()
+    expect(screen.getByLabelText('Selected Tool call: search')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Jump to Tool definition: search' }))
     expect(jump).toHaveBeenCalledWith(42)
+    await userEvent.click(screen.getByRole('button', { name: 'Jump to Tool result: search' }))
+    expect(jump).toHaveBeenCalledWith(44)
   })
 
-  it('distinguishes purged and missing content', () => {
-    const { rerender } = render(<BlockInspector block={makeBlock({ content: null, content_purged: true })} onJump={() => {}} onClear={() => {}} />)
-    expect(screen.getByText(/purged, but its structure/i)).toBeTruthy()
-    rerender(<BlockInspector block={makeBlock({ content: null, content_purged: false })} onJump={() => {}} onClear={() => {}} />)
-    expect(screen.getByText(/No content was captured/i)).toBeTruthy()
-  })
-
-  it('tokenizes only when highlighting is requested', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ results: [['hello', ' world']] }), { status: 200 }))
-    render(<BlockInspector block={makeBlock()} onJump={() => {}} onClear={() => {}} />)
-    expect(fetchMock).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByRole('checkbox', { name: /Token highlight/i }))
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    fetchMock.mockRestore()
+  it('prompts for a selection when no block is active', () => {
+    render(<BlockInspector block={null} blocks={[]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.getByText(/metadata and relationships/i)).toBeTruthy()
   })
 })
