@@ -1,5 +1,5 @@
 import type { RequestBlock } from '../../api/client'
-import { BLOCK_VISUALS, blockLabel, visualOf } from '../../lib/blockVisuals'
+import { BLOCK_VISUALS, blockBackground, blockLabel, visualOf } from '../../lib/blockVisuals'
 
 const TOOL_VISUAL_ORDER = { tool_definition: 0, tool_call: 1, tool_result: 2 } as const
 
@@ -21,8 +21,8 @@ function BlockCue({ block, selected, onJump }: {
       <span className="shrink-0 tabular-nums opacity-70">{block.token_count.toLocaleString()}</span>
     </>
   )
-  const shared = `composition-block flex h-[26px] w-full min-w-0 items-center gap-1.5 overflow-hidden px-2 ${block.token_count <= 0 ? 'composition-block-zero' : ''}`
-  const cueStyle = { backgroundColor: style.color, borderColor: style.border }
+  const shared = "composition-block flex h-[26px] w-full min-w-0 items-center gap-1.5 overflow-hidden px-2"
+  const cueStyle = { backgroundColor: blockBackground(block), borderColor: style.border }
 
   return selected ? (
     <div className={shared} style={cueStyle} aria-label={`Selected ${blockLabel(block)}`}>{content}</div>

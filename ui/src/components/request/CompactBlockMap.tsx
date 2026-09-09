@@ -1,7 +1,7 @@
 import type { KeyboardEvent } from 'react'
 import type { RequestBlock } from '../../api/client'
 import type { GroupMode } from './BlockToolbar'
-import { BLOCK_VISUALS, blockAccessibleName, visualOf } from '../../lib/blockVisuals'
+import { BLOCK_VISUALS, blockAccessibleName, blockBackground, visualOf } from '../../lib/blockVisuals'
 
 function groupKey(block: RequestBlock, grouping: GroupMode): string {
   if (grouping === 'turn') return block.message_index == null ? 'structural' : `message-${block.message_index}`
@@ -76,9 +76,9 @@ export function CompactBlockMap({ blocks, selectedId, density, grouping, onSelec
             title={blockAccessibleName(block)}
             onClick={() => onSelect(selected ? null : block)}
             onKeyDown={(event) => onKeyDown(event, index)}
-            className={`composition-block border-[var(--graphical-border)] ${block.token_count <= 0 ? 'composition-block-zero' : ''}`}
+            className="composition-block border-[var(--graphical-border)]"
             style={{
-              backgroundColor: BLOCK_VISUALS[visual].color,
+              backgroundColor: blockBackground(block),
               borderColor: BLOCK_VISUALS[visual].border,
               boxShadow: selected ? '0 0 0 3px var(--focus)' : startsGroup ? '-3px 0 0 var(--focus)' : undefined,
             }}

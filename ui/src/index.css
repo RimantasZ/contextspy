@@ -68,7 +68,7 @@
   --block-tool-result: #c9eee8;
   --block-thinking: #ead8f4;
   --block-prefill: #edf0b8;
-  --block-other: #e6e8e4;
+  --block-other: #e8d4c2;
   /* Light mode intentionally keeps the original uniform, ink-like outline. */
   --block-system-border: var(--graphical-border);
   --block-tool-definition-border: var(--graphical-border);
@@ -100,7 +100,9 @@
   --syntax-boolean: #9a641c;
   --search-mark: #f4d46a;
   --search-mark-text: #30280d;
-  --zero-token-marker: rgb(23 26 24 / 42%);
+  /* Zero-token blocks retain their category hue, softened with this neutral. */
+  --zero-token-neutral: #929893;
+  --zero-token-category-share: 58%;
 
   /* Per-token highlighting and generated tool colors */
   --token-highlight-1: #e5e1f8;
@@ -171,7 +173,7 @@
   --block-tool-result: #55958c;
   --block-thinking: #8a689b;
   --block-prefill: #919756;
-  --block-other: #707771;
+  --block-other: #876f5b;
   /* Dark-mode outlines are brighter, more saturated versions of each block fill. */
   --block-system-border: #d4cbff;
   --block-tool-definition-border: #ffd58f;
@@ -181,7 +183,7 @@
   --block-tool-result-border: #a6f3e8;
   --block-thinking-border: #e8c0f7;
   --block-prefill-border: #edf39f;
-  --block-other-border: #d3dbd4;
+  --block-other-border: #f2cfad;
 
   --category-system: #9588f0;
   --category-tool-definitions: #ad83ed;
@@ -202,7 +204,8 @@
   --syntax-boolean: #f1bd70;
   --search-mark: #776424;
   --search-mark-text: #fff4c7;
-  --zero-token-marker: rgb(8 11 9 / 48%);
+  --zero-token-neutral: #414642;
+  --zero-token-category-share: 58%;
 
   --token-highlight-1: #40395e;
   --token-highlight-2: #294b45;
@@ -310,12 +313,6 @@ pre, code { overflow-wrap: anywhere; }
     @apply relative rounded-[3px] border text-[9px] font-bold leading-none text-[var(--block-ink)] transition-transform;
   }
   .composition-block:hover { @apply z-[1] scale-110; }
-  /* An X preserves the category color while making zero-token structural blocks unmistakable. */
-  .composition-block-zero {
-    background-image:
-      linear-gradient(to top right, transparent calc(50% - 1px), var(--zero-token-marker) calc(50% - 1px), var(--zero-token-marker) calc(50% + 1px), transparent calc(50% + 1px)),
-      linear-gradient(to bottom right, transparent calc(50% - 1px), var(--zero-token-marker) calc(50% - 1px), var(--zero-token-marker) calc(50% + 1px), transparent calc(50% + 1px));
-  }
   .search-match-active { outline: 2px solid var(--focus); outline-offset: 1px; }
 
   .workbench-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); }

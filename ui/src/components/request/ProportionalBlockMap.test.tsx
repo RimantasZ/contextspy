@@ -28,9 +28,9 @@ describe('ProportionalBlockMap', () => {
     expect(onSelect).toHaveBeenLastCalledWith(null)
   })
 
-  it('marks zero-token blocks in proportional view', () => {
+  it('mutes zero-token blocks in proportional view', () => {
     const zero = makeBlock({ id: 4, token_count: 0 })
     render(<ProportionalBlockMap blocks={[zero]} selectedId={null} density={26} onSelect={vi.fn()} />)
-    expect(screen.getByRole('button', { name: /0 tokens/i }).className).toContain('composition-block-zero')
+    expect(screen.getByRole('button', { name: /0 tokens/i }).style.backgroundColor).toContain('var(--zero-token-neutral)')
   })
 })

@@ -38,6 +38,14 @@ export function visualOf(block: RequestBlock): BlockVisual {
   return TYPE_TO_VISUAL[block.block_type] ?? 'other'
 }
 
+/** Preserve a block's category hue while muting zero-token structural blocks. */
+export function blockBackground(block: RequestBlock): string {
+  const categoryColor = BLOCK_VISUALS[visualOf(block)].color
+  return block.token_count <= 0
+    ? `color-mix(in srgb, ${categoryColor} var(--zero-token-category-share), var(--zero-token-neutral))`
+    : categoryColor
+}
+
 export function blockLabel(block: RequestBlock): string {
   const base = BLOCK_VISUALS[visualOf(block)].label
   if (block.tool_name && (block.block_type === 'tool_call' || block.block_type === 'tool_result' || block.block_type === 'tool_definition')) {

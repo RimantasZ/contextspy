@@ -51,7 +51,7 @@ describe('RequestWorkbench', () => {
     const hideZero = screen.getByRole('checkbox', { name: /Hide zero-token/i }) as HTMLInputElement
     expect(hideZero.checked).toBe(false)
     const zeroBlock = screen.getByRole('button', { name: /Tool definition: empty_tool, 0 tokens/i })
-    expect(zeroBlock.className).toContain('composition-block-zero')
+    expect(zeroBlock.style.backgroundColor).toContain('var(--zero-token-neutral)')
     await userEvent.click(hideZero)
     expect(screen.queryByRole('button', { name: /Tool definition: empty_tool, 0 tokens/i })).toBeNull()
     await userEvent.type(screen.getByRole('searchbox', { name: /Search request blocks/i }), 'system rules')

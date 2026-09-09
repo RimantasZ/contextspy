@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { RequestBlock } from '../../api/client'
 import { layoutProportionalBlocks } from '../../lib/blockLayout'
-import { BLOCK_VISUALS, blockAccessibleName, visualOf } from '../../lib/blockVisuals'
+import { BLOCK_VISUALS, blockAccessibleName, blockBackground, visualOf } from '../../lib/blockVisuals'
 
 const BLOCK_GAP_PX = 4
 const CANVAS_HORIZONTAL_PADDING_PX = 24
@@ -99,10 +99,10 @@ export function ProportionalBlockMap({ blocks, selectedId, density, onSelect }: 
                 title={blockAccessibleName(item.block)}
                 onClick={() => onSelect(selected ? null : item.block)}
                 onKeyDown={(event) => onKeyDown(event, item.blockId)}
-                className={`composition-block flex min-w-0 items-center justify-center overflow-hidden border-[var(--graphical-border)] text-center ${item.block.token_count <= 0 ? 'composition-block-zero' : ''}`}
+                className="composition-block flex min-w-0 items-center justify-center overflow-hidden border-[var(--graphical-border)] text-center"
                 style={{
                   gridColumn: `${item.columnStart + 1} / span ${item.span}`,
-                  backgroundColor: blockStyle.color,
+                  backgroundColor: blockBackground(item.block),
                   borderColor: blockStyle.border,
                   boxShadow: selected ? '0 0 0 3px var(--focus)' : undefined,
                 }}
