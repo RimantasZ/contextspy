@@ -56,6 +56,7 @@ export function ProportionalBlockMap({ blocks, selectedId, onSelect }: {
                   width: `${segment.widthPct}%`,
                   minWidth: 0,
                   background: BLOCK_VISUALS[visual].color,
+                  borderColor: BLOCK_VISUALS[visual].border,
                   boxShadow: selected ? 'inset 0 0 0 2px var(--focus)' : undefined,
                   zIndex: selected ? 2 : 1,
                 }}
@@ -81,7 +82,11 @@ export function ProportionalBlockMap({ blocks, selectedId, onSelect }: {
                 aria-pressed={selected}
                 onClick={() => onSelect(selected ? null : block)}
                 className="h-4 w-1.5 border border-[var(--graphical-border)]"
-                style={{ background: BLOCK_VISUALS[visualOf(block)].color, boxShadow: selected ? '0 0 0 2px var(--focus)' : undefined }}
+                style={{
+                  background: BLOCK_VISUALS[visualOf(block)].color,
+                  borderColor: BLOCK_VISUALS[visualOf(block)].border,
+                  boxShadow: selected ? '0 0 0 2px var(--focus)' : undefined,
+                }}
               />
             )
           })}

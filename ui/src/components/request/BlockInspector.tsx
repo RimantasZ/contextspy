@@ -54,7 +54,10 @@ export function BlockInspector({ block, onJump, onClear }: {
     <aside className="panel-elevated min-w-0 self-start overflow-hidden lg:sticky lg:top-4" aria-label="Block inspector">
       <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <span className="mb-1 inline-flex rounded border border-[var(--graphical-border)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--block-ink)]" style={{ background: BLOCK_VISUALS[visual].color }}>
+          <span
+            className="mb-1 inline-flex rounded border border-[var(--graphical-border)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--block-ink)]"
+            style={{ background: BLOCK_VISUALS[visual].color, borderColor: BLOCK_VISUALS[visual].border }}
+          >
             {BLOCK_VISUALS[visual].short} · {BLOCK_VISUALS[visual].label}
           </span>
           <h3 className="truncate text-sm font-semibold" title={blockLabel(block)}>{blockLabel(block)}</h3>

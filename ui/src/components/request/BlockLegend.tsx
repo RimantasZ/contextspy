@@ -17,7 +17,13 @@ export function BlockLegend({ blocks }: { blocks: RequestBlock[] }) {
       <span className="font-medium tabular-nums text-[var(--text)]">{blocks.length.toLocaleString()} blocks · {totalTokens.toLocaleString()} tokens</span>
       {[...summary.entries()].map(([visual, values]) => (
         <span key={visual} className="inline-flex items-center gap-1 text-[var(--text-muted)]">
-          <span className="h-2.5 w-2.5 border border-[var(--graphical-border)]" style={{ background: BLOCK_VISUALS[visual as keyof typeof BLOCK_VISUALS].color }} />
+          <span
+            className="h-2.5 w-2.5 border border-[var(--graphical-border)]"
+            style={{
+              background: BLOCK_VISUALS[visual as keyof typeof BLOCK_VISUALS].color,
+              borderColor: BLOCK_VISUALS[visual as keyof typeof BLOCK_VISUALS].border,
+            }}
+          />
           {BLOCK_VISUALS[visual as keyof typeof BLOCK_VISUALS].label} {values.count}
         </span>
       ))}

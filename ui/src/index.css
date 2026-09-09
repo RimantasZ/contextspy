@@ -69,6 +69,16 @@
   --block-thinking: #ead8f4;
   --block-prefill: #edf0b8;
   --block-other: #e6e8e4;
+  /* Light mode intentionally keeps the original uniform, ink-like outline. */
+  --block-system-border: var(--graphical-border);
+  --block-tool-definition-border: var(--graphical-border);
+  --block-user-border: var(--graphical-border);
+  --block-assistant-border: var(--graphical-border);
+  --block-tool-call-border: var(--graphical-border);
+  --block-tool-result-border: var(--graphical-border);
+  --block-thinking-border: var(--graphical-border);
+  --block-prefill-border: var(--graphical-border);
+  --block-other-border: var(--graphical-border);
 
   /* Charts and compact context bars */
   --category-system: #6d5fe5;
@@ -161,6 +171,16 @@
   --block-thinking: #8a689b;
   --block-prefill: #919756;
   --block-other: #707771;
+  /* Dark-mode outlines are brighter, more saturated versions of each block fill. */
+  --block-system-border: #d4cbff;
+  --block-tool-definition-border: #ffd58f;
+  --block-user-border: #c2e1ff;
+  --block-assistant-border: #b3efca;
+  --block-tool-call-border: #ffc0a3;
+  --block-tool-result-border: #a6f3e8;
+  --block-thinking-border: #e8c0f7;
+  --block-prefill-border: #edf39f;
+  --block-other-border: #d3dbd4;
 
   --category-system: #9588f0;
   --category-tool-definitions: #ad83ed;

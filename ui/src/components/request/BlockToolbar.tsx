@@ -79,7 +79,7 @@ export function BlockToolbar({
               aria-pressed={enabled}
               onClick={() => onToggleType(visual)}
               className={`min-h-7 rounded-full border px-2.5 text-[11px] font-medium ${enabled ? 'border-[var(--graphical-border)] text-[var(--block-ink)]' : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] opacity-60'}`}
-              style={enabled ? { background: item.color } : undefined}
+              style={enabled ? { background: item.color, borderColor: item.border } : undefined}
             >
               <span className="font-bold" aria-hidden="true">{item.short}</span> {item.label}
             </button>

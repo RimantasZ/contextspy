@@ -79,6 +79,7 @@ export function CompactBlockMap({ blocks, selectedId, density, grouping, onSelec
             className="relative rounded-[3px] border border-[var(--graphical-border)] text-[9px] font-bold leading-none text-[var(--block-ink)] transition-transform hover:z-[1] hover:scale-110"
             style={{
               background: BLOCK_VISUALS[visual].color,
+              borderColor: BLOCK_VISUALS[visual].border,
               boxShadow: selected ? '0 0 0 3px var(--focus)' : startsGroup ? '-3px 0 0 var(--focus)' : undefined,
             }}
           >

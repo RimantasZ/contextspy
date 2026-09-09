@@ -11,16 +11,16 @@ export type BlockVisual =
   | 'prefill'
   | 'other'
 
-export const BLOCK_VISUALS: Record<BlockVisual, { label: string; short: string; color: string }> = {
-  system: { label: 'System', short: 'S', color: 'var(--block-system)' },
-  tool_definition: { label: 'Tool definition', short: 'D', color: 'var(--block-tool-definition)' },
-  user: { label: 'User', short: 'U', color: 'var(--block-user)' },
-  assistant: { label: 'Assistant', short: 'A', color: 'var(--block-assistant)' },
-  tool_call: { label: 'Tool call', short: 'C', color: 'var(--block-tool-call)' },
-  tool_result: { label: 'Tool result', short: 'R', color: 'var(--block-tool-result)' },
-  thinking: { label: 'Thinking', short: 'T', color: 'var(--block-thinking)' },
-  prefill: { label: 'Assistant prefill', short: 'P', color: 'var(--block-prefill)' },
-  other: { label: 'Other', short: 'O', color: 'var(--block-other)' },
+export const BLOCK_VISUALS: Record<BlockVisual, { label: string; short: string; color: string; border: string }> = {
+  system: { label: 'System', short: 'S', color: 'var(--block-system)', border: 'var(--block-system-border)' },
+  tool_definition: { label: 'Tool definition', short: 'D', color: 'var(--block-tool-definition)', border: 'var(--block-tool-definition-border)' },
+  user: { label: 'User', short: 'U', color: 'var(--block-user)', border: 'var(--block-user-border)' },
+  assistant: { label: 'Assistant', short: 'A', color: 'var(--block-assistant)', border: 'var(--block-assistant-border)' },
+  tool_call: { label: 'Tool call', short: 'C', color: 'var(--block-tool-call)', border: 'var(--block-tool-call-border)' },
+  tool_result: { label: 'Tool result', short: 'R', color: 'var(--block-tool-result)', border: 'var(--block-tool-result-border)' },
+  thinking: { label: 'Thinking', short: 'T', color: 'var(--block-thinking)', border: 'var(--block-thinking-border)' },
+  prefill: { label: 'Assistant prefill', short: 'P', color: 'var(--block-prefill)', border: 'var(--block-prefill-border)' },
+  other: { label: 'Other', short: 'O', color: 'var(--block-other)', border: 'var(--block-other-border)' },
 }
 
 const TYPE_TO_VISUAL: Record<string, BlockVisual> = {
