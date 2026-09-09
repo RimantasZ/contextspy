@@ -108,7 +108,7 @@ contextspy help
 Requirements
 - Python 3.11+
 - Administrator / sudo access (for CA certificate installation, cloud mode only)
-- Node.js 18+ and npm — only needed if you want to modify the frontend
+- Node.js 20+ and npm — only needed if you want to modify the frontend
 
 
 ```bash
