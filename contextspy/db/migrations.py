@@ -39,7 +39,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, ToolStat
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_VERSION_KEY = "schema_version"
 _PENDING_KEY = "pending_data_migrations"
@@ -546,7 +546,86 @@ def _migrate_to_v3(db: OrmSession) -> None:
     _backfill_responses_websocket_rows(db)
 
 
+# ---------------------------------------------------------------------------
+# v4: exclude inline media transport encodings from text-token estimates
+# ---------------------------------------------------------------------------
+
+def _reanalyze_inline_media_requests(db: OrmSession) -> None:
+    """Rebuild input analysis for retained requests containing inline media."""
+    from contextspy.analysis.adapters import get_adapter
+    from contextspy.analysis.adapters.base import contains_media_content
+    from contextspy.analysis.blocks import AnalyzedRequest, Usage
+    from contextspy.analysis.classifier import classify, per_tool_tokens
+    from contextspy.analysis.tokenizer import TOKENIZER_ID
+    from contextspy.db.crud import insert_blocks, upsert_tool_stats
+
+    rows = db.execute(
+        select(Request).where(
+            Request.canonical_request_body.isnot(None),
+            Request.canonical_request_body.contains(";base64,"),
+        )
+    ).scalars().all()
+
+    input_breakdown_fields = (
+        "tokens_system_prompt",
+        "tokens_tool_definitions",
+        "tokens_tool_results",
+        "tokens_file_contents",
+        "tokens_conversation_history",
+        "tokens_current_user_message",
+        "tokens_assistant_prefill",
+        "tokens_uncategorized",
+        "tokens_total_input",
+    )
+
+    for row in rows:
+        adapter = get_adapter(row.endpoint)
+        if adapter is None:
+            continue
+        try:
+            request_value = json.loads(row.canonical_request_body)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(request_value, dict) or not contains_media_content(request_value):
+            continue
+
+        try:
+            input_blocks, tool_call_map = adapter.parse_request(request_value)
+        except Exception:
+            continue
+        analyzed = AnalyzedRequest(
+            model=request_value.get("model"),
+            input_blocks=input_blocks,
+            output_blocks=[],
+            usage=Usage(),
+            tool_call_map=tool_call_map,
+        )
+        breakdown = classify(analyzed)
+        breakdown_fields = breakdown.to_db_fields()
+        for field in input_breakdown_fields:
+            setattr(row, field, breakdown_fields[field])
+        row.tokenizer = TOKENIZER_ID
+
+        db.execute(delete(BlockRecord).where(
+            BlockRecord.request_id == row.id,
+            BlockRecord.direction == "input",
+        ))
+        db.execute(delete(ToolStat).where(ToolStat.request_id == row.id))
+        if input_blocks:
+            insert_blocks(db, row.id, input_blocks)
+        tool_rows = per_tool_tokens(analyzed)
+        if tool_rows:
+            upsert_tool_stats(db, row.id, tool_rows)
+
+    db.flush()
+
+
+def _migrate_to_v4(db: OrmSession) -> None:
+    _reanalyze_inline_media_requests(db)
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
+    4: _migrate_to_v4,
 }

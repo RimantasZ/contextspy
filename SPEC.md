@@ -375,6 +375,10 @@ When the encoder is first loaded, tiktoken downloads the encoding data file from
 - Each `Block`'s `token_count` is computed individually (`Block.make()` calls `tiktoken.encode()`
   on its content, unless a provider-reported count is passed explicitly — e.g. OpenAI Responses'
   hidden reasoning summaries, which have no visible content but a known token count).
+- Inline image/audio/file transport payloads are represented by short typed markers rather than
+  passing base64 data URLs to the text tokenizer. Mixed multimodal blocks carry
+  `attrs.contains_media = true` and `attrs.token_estimate = "text_only"`; the provider-reported
+  input total remains authoritative for media token accounting.
 - `tokens_total_input`/`tokens_total_output` and the 8 category columns are sums over blocks,
   computed by `classify()` — see §5.2.
 - If the provider returns a `usage` object in the response body, it's stored verbatim alongside
@@ -558,13 +562,14 @@ both of:
    user at `db-upgrade` or `reset-db`) if any data migration is pending — this prevents the app
    from running against a DB with stale/missing derived data.
 
-Currently `SCHEMA_VERSION = 3`; `_migrate_to_v2` backfills `session_seq` (per-session request
+Currently `SCHEMA_VERSION = 4`; `_migrate_to_v2` backfills `session_seq` (per-session request
 ordinal, assigned by `timestamp` order) and reconstructs `blocks`/`block_contents` rows for
 pre-existing requests from their still-present `raw_request_body`/`raw_response_body` (re-running
 the adapter → classify → insert_blocks pipeline). `_migrate_to_v3` copies retained provider JSON
 into explicit canonical columns and reconstructs retained Responses WebSocket chains only through
 exact provider response IDs, replacing derived blocks/tool stats transactionally when parsing
-succeeds. Missing predecessors remain explicitly partial.
+succeeds. Missing predecessors remain explicitly partial. `_migrate_to_v4` reanalyzes retained
+requests containing inline base64 media so transport encodings are no longer counted as text.
 
 ---
 
