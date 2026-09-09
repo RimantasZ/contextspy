@@ -303,17 +303,13 @@ pre, code { overflow-wrap: anywhere; }
   .modal-dialog { @apply rounded-lg border p-6; background: var(--surface-elevated); border-color: var(--border); box-shadow: var(--shadow); color: var(--text); }
   .theme-toggle { @apply app-button min-h-9 justify-start gap-2; }
 
-  .workbench-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); }
-}
+  /* Shared request-block treatment keeps Compact and Proportional views related. */
+  .composition-block {
+    @apply relative rounded-[3px] border text-[9px] font-bold leading-none text-[var(--block-ink)] transition-transform;
+  }
+  .composition-block:hover { @apply z-[1] scale-110; }
 
-/* Larger transparent pointer target for visually narrow proportional segments. */
-.proportional-segment::after {
-  content: "";
-  position: absolute;
-  inset-block: -4px;
-  left: 50%;
-  width: max(100%, 16px);
-  transform: translateX(-50%);
+  .workbench-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); }
 }
 
 /*

@@ -163,7 +163,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
                 {view === 'compact' ? (
                   <CompactBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={grouping} onSelect={select} />
                 ) : (
-                  <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} onSelect={select} />
+                  <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} onSelect={select} />
                 )}
               </div>
               <BlockLegend blocks={visibleBlocks} />

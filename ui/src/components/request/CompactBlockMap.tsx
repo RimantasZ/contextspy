@@ -76,7 +76,7 @@ export function CompactBlockMap({ blocks, selectedId, density, grouping, onSelec
             title={blockAccessibleName(block)}
             onClick={() => onSelect(selected ? null : block)}
             onKeyDown={(event) => onKeyDown(event, index)}
-            className="relative rounded-[3px] border border-[var(--graphical-border)] text-[9px] font-bold leading-none text-[var(--block-ink)] transition-transform hover:z-[1] hover:scale-110"
+            className="composition-block border-[var(--graphical-border)]"
             style={{
               background: BLOCK_VISUALS[visual].color,
               borderColor: BLOCK_VISUALS[visual].border,

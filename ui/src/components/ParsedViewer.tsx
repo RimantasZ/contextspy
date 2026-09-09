@@ -60,7 +60,7 @@ export function ParsedViewer({ requestId, rawBody, totalInputTokens }: Props) {
             <div className="max-h-[560px] overflow-auto">
               {view === 'compact'
                 ? <CompactBlockMap blocks={blocks} selectedId={selectedId} density={26} grouping="sequence" onSelect={(block) => setSelectedId(block?.id ?? null)} />
-                : <ProportionalBlockMap blocks={blocks} selectedId={selectedId} onSelect={(block) => setSelectedId(block?.id ?? null)} />}
+                : <ProportionalBlockMap blocks={blocks} selectedId={selectedId} density={26} onSelect={(block) => setSelectedId(block?.id ?? null)} />}
             </div>
             <BlockLegend blocks={blocks} />
           </div>
