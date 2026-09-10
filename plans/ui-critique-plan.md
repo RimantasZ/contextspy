@@ -1,5 +1,12 @@
 # ContextSpy UI redesign implementation plan
 
+> **Status:** Implemented with documented deviations on `ui-revamp-poc` (September 2026). The
+> authoritative current behavior is in [`SPEC.md`](../SPEC.md#56-web-ui); this file remains the
+> original delivery plan. The shipped **Proportional** view uses a capped logarithmic whole-block
+> span instead of token-linear split segments, zero-token blocks are visible by default with muted
+> styling, selected content appears below the map beside a metadata inspector, and only the theme
+> preference is persisted.
+
 ## Goal
 
 Make request composition the primary interaction in ContextSpy, introduce compact and accurately proportional block views, eliminate page-level overflow, replace the tool-composition donuts with a treemap, and refresh the application with a light, pastel visual system.

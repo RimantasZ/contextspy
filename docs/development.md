@@ -12,22 +12,29 @@ uvicorn contextspy.api.main:create_app --factory --reload --port 5173
 
 ## Tests
 
-Tests live in `tests/test_providers.py` and cover provider request-parsing. Run them with:
+Backend tests cover adapters/classification, invocation normalization, WebSocket assembly,
+database migrations, and request filtering. Frontend tests cover request tables/filters, the
+request workbench and block maps, content search, theme behavior, and tool-treemap transformation.
+Run them with:
 
 ```bash
 pytest
 # or a single test:
 pytest tests/test_providers.py::test_name
+
+cd ui
+npm test
 ```
 
-When you modify `analysis/providers.py` or `analysis/classifier.py`, always run pytest before committing.
+When modifying `analysis/adapters/`, `analysis/classifier.py`, normalization, capture, database, or
+proxy protocol code, run the backend suite. Run the frontend suite and build after UI changes.
 
 ## Frontend
 
 ```bash
 cd ui
 npm install
-npm run dev   # Vite dev server on :5174, proxies /api and /ws to :5173
+npm run dev   # Vite dev server on :5174, proxies /api (including /api/ws) to :5173
 ```
 
 The built UI is embedded in the Python package at `contextspy/_web/`. Rebuild after
@@ -64,7 +71,8 @@ client (base_url=:8889) → mitmproxy reverse proxy (port 8889)
                                   │ plain HTTP forward
                             llama-server / Ollama / vLLM (port 8080…)
                                   │
-                            ContextSpyAddon (provider_override="openai")
+                            ContextSpyAddon (per-target provider_override;
+                                              commonly "openai")
                               → capture/reconstruct, parse, classify, count tokens
                               → write to SQLite
                               → broadcast via WebSocket
@@ -84,8 +92,8 @@ All data is stored in `~/.contextspy/`:
 | `~/.contextspy/config.toml` | Configuration file (auto-created on first run) |
 
 Observed request payloads, canonical request/response payloads, normalized SSE/NDJSON/WebSocket
-event logs, plus the content-addressed `block_contents` table (see below), are purged automatically 7
-days after capture by default to limit disk usage — configurable via
+event logs, plus the content-addressed `block_contents` table (see below), become eligible for
+purging 7 days after capture by default to limit disk usage — configurable via
 `[retention]` in `config.toml` (`raw_body_days`, `block_content_days`; `0` disables purging).
 Purging only runs once, at server startup — there is no background timer, so a `contextspy`
 process left running for many days won't purge again until restarted.
@@ -132,8 +140,9 @@ WebSockets.
 
 ### Blocks
 
-Every request/response is also decomposed into `blocks` — one row per content part (system
-prompt, tool definition, a single tool call or tool result, a text or thinking segment, ...).
+Every successfully analyzed request/response is also decomposed into `blocks` — one row per
+content part (system prompt, tool definition, a single tool call or tool result, a text or
+thinking segment, ...).
 Each block's semantic `category` (one of the 8 breakdown categories) and structural `block_type`
 are kept forever; only the block's `content` (in `block_contents`, deduplicated by content hash
 across requests) is subject to the retention window above.
@@ -253,8 +262,10 @@ detail page to spot it.
 ## Contributing
 
 1. Fork the repo and create a branch.
-2. For backend changes to `analysis/providers.py` or `analysis/classifier.py`, add or update tests in `tests/test_providers.py` and confirm `pytest` passes.
-3. For frontend changes, rebuild the UI (`make ui`) and verify in the browser with `contextspy start`.
+2. For backend analysis/capture changes, add or update the relevant test module and confirm
+   `pytest` passes.
+3. For frontend changes, run `npm test`, rebuild the UI (`make ui`), and verify it in the browser
+   with `contextspy start`.
 4. Open a pull request against `main` with a description of what changed and why.
 
 Bug reports and feature requests are tracked in [GitHub Issues](https://github.com/RimantasZ/contextspy/issues).

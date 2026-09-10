@@ -11,6 +11,8 @@ One row represents one externally observable provider invocation and its termina
 - A buffered HTTP request/response pair creates one row.
 - An SSE or NDJSON stream creates one row after its events are reduced into a complete response.
 - For supported WebSocket protocols, one provider start-to-terminal lifecycle creates one row.
+- A supported HTTP invocation that fails before receiving a response still creates an inspectable
+  failed/incomplete row.
 - Streaming deltas, rate-limit updates, timing messages, and ping/pong frames do not create rows.
 
 For OpenAI Responses traffic, a lifecycle normally starts with `response.create` and ends with
@@ -114,4 +116,3 @@ ContextSpy reports these values separately:
 That difference can include opaque state, provider tokenizer differences, server transformations,
 or parsing gaps. It is deliberately not labelled as hidden context unless the provider schema
 actually establishes that fact.
-

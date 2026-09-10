@@ -1,5 +1,10 @@
 # ContextSpy UI critique
 
+> **Status:** Historical pre-redesign assessment (September 2026). The redesign described here
+> has been implemented on `ui-revamp-poc`; see [`SPEC.md`](../SPEC.md#56-web-ui) for the current
+> behavior. This file is retained as design rationale, so statements about the "current" UI below
+> describe the interface that existed when the critique was written.
+
 ## Summary
 
 The main problem is information hierarchy, not merely styling. ContextSpy's core value is explaining what a model request contains, but the request composition is treated as secondary content. The data is useful; the interface currently optimizes for completeness rather than investigation.

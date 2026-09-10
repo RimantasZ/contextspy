@@ -97,6 +97,111 @@ def test_root_websocket_request_becomes_standalone_provider_json():
     assert canonical.request.value["input"] == request["input"]
 
 
+def test_root_websocket_does_not_duplicate_response_echoed_additional_tools():
+    embedded_tools = [{
+        "type": "namespace",
+        "name": "functions",
+        "tools": [
+            {"type": "custom", "name": "exec", "format": {"type": "text"}},
+            {"type": "function", "name": "wait", "parameters": {}},
+        ],
+    }]
+    echoed_tools = [{
+        "type": "namespace",
+        "name": "functions",
+        "tools": [
+            {
+                "type": "function", "name": "wait", "parameters": {},
+                "output_schema": None,
+            },
+            {"type": "custom", "name": "exec", "format": {"type": "text"}},
+        ],
+    }]
+    request = {
+        "type": "response.create",
+        "model": "gpt-test",
+        "input": [{"type": "additional_tools", "tools": embedded_tools}],
+    }
+    response = {
+        "id": "resp_1", "model": "gpt-test", "tools": echoed_tools,
+        "output": [],
+    }
+
+    canonical = normalize_invocation(observed(request, response), MemoryLineage())
+
+    assert "tools" not in canonical.request.value
+    analysis = analyze_invocation(canonical, OpenAIResponsesAdapter()).analyzed
+    definitions = [
+        block for block in analysis.input_blocks
+        if block.block_type.value == "tool_definition"
+    ]
+    assert [block.tool_name for block in definitions] == ["exec", "wait"]
+
+
+def test_continuation_does_not_duplicate_inherited_additional_tools_echo():
+    tools = [{"type": "custom", "name": "exec", "format": {"type": "text"}}]
+    lineage = MemoryLineage({
+        ("openai_chatgpt", "resp_1"): PersistedCanonicalInvocation(
+            request=document({
+                "model": "gpt-test",
+                "input": [{"type": "additional_tools", "tools": tools}],
+            }),
+            response=document({"id": "resp_1", "output": []}),
+        )
+    })
+    request = {
+        "type": "response.create",
+        "previous_response_id": "resp_1",
+        "input": [{
+            "type": "custom_tool_call_output", "call_id": "call_1",
+            "output": "/project",
+        }],
+    }
+    response = {"id": "resp_2", "tools": tools, "output": []}
+
+    canonical = normalize_invocation(observed(request, response), lineage)
+
+    assert "tools" not in canonical.request.value
+    analysis = analyze_invocation(canonical, OpenAIResponsesAdapter()).analyzed
+    definitions = [
+        block for block in analysis.input_blocks
+        if block.block_type.value == "tool_definition"
+    ]
+    assert [block.tool_name for block in definitions] == ["exec"]
+
+
+def test_observed_top_level_tools_are_not_removed_as_response_metadata():
+    tools = [{"type": "custom", "name": "exec", "format": {"type": "text"}}]
+    request = {
+        "type": "response.create",
+        "tools": tools,
+        "input": [{"type": "additional_tools", "tools": tools}],
+    }
+
+    canonical = normalize_invocation(
+        observed(request, {"id": "resp_1", "tools": tools, "output": []}),
+        MemoryLineage(),
+    )
+
+    assert canonical.request.value["tools"] == tools
+
+
+def test_distinct_response_tools_are_retained_with_additional_tools():
+    embedded_tools = [{"type": "custom", "name": "exec"}]
+    echoed_tools = [{"type": "function", "name": "search", "parameters": {}}]
+    request = {
+        "type": "response.create",
+        "input": [{"type": "additional_tools", "tools": embedded_tools}],
+    }
+
+    canonical = normalize_invocation(
+        observed(request, {"id": "resp_1", "tools": echoed_tools, "output": []}),
+        MemoryLineage(),
+    )
+
+    assert canonical.request.value["tools"] == echoed_tools
+
+
 def test_continuation_expands_predecessor_input_output_and_current_tool_result():
     root_request = document({
         "model": "gpt-test",

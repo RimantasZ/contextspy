@@ -1,6 +1,6 @@
-# ContextSpy — Technical Specification v0.3
+# ContextSpy — Technical Specification v0.3.5
 
-> **Status:** Implemented — July 2026  
+> **Status:** Implemented — updated September 2026
 > **Purpose:** Living specification — reflects the currently running codebase.
 
 ---
@@ -24,9 +24,10 @@ ContextSpy operates in two complementary modes:
 - Classify each context window into meaningful content categories.
 - Count tokens per category using `tiktoken` (fast approximation, good enough for composition analysis).
 - Support named sessions so the user can group requests into logical work units.
-- Purge raw request/response bodies when a session ends, retaining only token stats and metadata.
+- Purge retained payloads and block text on startup after their configured retention windows,
+  while keeping token stats and structural metadata.
 - Display statistics and graphs in a browser UI served locally.
-- Bind all network services to `127.0.0.1` only.
+- Bind network services to `127.0.0.1` by default.
 
 ---
 
@@ -34,7 +35,8 @@ ContextSpy operates in two complementary modes:
 
 - Production / multi-user deployment.
 - Exact token counts via provider-native tokenizer APIs.
-- Supporting providers beyond OpenAI, Anthropic, Ollama, and GitHub Copilot.
+- Supporting wire formats beyond OpenAI Chat Completions, OpenAI Responses, Anthropic Messages,
+  and Ollama's native chat/generate endpoints.
 - Modifying or blocking intercepted traffic.
 - Authentication or authorisation on the web UI.
 
@@ -55,14 +57,14 @@ ContextSpy operates in two complementary modes:
 │  ContextSpy Proxy  (mitmproxy, 127.0.0.1:8888)               │
 │  • TLS termination via local CA cert                         │
 │  • Filters to known LLM hostnames only                       │
-│  • Calls analysis pipeline on each response                  │
+│  • Normalizes supported HTTP and WebSocket invocations       │
 │  • Writes records to SQLite                                  │
 └───────────────────────┬──────────────────────────────────────┘
                         │  forwards original HTTPS request
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  LLM Provider API                                            │
-│  (api.openai.com, api.anthropic.com, localhost:11434, …)     │
+│  (api.openai.com, api.anthropic.com, chatgpt.com, …)         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -78,8 +80,9 @@ ContextSpy operates in two complementary modes:
 ┌──────────────────────────────────────────────────────────────┐
 │  ContextSpy Reverse Proxy (mitmproxy, 127.0.0.1:8889)        │
 │  mode = reverse:http://127.0.0.1:8080                        │
-│  • provider_override = "openai" (no hostname detection)      │
-│  • Calls analysis pipeline on each response                  │
+│  • provider_override supplies the stored provider label      │
+│  • endpoint path selects the wire-format adapter             │
+│  • Normalizes supported HTTP invocations                     │
 │  • Writes records to SQLite                                  │
 └───────────────────────┬──────────────────────────────────────┘
                         │  plain HTTP forwarded to local server
@@ -118,7 +121,7 @@ Both modes share the same database, web server, and dashboard. The proxy addon a
 
 **Technology:** `mitmproxy` Python library (inline addon API).  
 **Port:** `8888` (configurable via `--proxy-port`).  
-**Bind address:** `127.0.0.1` only.
+**Bind address:** `127.0.0.1` by default (configurable via `[proxy].bind_addr`).
 
 #### TLS Interception
 
@@ -133,24 +136,29 @@ Both modes share the same database, web server, and dashboard. The proxy addon a
 
 #### Hostname Filter
 
-Only intercept flows to the following hosts (all other traffic is passed through untouched):
+Only analyze and store flows attributed to the following hosts/ports. Other proxy traffic is
+forwarded without a ContextSpy record:
 
 | Hostname pattern | Provider |
 |---|---|
 | `api.openai.com` | `openai` |
-| `*.openai.azure.com` | `openai_azure` |
+| `openai.azure.com` and subdomains | `openai_azure` |
 | `api.anthropic.com` | `anthropic` |
-| `copilot-proxy.githubusercontent.com` | `copilot` |
-| `localhost` port `11434` | `ollama` |
-| `127.0.0.1` port `11434` | `ollama` |
+| `copilot-proxy.githubusercontent.com`, `githubcopilot.com` and subdomains | `copilot` |
+| `opencode.ai`, `*.opencode.ai` | `opencode_zen` |
+| `chatgpt.com`, `*.chatgpt.com` | `openai_chatgpt` |
+| any host on port `11434` | `ollama` |
 
 #### Addon Class: `ContextSpyAddon`
 
 Accepts an optional `provider_override: str | None` constructor argument. When set, the addon skips hostname-based provider detection and always uses the specified provider string. Used by reverse-proxy mode where the upstream is a known local server.
 
-The addon handles regular JSON, SSE/NDJSON streams, and registered WebSocket protocols. Request
-bodies are captured before forwarding so a connection failure can still produce an inspectable
-request row. Stream framing is decoded separately from provider reconstruction and analysis:
+The addon handles regular JSON, SSE/NDJSON streams, transport failures, and registered WebSocket
+protocols. Request bodies are captured before forwarding so a connection failure can still
+produce an inspectable request row. Host detection first selects a provider label; endpoint
+matching then selects the wire-format adapter and prevents unrelated telemetry/auth traffic on a
+known host from being stored. Stream framing is decoded separately from provider reconstruction
+and analysis:
 
 ```
 class ContextSpyAddon:
@@ -175,13 +183,27 @@ class ContextSpyAddon:
     def response(self, flow):
         # Skipped if is_sse is set (handled by stream callback).
         # Otherwise:
-        # 1. Check hostname filter — skip if not an LLM host
+        # 1. Detect provider from hostname/port; skip unknown providers
         # 2. Extract request/response application payloads
-        # 3. Detect provider from hostname
-        # 4. Detect agent from User-Agent header
-        # 5. Reconstruct streamed response JSON (if applicable)
-        # 6. Persist capture, then analyze that same canonical JSON
-        # 7. Emit WebSocket event for live UI update
+        # 3. Select an adapter from the endpoint path
+        # 4. Detect agent from User-Agent
+        # 5. Reconstruct SSE-like/NDJSON response JSON when needed
+        # 6. Normalize provider state and analyze the canonical JSON
+        # 7. Persist the request, blocks, usage, and transport diagnostics
+        # 8. Emit a WebSocket event for live UI update
+
+    def websocket_start(self, flow):
+        # Attach a registered per-connection protocol session.
+
+    def websocket_message(self, flow):
+        # Feed frames to the session assembler. Each completed provider
+        # start-to-terminal exchange becomes one stored request.
+
+    def websocket_end(self, flow):
+        # Flush a dangling exchange as incomplete.
+
+    def error(self, flow):
+        # Store a failed/incomplete invocation even when there is no response.
 ```
 
 #### mitmproxy Runner (`proxy/runner.py`)
@@ -199,7 +221,8 @@ class ContextSpyAddon:
 **Technology:** `mitmproxy` `DumpMaster` in `reverse:` mode — one instance per `[[reverse_targets]]` entry.  
 **Ports:** Configured per-target in `config.toml` (e.g. `8889`, `8890`).  
 **TLS:** None — the upstream is plain HTTP on localhost.  
-**Provider detection:** Bypassed — `provider_override` is set from config, so the full OpenAI/Anthropic parser runs unconditionally.
+**Provider detection:** Bypassed — `provider_override` supplies the stored provider label and
+allows the local flow through the provider gate. The request path still selects the adapter.
 
 Each reverse target is described by:
 
@@ -208,7 +231,7 @@ Each reverse target is described by:
 | `name` | str | Human label (e.g. `"llama-server"`) |
 | `listen_port` | int | Port contextspy binds (e.g. `8889`) |
 | `target_url` | str | Upstream URL (e.g. `"http://127.0.0.1:8080"`) |
-| `provider` | str | Parser to use: `"openai"` \| `"anthropic"` \| `"ollama"` |
+| `provider` | str | Provider label stored on captures; defaults to `"openai"` and may be set to `"anthropic"` or `"ollama"` |
 
 All three local server types expose an OpenAI-compatible `/v1/chat/completions` endpoint, so `provider = "openai"` is the correct choice for llama-server, Ollama (`/v1` endpoint, requires Ollama ≥ 0.1.24), and vLLM.
 
@@ -218,11 +241,11 @@ All three local server types expose an OpenAI-compatible `/v1/chat/completions` 
 
 ### 5.2 Context Analyser
 
-Runs synchronously after each captured response, entirely in the backend (the frontend does no
-JSON parsing — it only renders what the backend already classified and persisted). The pipeline
-is provider-agnostic: a **wire-format adapter** turns provider-specific JSON into a small set of
-domain types, and a single classifier operates on those types regardless of which provider or
-wire format produced them.
+Runs synchronously after each completed or failed captured invocation, entirely in the backend.
+The frontend may pretty-print retained JSON for display, but it does not classify blocks or
+derive token/category/tool aggregates. The pipeline is provider-agnostic: a **wire-format
+adapter** turns provider-specific JSON into a small set of domain types, and a single classifier
+operates on those types regardless of which provider or wire format produced them.
 
 #### Domain Model (`analysis/blocks.py`)
 
@@ -271,8 +294,9 @@ request) but parsed by the same `openai_chat`/`openai_responses` adapter, since 
 same wire format. Adding a genuinely new wire format is a new adapter module and a `register()`
 call — nothing else in the pipeline changes.
 
-Requests to unrecognised endpoints (`get_adapter` returns `None`) are recorded with
-`tokens_uncategorized = tokens_total_input` and no `Block` rows.
+Requests to unrecognised endpoints (`get_adapter` returns `None`) are normally skipped. If the
+path still resembles a supported LLM endpoint, the transport evidence is retained with no block
+rows and zero local token totals so parser/capture failures remain inspectable.
 
 #### Canonical invocation normalization
 
@@ -284,6 +308,12 @@ the body and uses the transport-neutral decoder in `analysis/capture.py`. The de
 ordered application records, multiline `data`, SSE metadata, non-JSON text, and `[DONE]` before
 the adapter reconstructs canonical provider response JSON. Ollama's JSON-lines streams and Codex
 WebSocket events follow the same boundary.
+
+The current WebSocket registry contains one protocol: `codex_responses`, matching
+`chatgpt.com/backend-api/codex/responses`. It assembles each `response.create` plus server events
+through `response.completed`, `response.failed`, or `response.incomplete`; connection closure or a
+superseding request flushes a pending exchange as incomplete. Auxiliary, text, and binary frames
+remain in `response_events`, while idle rate-limit frames outside an invocation do not create rows.
 
 Transport ingestion emits one observed invocation, not one row per frame. Provider normalization
 then resolves explicit state references such as Responses API `previous_response_id` and emits a
@@ -348,8 +378,9 @@ agent resends full history each turn), so no extra migration is needed:
   `message_index` to the previous conversational turn, skipping over tool-only turns
   (calls/results) and the system prompt in between.
 
-The UI (`ContextOverview`, `ParsedViewer`'s `TokenBlock`) renders these as clickable "jump to"
-chips that scroll to and highlight the linked block.
+The request workbench's block inspector renders these relationships as jump actions that select
+and scroll to the linked block. Each returned block also includes `first_seen_session_seq`, the
+earliest request number in the same session where its content hash appeared.
 
 ---
 
@@ -359,7 +390,8 @@ chips that scroll to and highlight the linked block.
 **Encoder:** `o200k_base` (used as a universal approximation for all providers and models; `cl100k_base` up to 0.3.3).
 
 **Expected accuracy:**
-- OpenAI `gpt-5.x`, `gpt-4.1`, `gpt-4o`, o-series: exact (this is their native encoder).
+- OpenAI `gpt-5.x`, `gpt-4.1`, `gpt-4o`, o-series: typically within ~2%. `o200k_base` is their
+  native encoder, while message/tool framing is still estimated locally.
 - OpenAI `gpt-4` / `gpt-3.5-turbo`: ~2–5%. These predate `o200k_base` and use `cl100k_base`
   natively, but the two encoders agree to within ~0.0% on captured agent traffic (code, tool
   JSON, English prose).
@@ -379,8 +411,9 @@ When the encoder is first loaded, tiktoken downloads the encoding data file from
   passing base64 data URLs to the text tokenizer. Mixed multimodal blocks carry
   `attrs.contains_media = true` and `attrs.token_estimate = "text_only"`; the provider-reported
   input total remains authoritative for media token accounting.
-- `tokens_total_input`/`tokens_total_output` and the 8 category columns are sums over blocks,
-  computed by `classify()` — see §5.2.
+- The 8 category columns and output text/thinking split are sums over blocks. `tokens_total_input`
+  additionally includes the ChatML-style message-overhead estimate; `tokens_total_output` is the
+  output text/thinking sum. All are computed by `classify()` — see §5.2.
 - If the provider returns a `usage` object in the response body, it's stored verbatim alongside
   the estimated counts: `provider_input_tokens`, `provider_output_tokens`,
   `provider_reasoning_tokens`, `cache_read_tokens`, `cache_creation_tokens`, and any remaining
@@ -416,7 +449,8 @@ CREATE TABLE requests (
     session_id                      TEXT REFERENCES sessions(id) ON DELETE SET NULL,
     timestamp                       DATETIME NOT NULL,
     provider                        TEXT NOT NULL,
-        -- 'openai' | 'openai_azure' | 'anthropic' | 'copilot' | 'ollama' | 'unknown'
+        -- e.g. 'openai', 'openai_azure', 'anthropic', 'copilot',
+        --      'opencode_zen', 'openai_chatgpt', 'ollama'
     model                           TEXT,
     agent                           TEXT,
         -- detected agent name or 'unknown'
@@ -478,7 +512,7 @@ CREATE INDEX idx_requests_provider_response ON requests(provider, provider_respo
 CREATE INDEX idx_requests_predecessor_response ON requests(predecessor_response_id);
 
 CREATE TABLE tool_stats (
-    id                TEXT PRIMARY KEY,
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id        TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
     tool_name         TEXT NOT NULL,
     definition_tokens INTEGER NOT NULL DEFAULT 0,
@@ -488,7 +522,7 @@ CREATE TABLE tool_stats (
 CREATE INDEX idx_tool_stats_request ON tool_stats(request_id);
 CREATE INDEX idx_tool_stats_name ON tool_stats(tool_name);
 
--- Content-addressed block text, shared/deduplicated across every request in a session
+-- Content-addressed block text, shared/deduplicated globally by content hash
 CREATE TABLE block_contents (
     hash        TEXT PRIMARY KEY,   -- sha256 hex of `content`
     content     TEXT NOT NULL,
@@ -530,17 +564,17 @@ Linking".
 
 #### Data Lifecycle
 
-- **During capture:** every request writes a `Request` row with the aggregated per-category
+- **During capture:** every supported invocation writes a `Request` row with the aggregated per-category
   token counts, one `BlockRecord` per content part (deduplicated into `block_contents` by
-  content hash), and (if any tools were used) one `ToolStat` row per tool.
+  content hash across the database), and (if tool definitions exist) one `ToolStat` row per tool.
 - **Retention (configurable, see §10):** on server startup only (no background timer),
   `startup_vacuum()`:
   - NULLs raw/canonical request/response bodies and `response_events` together on `Request` rows older than
     `retention.raw_body_days` (default 7; `0` = keep forever).
   - Deletes `block_contents` rows whose hash is no longer referenced by any `blocks` row from a
     request newer than `retention.block_content_days` (default 7; `0` = keep forever) — content
-    shared by multiple requests in a session is only garbage-collected once every referencing
-    request has aged out. `blocks` rows themselves (and their token counts/categories) are never
+    shared by multiple requests anywhere in the database is only garbage-collected once every
+    referencing request has aged out. `blocks` rows themselves (and their token counts/categories) are never
     purged, only the `block_contents` text.
 - **Token stats, block metadata (types/categories/token counts/links), and tool stats** are kept
   indefinitely.
@@ -587,7 +621,7 @@ requests containing inline base64 media so transport encodings are no longer cou
 | `GET` | `/api/sessions` | List all sessions (newest first). |
 | `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session. 404 if missing. |
 | `PATCH` | `/api/sessions/{id}` | Rename a session. Body: `{ "name": "string" }`. 422 if blank, 404 if missing. |
-| `POST` | `/api/sessions/{id}/end` | End a session. Triggers async raw content purge. 404 if missing. |
+| `POST` | `/api/sessions/{id}/end` | End a session. Retained content is unchanged until the next startup retention pass. 404 if missing. |
 | `DELETE` | `/api/sessions/{id}?delete_requests=bool` | Delete session, optionally cascading its request records. 404 if missing. |
 
 #### Requests
@@ -595,8 +629,8 @@ requests containing inline base64 media so transport encodings are no longer cou
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
-| `GET` | `/api/requests/{id}` | Full transport-neutral request detail. `request_body`/`response_body` resolve to the stored canonical documents, with blocks, outcome, context fidelity/accounting, usage, and compatibility diagnostics when retained. 404 if missing. |
-| `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, linked_call_id, linked_definition_id, linked_previous_message_id`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. 404 if request missing. |
+| `GET` | `/api/requests/{id}` | Full transport-neutral request detail. `request_body`/`response_body` resolve to the stored canonical documents, with outcome, context fidelity/accounting, usage, and compatibility diagnostics when retained. Block data is fetched from the companion `/blocks` endpoint. 404 if missing. |
+| `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, linked_call_id, linked_definition_id, linked_previous_message_id, first_seen_session_seq`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. `first_seen_session_seq` is `null` for session-less or content-less blocks. 404 if request missing. |
 
 #### Stats
 
@@ -606,7 +640,7 @@ requests containing inline base64 media so transport encodings are no longer cou
 | `GET` | `/api/stats/session/{id}` | Aggregated breakdown for a specific session. |
 | `GET` | `/api/stats/timeline` | Time-series data. Query params: `session_id` (optional), `bucket` = `minute` \| `hour` \| `day`. |
 | `GET` | `/api/stats/tools` | Per-tool token breakdown (`tool_name`, `definition_tokens`, `result_tokens`). Query params: `session_id`, `request_id` (both optional; live-aggregated from `tool_stats`, not materialized separately). |
-| `GET` | `/api/stats/sessions-summary` | Chronological list of session/gap entries (each session's token totals + idle gaps between sessions), used by the Sessions page. |
+| `GET` | `/api/stats/sessions-summary` | Newest-first list of session and no-session gap entries, including duration, request/input/output totals, and all eight input-category totals. Used by the Overview and Sessions pages. |
 
 Stats response shape (shared by overview and per-session):
 ```json
@@ -614,6 +648,8 @@ Stats response shape (shared by overview and per-session):
   "request_count": 42,
   "tokens_total_input": 128000,
   "tokens_total_output": 8200,
+  "tokens_output_text": 6900,
+  "tokens_output_thinking": 1300,
   "by_category": {
     "system_prompt":            { "tokens": 4000,  "pct": 3.1 },
     "tool_definitions":         { "tokens": 32000, "pct": 25.0 },
@@ -625,7 +661,21 @@ Stats response shape (shared by overview and per-session):
     "uncategorized":            { "tokens": 2000,  "pct": 1.6 }
   },
   "by_provider": { "openai": 30, "anthropic": 12 },
-  "by_agent":    { "github_copilot": 22, "claude_sdk": 12, "unknown": 8 }
+  "by_agent":    { "github_copilot": 22, "claude_sdk": 12, "unknown": 8 },
+  "by_model":    { "gpt-5.6": 30, "claude-sonnet-4-5": 12 },
+  "latency": {
+    "avg_ms": 1234, "p50_ms": 950, "p95_ms": 3100,
+    "p99_ms": 4200, "min_ms": 180, "max_ms": 4800
+  },
+  "by_status": { "200": 40, "failed": 2 },
+  "error_count": 2,
+  "unknown_status_count": 0,
+  "session_timing": {
+    "first_request_at": "2026-09-10T08:00:00+00:00",
+    "last_request_at": "2026-09-10T08:30:00+00:00",
+    "elapsed_ms": 1800000,
+    "active_duration_ms": 51828
+  }
 }
 ```
 
@@ -633,17 +683,17 @@ Stats response shape (shared by overview and per-session):
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/proxy/status` | `{ "running": bool, "port": 8888, "cert_installed": bool }` |
+| `GET` | `/api/proxy/status` | `{ "running": bool, "port": int, "cert_installed": bool }` |
 | `POST` | `/api/proxy/start` | Start the proxy (no-op if already running). |
 | `POST` | `/api/proxy/stop` | Stop the proxy. |
 | `POST` | `/api/proxy/install-cert` | Install the mitmproxy CA cert into the OS trust store. |
-| `GET` | `/proxy.pac` | PAC file (`text/plain`) routing known LLM hostnames through the proxy, `DIRECT` otherwise — an alternative to setting `HTTPS_PROXY` for clients that support PAC. |
+| `GET` | `/api/proxy.pac` | PAC file (`text/plain`) routing known LLM hostnames through the proxy, `DIRECT` otherwise — an alternative to setting `HTTPS_PROXY` for clients that support PAC. |
 
 #### Tokenize
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/tokenize` | Body: `{ "texts": string[] }`. Returns `{ "results": string[][] }` — per-text token strings, used by the UI for token-level highlighting. |
+| `POST` | `/api/tokenize` | Body: `{ "texts": string[] }`. Returns `{ "results": string[][] }` — per-text token strings. Processing is capped at 200 inputs and 50,000 characters per input. The endpoint remains available for compatibility; the primary request workbench does not tokenize every block on load. |
 
 #### WebSocket
 
@@ -671,59 +721,96 @@ Also emits `{ "event": "session_started", "data": { ... } }` and `{ "event": "se
 - Recharts (charts)
 - Tailwind CSS (styling)
 - React Router v6 (routing)
+- jsPDF + jsPDF-AutoTable (session PDF export)
 
-The production build (`ui/dist/`) is served as static files by FastAPI. During development, Vite dev server proxies API requests to FastAPI.
+Vite writes the production build directly to `contextspy/_web/`, which FastAPI serves as static
+files with an SPA fallback. During development, the Vite server on port `5174` proxies `/api`
+(including `/api/ws`) to FastAPI on port `5173`.
+
+The application uses semantic CSS variables for all surfaces, text, state, chart, and block
+colours. Light and dark themes follow a saved `contextspy-theme` preference, falling back to the
+OS colour scheme; the theme is applied before React loads to avoid a flash. The application shell
+uses a full sidebar on wide screens, an icon rail at narrower desktop widths, and a sticky header
+plus navigation drawer on mobile.
 
 #### Pages
 
 ##### `/` — Dashboard
 
-- Header bar: active session name (or "No active session"), **Start Session** button (opens name input modal), **End Session** button (disabled if no active session).
-- Summary cards: total requests, total input tokens this session, total output tokens this session, estimated cost placeholder (N/A in v1).
-- **Donut chart** (Recharts `PieChart`): token composition for the current session, one slice per category, colour-coded.
-- **Time-series line chart** (Recharts `LineChart`): total input tokens over time (bucketed). Controls for bucket size (minute / hour / day).
-- **Recent requests table**: last 20 requests. Columns: timestamp, provider badge, model, agent, input tokens, output tokens, duration. Click row → Request Detail.
+- Header-level session controls show the active session or open the **Start session** dialog; an
+  active session can be ended in place.
+- Global summary cards: context tokens, generated tokens (split into visible output and thinking
+  when applicable), total requests, and provider count.
+- Responsive token-composition donut with an adjacent exact-value category table.
+- Paginated five-row session/no-session timeline summary.
+- Tool composition treemap plus a sortable exact-value table. Treemap area is token-linear,
+  definition/result shades are related, colours are stable by tool name, and tools below 1% of
+  tool tokens are grouped into **Other**.
+- Top-ten model distribution and latency (`avg`, `p50`, `p95`, `p99`) / error summaries.
+- Recent 20 requests using the shared responsive request list.
 
 ##### `/requests` — All Requests
 
-- Filter bar: session selector, provider filter, agent filter.
-- Paginated table (50 rows/page). Same columns as dashboard recent table.
-- Click row → Request Detail.
+- Search across model, endpoint, agent, and provider; dynamically populated provider and agent
+  filters; and success/error status filtering. The UI also reports how many models have been seen.
+- Server-backed pagination at 50 rows per page and sortable primary columns.
+- The shared request list hides zero-input/zero-output rows by default (toggleable). Its desktop
+  table shows time, input tokens, a compact category bar, duration, status, and model/source;
+  output/thinking, provider, agent, session, and endpoint are available in an expandable detail
+  row. Mobile uses request cards. Selecting a row opens Request Detail.
 
 ##### `/requests/:id` — Request Detail
 
-- Breadcrumb back to Requests list.
-- **Token composition donut** scoped to this single request.
-- **Category breakdown table**: category name, token count, % of total input.
-- **Estimated vs. provider-reported** comparison table (shown only if `provider_input_tokens` is populated): estimated total, provider-reported total, difference, % error.
-- **Raw request/response viewer**: two collapsible JSON panels, displayed only when raw content is available. Shows a notice if data has been purged.
+- Compact header with status/provider/model/time plus context, generated, duration, model, and
+  cache summary cards. Capture/fidelity/reconstruction warnings appear directly below it.
+- The request-composition workbench is open by default. Top-level **Request** / **Response**
+  direction controls share three views:
+  - **Compact:** one equal-size, ordered tile per visible block.
+  - **Proportional:** an ordered, wrapped relative-size view. Each whole block spans one to six
+    cells using logarithmic token-count growth; blocks are not split across rows. This keeps very
+    large blocks usable, so the view is intentionally not an exact area chart.
+  - **Raw:** the canonical request/response payload, with the normalized event log available for
+    streamed responses.
+- Block controls include content/tool search, type filters, three tile-size choices, a zero-token
+  visibility toggle, and **Jump to largest**. Compact view also marks sequence/turn/tool grouping;
+  Proportional view preserves sequence without group separators. Zero-token blocks remain visible
+  by default with muted category colours.
+- Selecting a block opens an inspector with type, tokens, position, message, first-seen request,
+  content state, tool-call ID, and jumpable tool/previous-message relationships. Available block
+  content appears in a bounded viewer with JSON pretty-printing, search with next/previous match,
+  and copy support. Purged and structural empty content have distinct states.
+- Collapsible **Analytics** contains request-level category composition and tool treemap/table.
+  Collapsible **Metadata and diagnostics** contains transport, provider usage, context-accounting,
+  lineage, cache, tokenizer, and additional usage fields.
 
 ##### `/sessions` — Sessions
 
-- Table of all sessions: name, started, ended (or "Active"), request count, total input tokens.
-- Click row → Session Detail.
+- Sortable table of named sessions with start, duration, active/ended status, request count, input
+  and output totals, and an eight-category context bar.
+- Sessions can be renamed inline or deleted. The delete dialog can either keep requests as
+  session-less records or delete the session's requests too. Selecting a row opens Session Detail.
 
 ##### `/sessions/:id` — Session Detail
 
-- Same donut + time-series charts scoped to session.
-- Full requests table for that session.
-- Buttons: **End Session** (if active), **Delete Session** (with confirmation dialog).
+- Session timing (opened/closed, first/last request, elapsed and active request duration), totals,
+  token-composition donut/table, selectable minute/hour/day timeline, tool treemap/table, and up
+  to 500 requests using the shared sortable request list.
+- Actions: **End session** (when active), **Export PDF**, **Rename**, and **Delete**. The PDF
+  contains timing, totals, category and tool tables, and up to the same 500 request rows; it notes
+  when the list is truncated relative to the full session summary.
 
 ##### `/settings` — Settings
 
-- **Proxy configuration**: port (editable, requires restart).
-- **CA Certificate**: installation status badge (installed / not installed), one-click install button (calls backend which runs OS command), manual instructions panel.
-- **Agent setup instructions**: tabbed panel per agent, showing exact env vars / VS Code settings to configure.
-  - *All agents (general):* `export HTTPS_PROXY=http://127.0.0.1:8888`
-  - *GitHub Copilot:* VS Code `settings.json` snippet.
-  - *Claude CLI / opencode:* env var instructions.
-  - *OpenAI SDK scripts:* env var instructions.
+- **Proxy** tab: CA certificate status, one-click installation, and the returned installation
+  message. It does not edit the listening port or configuration file.
+- **Agent setup** tab: cloud forward-proxy instructions for Claude Code/Anthropic, GitHub Copilot,
+  and opencode, plus reverse-proxy configuration examples for llama-server, Ollama, and vLLM.
 
 ---
 
 ### 5.7 CLI
 
-**Entry point:** `ContextSpy` (installed by `pip install -e .` via `pyproject.toml` `[project.scripts]`).  
+**Entry point:** `contextspy` (installed by `pip install -e .` via `pyproject.toml` `[project.scripts]`).
 **CLI framework:** Typer.
 
 ```
@@ -748,7 +835,8 @@ contextspy help
     Print a table of all available commands with descriptions.
 
 contextspy status
-    Show whether the proxy is running, active session name, DB path.
+    Show whether the forward proxy and CA certificate are available, the reported
+    proxy port, and the active session name.
 
 contextspy install-cert
     Run OS-specific CA cert trust-store installation.
@@ -788,6 +876,10 @@ contextspy setup-copilot
 contextspy setup-opencode
     Print env-var commands to route opencode through the proxy.
 
+contextspy setup-codex
+    Print env-var commands for Codex CLI. Documents native capture of the
+    ChatGPT-plan WebSocket transport and the now-unnecessary HTTP workaround.
+
 contextspy setup-python
     Print httpx/OpenAI-SDK cert setup instructions, including the fix for
     SDKs that verify against certifi's bundled CA store directly and so
@@ -815,6 +907,9 @@ contextspy session end
 
 contextspy session list
     Print a table of sessions.
+
+contextspy --version
+    Print the installed package version and exit.
 ```
 
 `session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-upgrade`, `db-stats`, `report`, and all `setup-*`/`inject-cert` commands work offline.
@@ -825,20 +920,29 @@ contextspy session list
 
 ### Provider Detection
 
-Determined from the destination hostname of the intercepted flow:
+Determined from the destination hostname/port of the intercepted flow. Host patterns match the
+exact hostname and all subdomains:
 
 | Hostname | Provider value |
 |---|---|
 | `api.openai.com` | `openai` |
-| `*.openai.azure.com` | `openai_azure` |
+| `openai.azure.com` and subdomains | `openai_azure` |
 | `api.anthropic.com` | `anthropic` |
 | `copilot-proxy.githubusercontent.com` | `copilot` |
-| `localhost:11434` or `127.0.0.1:11434` | `ollama` |
-| anything else (should not occur due to filter) | `unknown` |
+| `githubcopilot.com` and subdomains | `copilot` |
+| `opencode.ai` and subdomains | `opencode_zen` |
+| `chatgpt.com` and subdomains | `openai_chatgpt` |
+| any hostname on port `11434` | `ollama` |
+| anything else | not captured |
+
+A recognized host is not sufficient by itself: only requests parsed by an adapter, or requests
+whose path resembles a supported LLM endpoint, are persisted. This is especially important for
+broad hosts such as `chatgpt.com`, which also carry telemetry and account traffic.
 
 ### Agent Detection
 
-Determined by partial case-insensitive matching against the `User-Agent` request header:
+Determined by partial case-insensitive matching against the `User-Agent` request header. For a
+registered WebSocket connection, `User-Agent` and `originator` are combined before matching:
 
 | User-Agent contains | Agent value |
 |---|---|
@@ -911,15 +1015,21 @@ contextspy/                         # repo root
 │   ├── __main__.py                 # PyInstaller / python -m entry point
 │   ├── cli.py                      # Typer CLI entry point
 │   ├── config.py                   # Settings (ports, paths, etc.)
+│   ├── normalization.py            # Provider-state lineage → standalone canonical invocation
 │   ├── proxy/
 │   │   ├── __init__.py
 │   │   ├── addon.py                # mitmproxy ContextSpyAddon
 │   │   ├── cert.py                 # CA cert generation & OS trust-store install
-│   │   └── runner.py               # Starts mitmproxy in a background thread
+│   │   ├── runner.py               # Starts mitmproxy in background threads
+│   │   └── ws_protocols/           # WebSocket exchange assemblers and registry
+│   │       ├── base.py
+│   │       └── codex.py
 │   ├── analysis/
 │   │   ├── __init__.py
 │   │   ├── blocks.py               # Block / Direction / BlockType / Usage / AnalyzedRequest
-│   │   ├── adapters/                # One WireFormatAdapter subclass per wire format
+│   │   ├── capture.py              # SSE/NDJSON event decoding and canonical response type
+│   │   ├── invocations.py          # Canonical JSON documents and analysis boundary
+│   │   ├── adapters/               # One WireFormatAdapter subclass per wire format
 │   │   │   ├── __init__.py         # Registers adapters (dispatch priority order)
 │   │   │   ├── base.py             # WireFormatAdapter ABC, REGISTRY, get_adapter()
 │   │   │   ├── anthropic.py
@@ -950,6 +1060,7 @@ contextspy/                         # repo root
 │   │   ├── main.tsx
 │   │   ├── App.tsx
 │   │   ├── api/                    # TanStack Query hooks + fetch wrappers
+│   │   ├── lib/                    # Block visuals/layout and content-search helpers
 │   │   ├── pages/
 │   │   │   ├── Dashboard.tsx
 │   │   │   ├── Requests.tsx
@@ -958,11 +1069,15 @@ contextspy/                         # repo root
 │   │   │   ├── SessionDetail.tsx
 │   │   │   └── Settings.tsx
 │   │   └── components/
+│   │       ├── Layout.tsx           # Responsive shell + theme toggle
 │   │       ├── TokenDonut.tsx
 │   │       ├── TimeSeriesChart.tsx
 │   │       ├── RequestTable.tsx
 │   │       ├── SessionControls.tsx
-│   │       └── RawViewer.tsx
+│   │       ├── ToolTreemap.tsx
+│   │       ├── ToolBreakdown.tsx
+│   │       ├── request/             # Workbench, maps, toolbar, inspector, notices
+│   │       └── ui/                  # Shared primitives, content viewer, and theme control
 │   ├── package.json
 │   └── vite.config.ts              # outDir → ../contextspy/_web, dev port 5174
 ├── .github/
@@ -993,7 +1108,7 @@ contextspy/                         # repo root
 ```toml
 [project]
 name = "contextspy"
-version = "0.3.0"
+version = "0.3.5"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
 dependencies = [
@@ -1006,7 +1121,11 @@ dependencies = [
     "websockets>=12.0",
     "rich>=13.0",
     "httpx>=0.27",
+    "tomli>=2.0; python_version < '3.11'",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
 
 [project.scripts]
 contextspy = "contextspy.cli:app"
@@ -1020,11 +1139,11 @@ contextspy = ["_web/**/*"]
 ```
 
 Frontend dependencies (`ui/package.json`):
-- `react`, `react-dom`, `react-router-dom`
-- `@tanstack/react-query`
-- `recharts`
-- `tailwindcss`, `@tailwindcss/vite`
-- `typescript`, `vite`
+
+- Runtime: `react`, `react-dom`, `react-router-dom`, `@tanstack/react-query`, `recharts`,
+  `jspdf`, and `jspdf-autotable`.
+- Build/test: `typescript`, `vite`, `@vitejs/plugin-react`, Tailwind CSS 3 + PostCSS/Autoprefixer,
+  Vitest, jsdom, React Testing Library, and `@testing-library/user-event`.
 
 ---
 
@@ -1053,7 +1172,8 @@ raw_body_days = 7
 block_content_days = 7
 
 [intercepted_hosts]
-# Add extra hosts if needed (besides the built-in list)
+# Reserved setting. It is parsed into Settings.extra_hosts but is not yet
+# consulted by provider detection or PAC generation.
 extra_hosts = []
 
 # Each [[reverse_targets]] block defines one local LLM server to intercept
@@ -1062,10 +1182,14 @@ extra_hosts = []
 # name        = "llama-server"            # display label
 # listen_port = 8889                      # port contextspy listens on
 # target_url  = "http://127.0.0.1:8080"  # where your server actually runs
-# provider    = "openai"                  # parser: "openai" | "anthropic" | "ollama"
+# provider    = "openai"                  # stored label; path still selects the adapter
 ```
 
-Config values can be overridden by CLI flags. The `config.py` module loads this file and exposes a `Settings` object.
+The `config.py` module loads this file and exposes a `Settings` object. `contextspy start` applies
+its `--proxy-port` and `--web-port` values after loading the file (their defaults are `8888` and
+`5173`); `start-local` applies `--web-port` and reads listener/upstream ports from
+`[[reverse_targets]]`. Bind addresses, storage, retention, and reverse-target definitions remain
+configuration-file values. `extra_hosts` is currently reserved and does not extend capture.
 
 > **Windows note:** When writing the config file, `db_path` backslashes are converted to forward slashes before serialisation. Raw Windows paths (e.g. `C:\Users\...`) would cause `TOMLDecodeError` because TOML interprets `\U` and `\u` as Unicode escapes in double-quoted strings.
 
@@ -1077,29 +1201,31 @@ Config values can be overridden by CLI flags. The `config.py` module loads this 
 
 When `contextspy start` is called:
 
-1. Load and validate config.
-2. Ensure `~/.contextspy/` directory exists.
-3. Initialise SQLite DB (create tables if not exists, apply additive column migrations, run startup vacuum).
-4. Check for pending data migrations (`_abort_if_migrations_pending`); if any are pending, print an error pointing at `db-upgrade`/`reset-db` and exit(1) without starting anything else.
-5. Check CA cert; if absent, generate via mitmproxy and attempt trust-store installation. If install fails, print instructions.
-6. Start mitmproxy `DumpMaster` with `ContextSpyAddon` (no `provider_override`) in a daemon thread.
-7. Start FastAPI/Uvicorn in the main asyncio event loop on `127.0.0.1:5173`.
-8. Open `http://127.0.0.1:5173` in the default browser.
-9. On `Ctrl+C`: send shutdown signal to mitmproxy thread, wait for it to stop, close DB connections, exit.
+1. Load config, apply the CLI port values, ensure directories, and create the default config file
+   if it does not exist.
+2. Initialise the SQLite schema/additive columns and check for pending data migrations. If any are
+   pending, print an error pointing at `db-upgrade`/`reset-db` and exit before starting services.
+3. Validate or generate the mitmproxy CA. A newly generated CA triggers one automatic trust-store
+   installation attempt; an existing valid CA is reused without reinstalling it.
+4. Create the FastAPI application and start Uvicorn on the configured web bind address/port. Unless
+   `--no-browser` is set, schedule the dashboard to open after a short delay.
+5. During the FastAPI lifespan startup, initialise the DB again, run the one-time retention vacuum,
+   and start mitmproxy `DumpMaster` with `ContextSpyAddon` in a daemon thread.
+6. On shutdown, stop/join the proxy thread and dispose the DB engine.
 
 ### 11.2 Local Mode (`contextspy start-local`)
 
 When `contextspy start-local` is called:
 
-1. Load and validate config; abort if `reverse_targets` is empty (print helpful config snippet).
-2. Ensure `~/.contextspy/` directory exists.
-3. Initialise SQLite DB (create tables if not exists, apply additive column migrations, run startup vacuum).
-4. Check for pending data migrations (`_abort_if_migrations_pending`); exit(1) with the same message as cloud mode if any are pending.
-5. **Skip CA cert check** — no TLS interception needed.
-6. For each `[[reverse_targets]]` entry: start a mitmproxy `DumpMaster` in `reverse:` mode with `ContextSpyAddon(provider_override=target.provider)` in a daemon thread.
-7. Start FastAPI/Uvicorn in the main asyncio event loop on `127.0.0.1:5173`.
-8. Open `http://127.0.0.1:5173` in the default browser.
-9. On `Ctrl+C`: send shutdown signal to all reverse-proxy threads, wait for them to stop, close DB connections, exit.
+1. Load config, apply the CLI web-port value, ensure directories, create defaults if needed, and run
+   the same schema/pending-migration check as cloud mode.
+2. Abort with a configuration example if `reverse_targets` is empty.
+3. Skip CA generation/installation, create the local FastAPI application, and start Uvicorn. Unless
+   `--no-browser` is set, schedule the dashboard to open after a short delay.
+4. During FastAPI lifespan startup, initialise the DB again, run the one-time retention vacuum, and
+   start one staggered daemon-thread `DumpMaster` per `[[reverse_targets]]` entry in `reverse:` mode
+   with `ContextSpyAddon(provider_override=target.provider)`.
+5. On shutdown, stop/join all reverse-proxy threads and dispose the DB engine.
 
 ---
 
@@ -1107,7 +1233,7 @@ When `contextspy start-local` is called:
 
 - **Native tokenizer support:** Anthropic provides a token-counting API endpoint; Ollama has `/api/tokenize`. These could be used for exact counts per provider.
 - **Cost estimation:** Add a `models_pricing.json` lookup table (input/output price per 1K tokens per model) to compute estimated cost per request.
-- **Export:** CSV / JSON export of session data from the UI.
+- **Additional export formats:** Session PDF export exists; CSV / JSON export is not yet built.
 - **Prompt diffing:** Visual diff of the context window between consecutive requests in the same
   session. Groundwork laid: every `Request` has a `session_seq` ordinal and every `Block` a
   `content_hash`, so unchanged blocks across consecutive requests can already be identified by
