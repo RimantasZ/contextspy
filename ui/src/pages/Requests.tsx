@@ -37,6 +37,8 @@ export default function Requests() {
 
   const stats = useStatsOverview();
   const sessions = useSessions();
+  const providerOptions = Object.keys(stats.data?.by_provider ?? {}).sort((a, b) => a.localeCompare(b));
+  const agentOptions = Object.keys(stats.data?.by_agent ?? {}).sort((a, b) => a.localeCompare(b));
   const modelOptions = Object.keys(stats.data?.by_model ?? {}).sort();
 
   const { data, isLoading } = useRequests({
@@ -78,9 +80,9 @@ export default function Requests() {
           className="app-field py-1.5"
         >
           <option value="">All providers</option>
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-          <option value="ollama">Ollama</option>
+          {providerOptions.map((value) => (
+            <option key={value} value={value}>{value}</option>
+          ))}
         </select>
         <select
           aria-label="Filter by agent"
@@ -89,10 +91,9 @@ export default function Requests() {
           className="app-field py-1.5"
         >
           <option value="">All agents</option>
-          <option value="copilot">Copilot</option>
-          <option value="claude">Claude</option>
-          <option value="cursor">Cursor</option>
-          <option value="unknown">Unknown</option>
+          {agentOptions.map((value) => (
+            <option key={value} value={value}>{value === 'unknown' ? 'Unknown' : value}</option>
+          ))}
         </select>
         <select
           aria-label="Filter by status"

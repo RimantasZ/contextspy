@@ -179,7 +179,12 @@ def list_requests(
     if provider:
         stmt = stmt.where(Request.provider == provider)
     if agent:
-        stmt = stmt.where(Request.agent == agent)
+        # Stats expose missing agent metadata as "unknown". Keep the request
+        # filter aligned with that value while also accepting a literal value.
+        if agent == "unknown":
+            stmt = stmt.where(or_(Request.agent.is_(None), Request.agent == agent))
+        else:
+            stmt = stmt.where(Request.agent == agent)
     if model:
         stmt = stmt.where(Request.model == model)
     if q:
