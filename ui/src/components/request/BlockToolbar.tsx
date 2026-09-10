@@ -55,11 +55,11 @@ export function BlockToolbar({
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-          Density
+          Size
           <select value={density} onChange={(event) => onDensity(Number(event.target.value))} className="app-field py-1.5">
-            <option value={22}>Dense</option>
+            <option value={22}>Smaller</option>
             <option value={26}>Default</option>
-            <option value={30}>Comfortable</option>
+            <option value={30}>Larger</option>
           </select>
         </label>
         <label className="flex min-h-8 items-center gap-1.5 text-xs text-[var(--text-muted)]">

@@ -63,4 +63,21 @@ describe('RequestWorkbench', () => {
     expect(screen.getByText('1 / 1')).toBeTruthy()
     expect((screen.getByRole('checkbox', { name: /Pretty print JSON/i }) as HTMLInputElement).checked).toBe(true)
   })
+
+  it('changes block size with the size selector', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks }), { status: 200 }))
+    renderWorkbench()
+
+    const map = await screen.findByRole('group', { name: 'Compact block map' })
+    const size = screen.getByRole('combobox', { name: 'Size' }) as HTMLSelectElement
+
+    expect(size.value).toBe('26')
+    expect(Array.from(size.options, (option) => option.text)).toEqual(['Smaller', 'Default', 'Larger'])
+    expect(map.style.gridTemplateColumns).toContain('26px')
+
+    await userEvent.selectOptions(size, '30')
+
+    expect(size.value).toBe('30')
+    expect(map.style.gridTemplateColumns).toContain('30px')
+  })
 })
