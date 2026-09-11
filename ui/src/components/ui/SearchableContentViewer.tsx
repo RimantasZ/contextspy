@@ -95,15 +95,18 @@ function JsonKey({ name, query }: { name: string; query: string }) {
   )
 }
 
-function JsonTreeNode({ value, query, name, depth = 0, trailingComma = false }: {
+function JsonTreeNode({ value, query, name, trailingComma = false, collapseAll, collapseRevision }: {
   value: JsonValue
   query: string
   name?: string
-  depth?: number
   trailingComma?: boolean
+  collapseAll: boolean
+  collapseRevision: number
 }) {
-  const [collapsed, setCollapsed] = useState(depth > 1)
+  const [collapsed, setCollapsed] = useState(false)
   const collection = Array.isArray(value) || (value !== null && typeof value === 'object')
+
+  useEffect(() => { setCollapsed(collapseAll) }, [collapseAll, collapseRevision])
 
   if (!collection) {
     return (
@@ -176,9 +179,10 @@ function JsonTreeNode({ value, query, name, depth = 0, trailingComma = false }: 
                 key={key ?? index}
                 value={child}
                 name={key}
-                depth={depth + 1}
                 query={query}
                 trailingComma={index < entries.length - 1}
+                collapseAll={collapseAll}
+                collapseRevision={collapseRevision}
               />
             ))}
           </div>
@@ -236,17 +240,20 @@ function descendantLineCount(node: StructuredLine): number {
   return node.children.reduce((total, child) => total + 1 + descendantLineCount(child), 0)
 }
 
-function StructuredLineNodeView({ node, language, query, depth = 0 }: {
+function StructuredLineNodeView({ node, language, query, collapseAll, collapseRevision }: {
   node: StructuredLine
   language: ContentLanguage
   query: string
-  depth?: number
+  collapseAll: boolean
+  collapseRevision: number
 }) {
-  const [collapsed, setCollapsed] = useState(depth > 1)
+  const [collapsed, setCollapsed] = useState(false)
   const foldable = node.children.length > 0
   const searchActive = query.length > 0
   const shownCollapsed = foldable && collapsed && !searchActive
   const text = node.text.trimStart()
+
+  useEffect(() => { setCollapsed(collapseAll) }, [collapseAll, collapseRevision])
 
   return (
     <div>
@@ -280,7 +287,14 @@ function StructuredLineNodeView({ node, language, query, depth = 0 }: {
       {foldable && !shownCollapsed && (
         <div className="ml-2.5 border-l border-[var(--border)] pl-3">
           {node.children.map((child) => (
-            <StructuredLineNodeView key={child.id} node={child} language={language} query={query} depth={depth + 1} />
+            <StructuredLineNodeView
+              key={child.id}
+              node={child}
+              language={language}
+              query={query}
+              collapseAll={collapseAll}
+              collapseRevision={collapseRevision}
+            />
           ))}
         </div>
       )}
@@ -288,31 +302,43 @@ function StructuredLineNodeView({ node, language, query, depth = 0 }: {
   )
 }
 
-function StructuredTextView({ content, language, languageLabel, query }: {
+function StructuredTextView({ content, language, languageLabel, query, collapseAll, collapseRevision }: {
   content: string
   language: ContentLanguage
   languageLabel: string
   query: string
+  collapseAll: boolean
+  collapseRevision: number
 }) {
   const lines = useMemo(() => buildStructuredLines(content, language), [content, language])
   return (
     <div role="region" aria-label={`Structured ${languageLabel}`}>
-      {lines.map((line) => <StructuredLineNodeView key={line.id} node={line} language={language} query={query} />)}
+      {lines.map((line) => (
+        <StructuredLineNodeView
+          key={line.id}
+          node={line}
+          language={language}
+          query={query}
+          collapseAll={collapseAll}
+          collapseRevision={collapseRevision}
+        />
+      ))}
     </div>
   )
 }
 
-function TokenHighlightedText({ text, tokens, matches, activeIndex, refs }: {
+function TokenHighlightedText({ text, tokens, windowStart, matches, activeIndex, refs }: {
   text: string
   tokens: string[]
+  windowStart: number
   matches: TextMatch[]
   activeIndex: number
   refs: MutableRefObject<Array<HTMLElement | null>>
 }) {
   const joined = tokens.join('')
-  const tokenRanges = text.startsWith(joined)
+  const tokenRanges = text.slice(windowStart).startsWith(joined)
     ? tokens.reduce<Array<{ start: number; end: number; color: string }>>((ranges, token, index) => {
-      const start = ranges[ranges.length - 1]?.end ?? 0
+      const start = ranges[ranges.length - 1]?.end ?? windowStart
       ranges.push({ start, end: start + token.length, color: TOKEN_COLORS[index % TOKEN_COLORS.length] })
       return ranges
     }, [])
@@ -378,11 +404,13 @@ export function SearchableContentViewer({
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const [mode, setMode] = useState<ContentMode>('structured')
-  const [tokenResult, setTokenResult] = useState<{ text: string; tokens: string[] } | null>(null)
+  const [tokenWindowStart, setTokenWindowStart] = useState(0)
+  const [tokenResult, setTokenResult] = useState<{ text: string; start: number; tokens: string[] } | null>(null)
   const [tokenizing, setTokenizing] = useState(false)
   const [tokenError, setTokenError] = useState(false)
+  const [collapseCommand, setCollapseCommand] = useState({ collapsed: false, revision: 0 })
   const markRefs = useRef<Array<HTMLElement | null>>([])
-  const structuredRootRef = useRef<HTMLDivElement>(null)
+  const contentRootRef = useRef<HTMLDivElement>(null)
   const raw = content ?? ''
   const format = useMemo(() => formattedContent(raw), [raw])
   const parsedJson = useMemo<JsonValue | undefined>(() => {
@@ -399,29 +427,37 @@ export function SearchableContentViewer({
     ? format.formatted.split('\n').reduce((total, line) => total + findTextMatches(line.trimStart(), query).length, 0)
     : 0, [format.formatted, query, showStructuredText])
   const matchCount = showJsonTree ? treeMatches : showStructuredText ? structuredTextMatches : matches.length
-  const activeTokens = tokenResult?.text === displayed ? tokenResult.tokens : []
-  const tokenizedPrefix = activeTokens.join('')
-  const tokensTruncated = mode === 'tokens' && !tokenizing && tokenizedPrefix.length > 0
-    && displayed.startsWith(tokenizedPrefix) && tokenizedPrefix.length < displayed.length
+  const activeTokens = tokenResult?.text === displayed && tokenResult.start === tokenWindowStart ? tokenResult.tokens : []
+  const tokenizedWindow = activeTokens.join('')
+  const tokenWindowEnd = tokenWindowStart + tokenizedWindow.length
+  const tokensTruncated = mode === 'tokens' && !tokenizing && tokenizedWindow.length > 0
+    && displayed.slice(tokenWindowStart).startsWith(tokenizedWindow)
+    && (tokenWindowStart > 0 || tokenWindowEnd < displayed.length)
 
   useEffect(() => {
-    if (mode !== 'tokens' || content == null || tokenResult?.text === displayed) return
+    if (mode !== 'tokens' || content == null
+      || (tokenResult?.text === displayed && tokenResult.start === tokenWindowStart)) return
     let active = true
     setTokenizing(true)
     setTokenError(false)
-    tokenizeApi.tokenize([displayed])
+    tokenizeApi.tokenize([displayed.slice(tokenWindowStart)])
       .then((result) => {
-        if (active) setTokenResult({ text: displayed, tokens: result.results[0] ?? [] })
+        if (active) {
+          setTokenResult({ text: displayed, start: tokenWindowStart, tokens: result.results[0] ?? [] })
+          setTokenizing(false)
+        }
       })
       .catch(() => {
         if (active) {
-          setTokenResult({ text: displayed, tokens: [] })
+          setTokenResult({ text: displayed, start: tokenWindowStart, tokens: [] })
           setTokenError(true)
+          setTokenizing(false)
         }
       })
-      .finally(() => { if (active) setTokenizing(false) })
     return () => { active = false }
-  }, [content, displayed, mode, tokenResult?.text])
+  }, [content, displayed, mode, tokenResult?.start, tokenResult?.text, tokenWindowStart])
+
+  useEffect(() => { setTokenWindowStart(0) }, [displayed])
 
   useEffect(() => {
     setActiveIndex(0)
@@ -430,7 +466,7 @@ export function SearchableContentViewer({
 
   useEffect(() => {
     if (showStructured) {
-      const marks = [...(structuredRootRef.current?.querySelectorAll<HTMLElement>('[data-structured-search-match]') ?? [])]
+      const marks = [...(contentRootRef.current?.querySelectorAll<HTMLElement>('[data-structured-search-match]') ?? [])]
       marks.forEach((mark, index) => mark.classList.toggle('search-match-active', index === activeIndex))
       marks[activeIndex]?.scrollIntoView?.({ block: 'center', inline: 'nearest' })
       return
@@ -441,6 +477,21 @@ export function SearchableContentViewer({
   function moveMatch(delta: number) {
     if (matchCount === 0) return
     setActiveIndex((current) => (current + delta + matchCount) % matchCount)
+  }
+
+  function moveTokenWindowToCurrentView() {
+    const viewport = contentRootRef.current
+    if (!viewport || displayed.length === 0) return
+    const viewportCenter = viewport.scrollTop + viewport.clientHeight / 2
+    const scrollRatio = viewport.scrollHeight > 0 ? viewportCenter / viewport.scrollHeight : 0
+    const targetOffset = Math.round(Math.max(0, Math.min(1, scrollRatio)) * displayed.length)
+    const estimatedWindowLength = Math.max(tokenizedWindow.length, Math.min(50_000, displayed.length))
+    const centeredStart = targetOffset - Math.floor(estimatedWindowLength / 2)
+    setTokenWindowStart(Math.max(0, Math.min(displayed.length - 1, centeredStart)))
+  }
+
+  function toggleAllScopes() {
+    setCollapseCommand((current) => ({ collapsed: !current.collapsed, revision: current.revision + 1 }))
   }
 
   return (
@@ -464,9 +515,29 @@ export function SearchableContentViewer({
               </select>
             </label>
             <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--text-subtle)]" title={`Detected content type: ${format.languageLabel}`}>{format.languageLabel}</span>
+            {showStructured && (
+              <button
+                type="button"
+                className="app-button min-h-8 py-1 text-xs"
+                disabled={query.length > 0}
+                title={query.length > 0 ? 'Clear search to change all scopes' : undefined}
+                onClick={toggleAllScopes}
+              >
+                {collapseCommand.collapsed ? 'Expand all' : 'Collapse all'}
+              </button>
+            )}
             {mode === 'tokens' && tokenizing && <span className="text-[10px] text-[var(--text-muted)]" role="status">Tokenizing…</span>}
             {mode === 'tokens' && tokenError && <span className="text-[10px] text-[var(--danger)]" role="status">Token highlighting unavailable</span>}
-            {tokensTruncated && <span className="text-[10px] text-[var(--text-muted)]" title="The tokenizer preview is capped for very large content">First {activeTokens.length.toLocaleString()} tokens highlighted</span>}
+            {tokensTruncated && (
+              <button
+                type="button"
+                className="text-[10px] text-[var(--accent)] underline decoration-dotted underline-offset-2 hover:text-[var(--accent-hover)]"
+                title="Token highlighting is capped for large content. Move the highlighted window to the content currently in view."
+                onClick={moveTokenWindowToCurrentView}
+              >
+                {tokenWindowStart === 0 ? 'First ' : ''}{activeTokens.length.toLocaleString()} {activeTokens.length === 1 ? 'token' : 'tokens'} highlighted · Move to current view
+              </button>
+            )}
             {content != null && (
               <button type="button" className="app-button min-h-8 py-1 text-xs" onClick={() => navigator.clipboard?.writeText(displayed)}>
                 Copy
@@ -499,7 +570,8 @@ export function SearchableContentViewer({
         </div>
       </div>
       <div
-        ref={structuredRootRef}
+        ref={contentRootRef}
+        data-content-viewport
         className="min-h-28 min-w-0 overflow-auto p-4 font-mono text-xs leading-5 text-[var(--text)]"
         style={{ maxHeight }}
       >
@@ -507,15 +579,28 @@ export function SearchableContentViewer({
           <span className="italic text-[var(--text-muted)]">{emptyMessage}</span>
         ) : showJsonTree ? (
           <div role="region" aria-label="Structured JSON">
-            <JsonTreeNode value={parsedJson} query={query.toLocaleLowerCase()} />
+            <JsonTreeNode
+              value={parsedJson}
+              query={query.toLocaleLowerCase()}
+              collapseAll={collapseCommand.collapsed}
+              collapseRevision={collapseCommand.revision}
+            />
           </div>
         ) : showStructuredText ? (
-          <StructuredTextView content={format.formatted} language={format.language} languageLabel={format.languageLabel} query={query.toLocaleLowerCase()} />
+          <StructuredTextView
+            content={format.formatted}
+            language={format.language}
+            languageLabel={format.languageLabel}
+            query={query.toLocaleLowerCase()}
+            collapseAll={collapseCommand.collapsed}
+            collapseRevision={collapseCommand.revision}
+          />
         ) : mode === 'tokens' ? (
           <pre className="min-w-0 [overflow-wrap:anywhere] [white-space:pre-wrap]">
             <TokenHighlightedText
               text={displayed}
               tokens={activeTokens}
+              windowStart={tokenWindowStart}
               matches={matches}
               activeIndex={activeIndex}
               refs={markRefs}

@@ -1,7 +1,7 @@
 import type { BlockVisual } from '../../lib/blockVisuals'
 import { BLOCK_VISUALS } from '../../lib/blockVisuals'
 
-export type GroupMode = 'sequence' | 'turn' | 'tool'
+export type GroupMode = 'sequence' | 'turn' | 'tool' | 'size'
 
 const FILTERS: BlockVisual[] = ['system', 'user', 'assistant', 'thinking', 'tool_call', 'tool_result', 'tool_definition', 'prefill', 'other']
 const COMPACT_TOKENS = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
@@ -12,6 +12,7 @@ export function BlockToolbar({
   tokenTotals,
   search,
   grouping,
+  groupingDisabled = false,
   hideZero,
   density,
   onToggleType,
@@ -26,6 +27,7 @@ export function BlockToolbar({
   tokenTotals: Partial<Record<BlockVisual, number>>
   search: string
   grouping: GroupMode
+  groupingDisabled?: boolean
   hideZero: boolean
   density: number
   onToggleType: (visual: BlockVisual) => void
@@ -51,10 +53,17 @@ export function BlockToolbar({
         </label>
         <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
           Group
-          <select value={grouping} onChange={(event) => onGrouping(event.target.value as GroupMode)} className="app-field py-1.5">
+          <select
+            value={grouping}
+            disabled={groupingDisabled}
+            title={groupingDisabled ? 'Grouping is available for request blocks only' : undefined}
+            onChange={(event) => onGrouping(event.target.value as GroupMode)}
+            className="app-field py-1.5"
+          >
             <option value="sequence">Sequence</option>
             <option value="turn">Turn</option>
             <option value="tool">Tool pair</option>
+            <option value="size">Size (largest first)</option>
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">

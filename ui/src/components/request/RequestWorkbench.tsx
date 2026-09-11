@@ -68,6 +68,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
 
   const allBlocks = sortedBlocks(blocksQuery.data?.blocks ?? [])
   const directionBlocks = allBlocks.filter((block) => block.direction === activeDirection)
+  const effectiveGrouping: GroupMode = activeDirection === 'output' ? 'sequence' : grouping
   const available = new Set(directionBlocks.map(visualOf))
   const tokenTotals = directionBlocks.reduce<Partial<Record<BlockVisual, number>>>((totals, block) => {
     const visual = visualOf(block)
@@ -75,13 +76,18 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
     return totals
   }, {})
   const query = search.trim().toLocaleLowerCase()
-  const visibleBlocks = useMemo(() => directionBlocks.filter((block) => {
-    if (hideZero && block.token_count <= 0) return false
-    if (!activeTypes.has(visualOf(block))) return false
-    if (!query) return true
-    return [block.content, block.tool_name, block.block_type, block.category, block.tool_call_id]
-      .some((value) => String(value ?? '').toLocaleLowerCase().includes(query))
-  }), [directionBlocks, activeTypes, hideZero, query])
+  const visibleBlocks = useMemo(() => {
+    const filtered = directionBlocks.filter((block) => {
+      if (hideZero && block.token_count <= 0) return false
+      if (!activeTypes.has(visualOf(block))) return false
+      if (!query) return true
+      return [block.content, block.tool_name, block.block_type, block.category, block.tool_call_id]
+        .some((value) => String(value ?? '').toLocaleLowerCase().includes(query))
+    })
+    return effectiveGrouping === 'size'
+      ? [...filtered].sort((a, b) => b.token_count - a.token_count || a.position - b.position || a.id - b.id)
+      : filtered
+  }, [directionBlocks, activeTypes, hideZero, query, effectiveGrouping])
 
   const selectedId = selection[activeDirection]
   const selected = allBlocks.find((block) => block.id === selectedId) ?? null
@@ -150,7 +156,8 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
             active={activeTypes}
             tokenTotals={tokenTotals}
             search={search}
-            grouping={grouping}
+            grouping={effectiveGrouping}
+            groupingDisabled={activeDirection === 'output'}
             hideZero={hideZero}
             density={density}
             onToggleType={(visual) => setActiveTypes((current) => {
@@ -169,9 +176,9 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
               <div className="surface min-w-0 overflow-hidden rounded-md border border-[var(--border)]">
                 <div className="max-h-[480px] min-h-32 overflow-auto">
                   {view === 'compact' ? (
-                    <CompactBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={grouping} onSelect={select} />
+                    <CompactBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={effectiveGrouping} onSelect={select} />
                   ) : (
-                    <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} onSelect={select} />
+                    <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={effectiveGrouping} onSelect={select} />
                   )}
                 </div>
                 <BlockLegend blocks={visibleBlocks} />

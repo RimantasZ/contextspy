@@ -37,12 +37,18 @@ export function proportionalBlockSpan(tokenCount: number, maximum = MAX_PROPORTI
 }
 
 /**
- * Places whole blocks into fixed-column rows. A block that does not fit moves
- * intact to the next row, deliberately preserving the unused cells at the end
- * of the previous row. Blocks are never split across rows.
+ * Places whole blocks into fixed-column rows, using request sequence by default
+ * or descending token count when size order is requested. A block that does not
+ * fit moves intact to the next row; blocks are never split across rows.
  */
-export function layoutProportionalBlocks(blocks: RequestBlock[], requestedCapacity = 12): ProportionalLayout {
-  const ordered = sortedBlocks(blocks)
+export function layoutProportionalBlocks(
+  blocks: RequestBlock[],
+  requestedCapacity = 12,
+  order: 'sequence' | 'size' = 'sequence',
+): ProportionalLayout {
+  const ordered = order === 'size'
+    ? [...blocks].sort((a, b) => b.token_count - a.token_count || a.position - b.position || a.id - b.id)
+    : sortedBlocks(blocks)
   const capacity = Math.max(1, Math.floor(requestedCapacity))
   const rows: ProportionalRow[] = []
 

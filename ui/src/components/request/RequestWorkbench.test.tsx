@@ -84,4 +84,27 @@ describe('RequestWorkbench', () => {
     expect(size.value).toBe('30')
     expect(map.style.gridTemplateColumns).toContain('30px')
   })
+
+  it('orders request blocks by size and disables grouping for the response', async () => {
+    const differentlySizedBlocks = blocks.map((block) => block.id === 2 ? { ...block, token_count: 30 } : block)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks: differentlySizedBlocks }), { status: 200 }))
+    renderWorkbench()
+
+    const map = await screen.findByRole('group', { name: 'Compact block map' })
+    const grouping = screen.getByRole('combobox', { name: 'Group' }) as HTMLSelectElement
+    expect(Array.from(grouping.options, (option) => option.text)).toEqual([
+      'Sequence', 'Turn', 'Tool pair', 'Size (largest first)',
+    ])
+
+    await userEvent.selectOptions(grouping, 'size')
+    expect([...map.querySelectorAll<HTMLElement>('[data-block-map-item]')].map((item) => item.dataset.blockId)).toEqual(['2', '1', '4'])
+
+    await userEvent.click(screen.getByRole('button', { name: /Response/i }))
+    expect(grouping.disabled).toBe(true)
+    expect(grouping.value).toBe('sequence')
+
+    await userEvent.click(screen.getByRole('button', { name: /Request/i }))
+    expect(grouping.disabled).toBe(false)
+    expect(grouping.value).toBe('size')
+  })
 })

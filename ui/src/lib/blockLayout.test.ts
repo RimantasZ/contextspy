@@ -49,6 +49,16 @@ describe('layoutProportionalBlocks', () => {
     expect(layout.totalTokens).toBe(100)
   })
 
+  it('can order blocks from largest to smallest', () => {
+    const layout = layoutProportionalBlocks([
+      makeBlock({ id: 1, position: 0, token_count: 20 }),
+      makeBlock({ id: 2, position: 1, token_count: 2_000 }),
+      makeBlock({ id: 3, position: 2, token_count: 200 }),
+    ], 12, 'size')
+
+    expect(layout.rows.flatMap((row) => row.items).map((item) => item.blockId)).toEqual([2, 3, 1])
+  })
+
   it('handles empty input', () => {
     expect(layoutProportionalBlocks([], 10)).toEqual({ rows: [], totalTokens: 0, capacity: 10 })
   })

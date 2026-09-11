@@ -35,8 +35,17 @@ describe('SearchableContentViewer', () => {
   })
 
   it('collapses and expands nested JSON scopes', async () => {
-    render(<SearchableContentViewer title="Raw request payload" content={'{"meta":{"enabled":true}}'} />)
+    render(<SearchableContentViewer title="Raw request payload" content={'{"meta":{"nested":{"enabled":true}}}'} />)
     expect(screen.getByText('true').className).toContain('syntax-boolean')
+    expect(screen.getByRole('button', { name: 'Collapse all' })).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse all' }))
+    expect(screen.queryByText('true')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Expand all' })).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Expand all' }))
+    expect(screen.getByText('true')).toBeTruthy()
+
     await userEvent.click(screen.getByRole('button', { name: 'Collapse meta' }))
     expect(screen.queryByText('true')).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Expand meta' }))
@@ -68,6 +77,27 @@ describe('SearchableContentViewer', () => {
     await userEvent.type(screen.getByRole('searchbox', { name: /Search block content/i }), 'alpha')
     expect(screen.getByText('1 / 2')).toBeTruthy()
     expect(container.querySelectorAll('mark')).toHaveLength(2)
+  })
+
+  it('moves a capped token window to the content currently in view', async () => {
+    const content = 'A'.repeat(100_000)
+    vi.spyOn(tokenizeApi, 'tokenize').mockResolvedValue({ results: [['A'.repeat(100)]] })
+    const { container } = render(<SearchableContentViewer title="Block content" content={content} />)
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Formatting' }), 'tokens')
+    const moveWindow = await screen.findByRole('button', { name: /First 1 token highlighted.*Move to current view/i })
+    const viewport = container.querySelector('[data-content-viewport]') as HTMLDivElement
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 800, writable: true },
+    })
+
+    await userEvent.click(moveWindow)
+
+    await waitFor(() => expect(tokenizeApi.tokenize).toHaveBeenCalledTimes(2))
+    expect(tokenizeApi.tokenize).toHaveBeenLastCalledWith([content.slice(60_000)])
+    expect(await screen.findByRole('button', { name: /1 token highlighted.*Move to current view/i })).toBeTruthy()
   })
 })
 

@@ -2,15 +2,17 @@ import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from '
 import type { RequestBlock } from '../../api/client'
 import { layoutProportionalBlocks } from '../../lib/blockLayout'
 import { BLOCK_VISUALS, blockAccessibleName, blockBackground, visualOf } from '../../lib/blockVisuals'
+import type { GroupMode } from './BlockToolbar'
 
 const BLOCK_GAP_PX = 4
 const CANVAS_HORIZONTAL_PADDING_PX = 24
 const FALLBACK_ROW_CAPACITY = 12
 
-export function ProportionalBlockMap({ blocks, selectedId, density, onSelect }: {
+export function ProportionalBlockMap({ blocks, selectedId, density, grouping = 'sequence', onSelect }: {
   blocks: RequestBlock[]
   selectedId: number | null
   density: number
+  grouping?: GroupMode
   onSelect: (block: RequestBlock | null) => void
 }) {
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -37,7 +39,7 @@ export function ProportionalBlockMap({ blocks, selectedId, density, onSelect }: 
     return () => window.removeEventListener('resize', updateCapacity)
   }, [density])
 
-  const layout = useMemo(() => layoutProportionalBlocks(blocks, rowCapacity), [blocks, rowCapacity])
+  const layout = useMemo(() => layoutProportionalBlocks(blocks, rowCapacity, grouping === 'size' ? 'size' : 'sequence'), [blocks, grouping, rowCapacity])
   const items = layout.rows.flatMap((row) => row.items)
 
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, blockId: number) {
