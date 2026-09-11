@@ -59,13 +59,13 @@ describe('RequestWorkbench', () => {
     await userEvent.type(screen.getByRole('searchbox', { name: /Search request blocks/i }), 'system rules')
     await waitFor(() => expect(screen.queryByRole('button', { name: /User.*position 2/i })).toBeNull())
     await userEvent.click(screen.getByRole('button', { name: 'Raw' }))
-    expect(screen.getByRole('region', { name: 'Formatted JSON' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Structured JSON' })).toBeTruthy()
     expect(screen.getByText('"prompt"')).toBeTruthy()
     expect(screen.getByText('"hello"')).toBeTruthy()
     const rawSearch = screen.getByRole('searchbox', { name: /Search raw request payload/i })
     await userEvent.type(rawSearch, 'hello')
     expect(screen.getByText('1 / 1')).toBeTruthy()
-    expect((screen.getByRole('checkbox', { name: /Format JSON/i }) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole('combobox', { name: 'Formatting' }) as HTMLSelectElement).value).toBe('structured')
   })
 
   it('changes block size with the size selector', async () => {
