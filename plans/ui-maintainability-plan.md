@@ -1,6 +1,6 @@
 # UI maintainability and simplification plan
 
-> **Status:** Proposed
+> **Status:** Implemented on `ui-revamp-cleanup`
 >
 > **Scope:** Simplify the current UI implementation after the UI revamp without materially changing the shipped user experience. Functional or visual changes should be limited to fixing inconsistencies exposed by the refactor.
 
@@ -621,3 +621,14 @@ The maintainability work is complete when:
 ## 21. Expected result
 
 The first phase should remove roughly 600 lines immediately. Later phases may not reduce the raw line count substantially because tests and explicit adapters add structure, but they should reduce the amount of code a developer must understand to change any one behavior. The primary measure of success is narrower responsibility and fewer sources of truth, not the smallest possible repository.
+
+## 22. Implementation record
+
+Implemented from `main` at `ca49c31` in five reviewable commits covering the token-window API, content-viewer decomposition, block composition, analytics/formatting consolidation, and automated guardrails.
+
+- UI tests: 43 at baseline; 57 after the cleanup.
+- Python tests: 167 at baseline; 173 after the cleanup.
+- Production CSS: 34.90 KB / 7.85 KB gzip at baseline; 32.40 KB / 7.38 KB gzip after the cleanup.
+- Production application JavaScript: 1,212.24 KB / 362.45 KB gzip at baseline; 1,216.04 KB / 363.81 KB gzip after the cleanup.
+- Final validation: `npm run check` and the full Python test suite pass.
+- Manual verification: a large captured request was checked for compact/proportional arrangement, selection, structured content, response capabilities, and horizontal overflow.
