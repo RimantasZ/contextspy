@@ -93,6 +93,31 @@ export interface ToolTreemapSelection {
   value: number
 }
 
+interface TreemapTooltipProps {
+  active?: boolean
+  payload?: ReadonlyArray<{
+    payload?: {
+      name?: string
+      toolName?: string
+    }
+  }>
+}
+
+function toolTreemapItemLabel(toolName: string | undefined, name: string): string {
+  return toolName ? `${toolName} ${name.toLowerCase()}` : name
+}
+
+export function ToolTreemapTooltip({ active, payload }: TreemapTooltipProps) {
+  const item = payload?.[0]?.payload
+  if (!active || !item?.name) return null
+
+  return (
+    <div className="rounded-md border border-[var(--border)] bg-[var(--chart-tooltip)] px-2.5 py-1.5 text-xs font-medium text-[var(--chart-tooltip-text)] shadow-sm">
+      {toolTreemapItemLabel(item.toolName, item.name)}
+    </div>
+  )
+}
+
 export function TreemapContent({
   x = 0,
   y = 0,
@@ -114,7 +139,7 @@ export function TreemapContent({
   const resolvedToolName = toolName ?? name
   const resolvedCategory = category === 'definition' ? 'definition' : 'result'
   const key = `${resolvedToolName}:${resolvedCategory}`
-  const detailLabel = `${resolvedToolName} · ${name}`
+  const detailLabel = toolTreemapItemLabel(resolvedToolName, name)
   const selection: ToolTreemapSelection = {
     key,
     label: detailLabel,
@@ -185,17 +210,36 @@ export function TreemapContent({
   )
 }
 
-export function ToolTreemapSelectionDetails({ selected }: { selected: ToolTreemapSelection | null }) {
+export function ToolTreemapSelectionDetails({
+  selected,
+  totalToolTokens,
+  totalInputTokens,
+}: {
+  selected: ToolTreemapSelection | null
+  totalToolTokens?: number
+  totalInputTokens?: number
+}) {
   if (!selected) return null
+  const toolShare = totalToolTokens && totalToolTokens > 0
+    ? `${((selected.value / totalToolTokens) * 100).toFixed(1)}% of tool footprint`
+    : null
+  const contextShare = totalInputTokens && totalInputTokens > 0
+    ? `${((selected.value / totalInputTokens) * 100).toFixed(1)}% of context window`
+    : null
+
   return (
     <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-md border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2 text-xs" role="status">
       <strong className="min-w-0 break-all text-[var(--text)]">{selected.label}</strong>
-      <span className="shrink-0 tabular-nums text-[var(--text-muted)]">{selected.value.toLocaleString()} tokens</span>
+      <span className="flex flex-wrap items-center gap-x-2 tabular-nums text-[var(--text-muted)]">
+        <span>{selected.value.toLocaleString()} tokens</span>
+        {toolShare && <><span aria-hidden="true">·</span><span>{toolShare}</span></>}
+        {contextShare && <><span aria-hidden="true">·</span><span>{contextShare}</span></>}
+      </span>
     </div>
   )
 }
 
-export function ToolTreemap({ tools }: { tools: ToolStat[] }) {
+export function ToolTreemap({ tools, totalInputTokens }: { tools: ToolStat[]; totalInputTokens?: number }) {
   const data = useMemo(() => buildToolTreemapData(tools), [tools])
   const total = data.reduce((sum, node) => sum + node.total, 0)
   const [selected, setSelected] = useState<ToolTreemapSelection | null>(null)
@@ -217,17 +261,11 @@ export function ToolTreemap({ tools }: { tools: ToolStat[] }) {
             isAnimationActive={false}
             content={<TreemapContent selectedKey={selected?.key} onSelect={setSelected} />}
           >
-            <Tooltip
-              contentStyle={{ backgroundColor: 'var(--chart-tooltip)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--chart-tooltip-text)' }}
-              formatter={(value: number, name: string, item: { payload?: { toolName?: string; groupedCount?: number } }) => [
-                `${value.toLocaleString()} tokens (${((value / total) * 100).toFixed(1)}%)`,
-                item.payload?.toolName ? `${item.payload.toolName} · ${name}` : name,
-              ]}
-            />
+            <Tooltip content={<ToolTreemapTooltip />} />
           </Treemap>
         </ResponsiveContainer>
       </div>
-      <ToolTreemapSelectionDetails selected={selected} />
+      <ToolTreemapSelectionDetails selected={selected} totalToolTokens={total} totalInputTokens={totalInputTokens} />
       <p className="mt-1 text-[10px] text-[var(--text-muted)]">Tools below 1% of tool tokens are grouped as Other. Rectangle area is token-linear; shades distinguish definitions and results.</p>
     </div>
   )

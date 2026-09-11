@@ -24,11 +24,11 @@ function SortHeader({ label, col, sortCol, sortDir, onSort, className = '' }: {
   )
 }
 
-export function ToolBreakdownCharts({ tools }: { tools: ToolStat[] }) {
+export function ToolBreakdownCharts({ tools, totalInputTokens }: { tools: ToolStat[]; totalInputTokens?: number }) {
   return (
     <div className="panel">
       <h3 className="section-title mb-3">Tool composition</h3>
-      <ToolTreemap tools={tools} />
+      <ToolTreemap tools={tools} totalInputTokens={totalInputTokens} />
     </div>
   )
 }

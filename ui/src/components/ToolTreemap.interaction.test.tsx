@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { TOOL_TREEMAP_FRAME_STYLE, ToolTreemapSelectionDetails, TreemapContent } from './ToolTreemap'
+import { TOOL_TREEMAP_FRAME_STYLE, ToolTreemapSelectionDetails, ToolTreemapTooltip, TreemapContent } from './ToolTreemap'
 
 describe('tool treemap interaction', () => {
   it('uses the same one-pixel graphical border for the frame and block separators', () => {
@@ -12,9 +12,38 @@ describe('tool treemap interaction', () => {
     const { container, rerender } = render(<ToolTreemapSelectionDetails selected={null} />)
     expect(container.childElementCount).toBe(0)
 
-    rerender(<ToolTreemapSelectionDetails selected={{ key: 'search:result', label: 'search · Results', value: 94104 }} />)
-    expect(screen.getByRole('status').textContent).toBe('search · Results94,104 tokens')
+    rerender(
+      <ToolTreemapSelectionDetails
+        selected={{ key: 'search:result', label: 'search results', value: 94104 }}
+        totalToolTokens={200000}
+        totalInputTokens={800000}
+      />,
+    )
+    expect(screen.getByText('search results')).toBeTruthy()
+    expect(screen.getByText('94,104 tokens')).toBeTruthy()
+    expect(screen.getByText('47.1% of tool footprint')).toBeTruthy()
+    expect(screen.getByText('11.8% of context window')).toBeTruthy()
     expect(screen.queryByText(/Select a rectangle/i)).toBeNull()
+  })
+
+  it('shows only the block name in the hover tooltip', () => {
+    const { container, rerender } = render(
+      <ToolTreemapTooltip
+        active
+        payload={[{ payload: { toolName: 'exec', name: 'Definitions' } }]}
+      />,
+    )
+
+    expect(screen.getByText('exec definitions')).toBeTruthy()
+    expect(container.textContent).not.toMatch(/tokens|%/)
+
+    rerender(
+      <ToolTreemapTooltip
+        active={false}
+        payload={[{ payload: { toolName: 'exec', name: 'Definitions' } }]}
+      />,
+    )
+    expect(container.childElementCount).toBe(0)
   })
 
   it('does not draw parent rectangles that could duplicate leaf borders', () => {
@@ -47,7 +76,7 @@ describe('tool treemap interaction', () => {
       </svg>,
     )
 
-    const block = screen.getByRole('button', { name: 'search · Results, 80 tokens' })
+    const block = screen.getByRole('button', { name: 'search results, 80 tokens' })
     const rect = container.querySelector('rect')
     expect(rect?.getAttribute('shape-rendering')).toBe('crispEdges')
     expect(rect?.hasAttribute('stroke')).toBe(false)

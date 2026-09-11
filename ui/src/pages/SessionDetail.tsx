@@ -441,7 +441,7 @@ export default function SessionDetail() {
 
       {/* Tool breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} />
+        <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} totalInputTokens={st?.tokens_total_input} />
         <ToolBreakdownTable tools={toolStats.data?.tools ?? []} totalInputTokens={st?.tokens_total_input} />
       </div>
 

@@ -82,7 +82,7 @@ export default function RequestDetail() {
             <h3 className="section-title mb-3">Category composition</h3>
             <TokenDonut data={categories} />
           </div>
-          {tools.length > 0 ? <ToolBreakdownCharts tools={tools} /> : <div className="panel flex min-h-52 items-center justify-center text-sm text-[var(--text-muted)]">No tool usage recorded.</div>}
+          {tools.length > 0 ? <ToolBreakdownCharts tools={tools} totalInputTokens={request.tokens_total_input} /> : <div className="panel flex min-h-52 items-center justify-center text-sm text-[var(--text-muted)]">No tool usage recorded.</div>}
           {tools.length > 0 && <div className="xl:col-span-2"><ToolBreakdownTable tools={tools} totalInputTokens={request.tokens_total_input} /></div>}
         </div>
       </Disclosure>
