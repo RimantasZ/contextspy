@@ -2,19 +2,10 @@
 import { useState } from 'react'
 import type { KeyboardEvent, MouseEvent } from 'react'
 import type { Request, Session } from '../api/client'
+import { formatRequestDuration, formatRequestTime } from '../lib/format'
 import { ContextBar } from './ContextBar'
 
 export type SortKey = 'timestamp' | 'tokens_total_input' | 'tokens_output_text' | 'tokens_output_thinking' | 'duration_ms' | 'status_code' | 'session' | 'provider' | 'agent' | 'model'
-
-function formatDuration(ms: number | null): string {
-  if (ms == null) return '—'
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
-}
-
-function formatTime(timestamp: string): string {
-  const utc = timestamp.endsWith('Z') || timestamp.includes('+') ? timestamp : `${timestamp}Z`
-  return new Date(utc).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
 
 function StatusBadge({ request }: { request: Request }) {
   const success = request.invocation_outcome === 'completed' || (request.status_code != null && request.status_code >= 200 && request.status_code < 300)
@@ -133,7 +124,7 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: external
             <article key={request.id} tabIndex={0} onKeyDown={(event) => onRowKey(event, request.id)} className="surface rounded-lg border border-[var(--border)] p-3">
               <div className="flex items-start justify-between gap-3">
                 <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onRowClick(request.id)}>
-                  <span className="block text-xs text-[var(--text-muted)]">{formatTime(request.timestamp)}</span>
+                  <span className="block text-xs text-[var(--text-muted)]">{formatRequestTime(request.timestamp)}</span>
                   <strong className="mt-1 block truncate text-sm">{request.model ?? request.provider}</strong>
                 </button>
                 <StatusBadge request={request} />
@@ -141,7 +132,7 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: external
               <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                 <div><span className="block text-[var(--text-muted)]">Input</span><strong className="tabular-nums">{request.tokens_total_input.toLocaleString()}</strong></div>
                 <div><span className="block text-[var(--text-muted)]">Output</span><strong className="tabular-nums">{request.tokens_total_output.toLocaleString()}</strong></div>
-                <div><span className="block text-[var(--text-muted)]">Duration</span><strong className="tabular-nums">{formatDuration(request.duration_ms)}</strong></div>
+                <div><span className="block text-[var(--text-muted)]">Duration</span><strong className="tabular-nums">{formatRequestDuration(request.duration_ms)}</strong></div>
               </div>
               <div className="mt-3"><ContextBar data={request} /></div>
               <button type="button" aria-expanded={open} onClick={(event) => toggleDetails(request.id, event)} className="mt-3 text-xs font-medium text-[var(--accent-soft-text)]">{open ? 'Hide details' : 'More details'}</button>
@@ -162,10 +153,10 @@ function RequestRow({ request, open, showSession, sessionName, onOpen, onToggle,
   return (
     <>
       <tr tabIndex={0} onClick={onOpen} onKeyDown={(event) => onKey(event, request.id)} className="cursor-pointer border-b border-[var(--border)] hover:bg-[var(--surface-muted)]">
-        <td className="whitespace-nowrap p-2 font-mono text-xs text-[var(--text-muted)]">{formatTime(request.timestamp)}</td>
+        <td className="whitespace-nowrap p-2 font-mono text-xs text-[var(--text-muted)]">{formatRequestTime(request.timestamp)}</td>
         <td className="p-2 text-right tabular-nums">{request.tokens_total_input > 0 ? request.tokens_total_input.toLocaleString() : '—'}</td>
         <td className="p-2"><ContextBar data={request} /></td>
-        <td className="whitespace-nowrap p-2 text-right tabular-nums text-[var(--text-muted)]">{formatDuration(request.duration_ms)}</td>
+        <td className="whitespace-nowrap p-2 text-right tabular-nums text-[var(--text-muted)]">{formatRequestDuration(request.duration_ms)}</td>
         <td className="p-2 text-right"><StatusBadge request={request} /></td>
         <td className="max-w-[200px] p-2"><span className="block truncate font-medium" title={request.model ?? request.provider}>{request.model ?? '—'}</span><span className="block truncate text-[10px] text-[var(--text-muted)]">{request.provider}{request.agent ? ` · ${request.agent}` : ''}</span></td>
         <td className="p-2 text-right"><button type="button" aria-label={`${open ? 'Hide' : 'Show'} request details`} aria-expanded={open} onClick={(event) => onToggle(request.id, event)} className="app-button h-8 w-8 px-0">{open ? '−' : '+'}</button></td>

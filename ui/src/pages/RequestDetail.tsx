@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useRequest, useRequestToolStats } from '../api/hooks'
 import { TokenDonut } from '../components/TokenDonut'
-import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown'
+import { ToolBreakdownSection } from '../components/ToolBreakdown'
 import { CaptureNotice } from '../components/request/CaptureNotice'
 import { RequestSummaryHeader } from '../components/request/RequestSummaryHeader'
 import { RequestWorkbench } from '../components/request/RequestWorkbench'
@@ -82,8 +82,7 @@ export default function RequestDetail() {
             <h3 className="section-title mb-3">Category composition</h3>
             <TokenDonut data={categories} />
           </div>
-          {tools.length > 0 ? <ToolBreakdownCharts tools={tools} totalInputTokens={request.tokens_total_input} /> : <div className="panel flex min-h-52 items-center justify-center text-sm text-[var(--text-muted)]">No tool usage recorded.</div>}
-          {tools.length > 0 && <div className="xl:col-span-2"><ToolBreakdownTable tools={tools} totalInputTokens={request.tokens_total_input} /></div>}
+          <ToolBreakdownSection className="xl:col-span-2" tools={tools} totalInputTokens={request.tokens_total_input} />
         </div>
       </Disclosure>
 

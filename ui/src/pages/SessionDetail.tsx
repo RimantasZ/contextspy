@@ -19,7 +19,7 @@ import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
-import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
+import { ToolBreakdownSection } from '../components/ToolBreakdown';
 import { OutputSplit } from '../components/OutputSplit';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import jsPDF from 'jspdf';
@@ -440,10 +440,7 @@ export default function SessionDetail() {
       </div>
 
       {/* Tool breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} totalInputTokens={st?.tokens_total_input} />
-        <ToolBreakdownTable tools={toolStats.data?.tools ?? []} totalInputTokens={st?.tokens_total_input} />
-      </div>
+      <ToolBreakdownSection tools={toolStats.data?.tools ?? []} totalInputTokens={st?.tokens_total_input} />
 
       {/* Requests table */}
       <div className="panel">

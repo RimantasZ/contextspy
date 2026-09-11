@@ -46,7 +46,9 @@ export function useWebSocket() {
             qc.invalidateQueries({ queryKey: ['stats'] })
             qc.invalidateQueries({ queryKey: ['stats', 'sessions-summary'] })
           }
-        } catch (_) {}
+        } catch {
+          // Ignore malformed messages and keep the live connection open.
+        }
       }
 
       ws.onclose = () => {

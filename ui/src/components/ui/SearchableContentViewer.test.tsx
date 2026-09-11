@@ -2,7 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { tokenizeApi } from '../../api/client'
-import { buildStructuredLines, findTextMatches, formattedContent, syntaxSegments } from '../../lib/searchableContent'
+import { analyzeContent, buildStructuredLines, syntaxSegments } from '../../lib/content'
+import { findTextMatches } from '../../lib/textRanges'
 import { SearchableContentViewer } from './SearchableContentViewer'
 
 afterEach(() => vi.restoreAllMocks())
@@ -50,6 +51,7 @@ describe('SearchableContentViewer', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Collapse meta' }))
     expect(screen.queryByText('true')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Expand' })).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: 'Expand meta' }))
     expect(screen.getByText('true')).toBeTruthy()
   })
@@ -71,11 +73,19 @@ describe('SearchableContentViewer', () => {
   })
 
   it('restores per-token colors on formatted content', async () => {
-    vi.spyOn(tokenizeApi, 'tokenize').mockResolvedValue({ results: [['Al', 'pha beta al', 'pha']] })
+    vi.spyOn(tokenizeApi, 'window').mockResolvedValue({
+      segments: [
+        { text: 'Al', start: 0, end: 2, token_count: 1 },
+        { text: 'pha beta al', start: 2, end: 13, token_count: 1 },
+        { text: 'pha', start: 13, end: 16, token_count: 1 },
+      ],
+      window_start: 0, window_end: 16, total_length: 16,
+      truncated_before: false, truncated_after: false, tokenizer: 'tiktoken/o200k_base',
+    })
     const { container } = render(<SearchableContentViewer title="Block content" content="Alpha beta alpha" />)
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Formatting' }), 'tokens')
     await waitFor(() => expect(container.querySelectorAll('[style*="token-highlight"]')).toHaveLength(3))
-    expect(tokenizeApi.tokenize).toHaveBeenCalledWith(['Alpha beta alpha'])
+    expect(tokenizeApi.window).toHaveBeenCalledWith('Alpha beta alpha', 0, expect.any(AbortSignal))
     await userEvent.type(screen.getByRole('searchbox', { name: /Search block content/i }), 'alpha')
     expect(screen.getByText('1 / 2')).toBeTruthy()
     expect(container.querySelectorAll('mark')).toHaveLength(2)
@@ -83,11 +93,15 @@ describe('SearchableContentViewer', () => {
 
   it('moves a capped token window to the content currently in view', async () => {
     const content = 'A'.repeat(100_000)
-    vi.spyOn(tokenizeApi, 'tokenize').mockResolvedValue({ results: [['A'.repeat(100)]] })
+    vi.spyOn(tokenizeApi, 'window').mockImplementation(async (_text, offset) => ({
+      segments: [{ text: content.slice(offset, offset + 50_000), start: offset, end: Math.min(offset + 50_000, content.length), token_count: 8_000 }],
+      window_start: offset, window_end: Math.min(offset + 50_000, content.length), total_length: content.length,
+      truncated_before: offset > 0, truncated_after: offset + 50_000 < content.length, tokenizer: 'tiktoken/o200k_base',
+    }))
     const { container } = render(<SearchableContentViewer title="Block content" content={content} />)
 
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Formatting' }), 'tokens')
-    const moveWindow = await screen.findByRole('button', { name: /First 1 token highlighted.*Move to current view/i })
+    const moveWindow = await screen.findByRole('button', { name: /First 8,000 tokens highlighted.*Move to current view/i })
     const viewport = container.querySelector('[data-content-viewport]') as HTMLDivElement
     Object.defineProperties(viewport, {
       clientHeight: { configurable: true, value: 100 },
@@ -97,30 +111,58 @@ describe('SearchableContentViewer', () => {
 
     await userEvent.click(moveWindow)
 
-    await waitFor(() => expect(tokenizeApi.tokenize).toHaveBeenCalledTimes(2))
-    expect(tokenizeApi.tokenize).toHaveBeenLastCalledWith([content.slice(60_000)])
-    expect(await screen.findByRole('button', { name: /1 token highlighted.*Move to current view/i })).toBeTruthy()
+    await waitFor(() => expect(tokenizeApi.window).toHaveBeenCalledTimes(2))
+    expect(tokenizeApi.window).toHaveBeenLastCalledWith(content, 60_000, expect.any(AbortSignal))
+    expect(await screen.findByRole('button', { name: /8,000 tokens highlighted.*Move to current view/i })).toBeTruthy()
+  })
+
+  it('ignores a stale token response after content changes', async () => {
+    let resolveFirst!: (value: Awaited<ReturnType<typeof tokenizeApi.window>>) => void
+    let resolveSecond!: (value: Awaited<ReturnType<typeof tokenizeApi.window>>) => void
+    vi.spyOn(tokenizeApi, 'window')
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve }))
+    const { container, rerender } = render(<SearchableContentViewer title="Block content" content="old content" />)
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Formatting' }), 'tokens')
+    await waitFor(() => expect(tokenizeApi.window).toHaveBeenCalledTimes(1))
+
+    rerender(<SearchableContentViewer title="Block content" content="new content" />)
+    await waitFor(() => expect(tokenizeApi.window).toHaveBeenCalledTimes(2))
+    resolveFirst({
+      segments: [{ text: 'old content', start: 0, end: 11, token_count: 2 }],
+      window_start: 0, window_end: 11, total_length: 11,
+      truncated_before: false, truncated_after: false, tokenizer: 'test',
+    })
+    await Promise.resolve()
+    expect(container.textContent).not.toContain('old content')
+
+    resolveSecond({
+      segments: [{ text: 'new content', start: 0, end: 11, token_count: 2 }],
+      window_start: 0, window_end: 11, total_length: 11,
+      truncated_before: false, truncated_after: false, tokenizer: 'test',
+    })
+    await waitFor(() => expect(container.querySelectorAll('[style*="token-highlight"]')).toHaveLength(1))
   })
 })
 
 describe('content helpers', () => {
   it('detects and formats common structured content', () => {
-    expect(formattedContent('{"ok":true}')).toEqual({
-      formatted: '{\n  "ok": true\n}', canFormat: true, language: 'json', languageLabel: 'JSON',
+    expect(analyzeContent('{"ok":true}')).toMatchObject({
+      formatted: '{\n  "ok": true\n}', canFormat: true, formatStatus: 'formatted', language: 'json', languageLabel: 'JSON',
     })
-    expect(formattedContent('<root><item>value</item></root>')).toMatchObject({
-      formatted: '<root>\n  <item>\n    value\n  </item>\n</root>', language: 'xml', languageLabel: 'XML',
+    expect(analyzeContent('<root><item>value</item></root>')).toMatchObject({
+      formatted: '<root><item>value</item></root>', formatStatus: 'unsupported', language: 'xml', languageLabel: 'XML',
     })
-    expect(formattedContent('[server]\nport=8080')).toMatchObject({
+    expect(analyzeContent('[server]\nport=8080')).toMatchObject({
       formatted: '[server]\nport = 8080', language: 'toml', languageLabel: 'TOML',
     })
-    expect(formattedContent('service:\n  enabled: true')).toMatchObject({ language: 'yaml', languageLabel: 'YAML' })
-    expect(formattedContent('const value={ok:true};')).toMatchObject({ language: 'javascript', languageLabel: 'JavaScript' })
-    expect(formattedContent('def run():\n\treturn True')).toMatchObject({
-      formatted: 'def run():\n    return True', language: 'python', languageLabel: 'Python',
+    expect(analyzeContent('service:\n  enabled: true')).toMatchObject({ language: 'yaml', languageLabel: 'YAML' })
+    expect(analyzeContent('const value={ok:true};')).toMatchObject({ language: 'javascript', languageLabel: 'JavaScript' })
+    expect(analyzeContent('def run():\n\treturn True')).toMatchObject({
+      formatted: 'def run():\n\treturn True', formatStatus: 'unsupported', language: 'python', languageLabel: 'Python',
     })
-    expect(formattedContent('plain text')).toEqual({
-      formatted: 'plain text', canFormat: false, language: 'text', languageLabel: 'Text',
+    expect(analyzeContent('plain text')).toMatchObject({
+      formatted: 'plain text', canFormat: false, formatStatus: 'unsupported', language: 'text', languageLabel: 'Text',
     })
   })
 

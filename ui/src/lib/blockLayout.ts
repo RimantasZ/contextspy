@@ -1,14 +1,13 @@
 import type { RequestBlock } from '../api/client'
-import { sortedBlocks } from './blockVisuals'
 
-export interface ProportionalBlockItem {
+interface ProportionalBlockItem {
   block: RequestBlock
   blockId: number
   columnStart: number
   span: number
 }
 
-export interface ProportionalRow {
+interface ProportionalRow {
   index: number
   usedColumns: number
   capacity: number
@@ -23,7 +22,7 @@ export interface ProportionalLayout {
 }
 
 const TOKENS_PER_FIRST_GROWTH_STEP = 64
-export const MAX_PROPORTIONAL_SPAN = 6
+const MAX_PROPORTIONAL_SPAN = 6
 
 /**
  * Maps token count to a compact-grid span. Every block gets at least one tile;
@@ -37,22 +36,17 @@ export function proportionalBlockSpan(tokenCount: number, maximum = MAX_PROPORTI
 }
 
 /**
- * Places whole blocks into fixed-column rows, using request sequence by default
- * or descending token count when size order is requested. A block that does not
- * fit moves intact to the next row; blocks are never split across rows.
+ * Places already-arranged whole blocks into fixed-column rows. A block that
+ * does not fit moves intact to the next row; blocks are never split across rows.
  */
 export function layoutProportionalBlocks(
   blocks: RequestBlock[],
   requestedCapacity = 12,
-  order: 'sequence' | 'size' = 'sequence',
 ): ProportionalLayout {
-  const ordered = order === 'size'
-    ? [...blocks].sort((a, b) => b.token_count - a.token_count || a.position - b.position || a.id - b.id)
-    : sortedBlocks(blocks)
   const capacity = Math.max(1, Math.floor(requestedCapacity))
   const rows: ProportionalRow[] = []
 
-  for (const block of ordered) {
+  for (const block of blocks) {
     const span = Math.min(capacity, proportionalBlockSpan(block.token_count))
     let row = rows[rows.length - 1]
     if (!row || row.usedColumns + span > capacity) {
@@ -66,7 +60,7 @@ export function layoutProportionalBlocks(
 
   return {
     capacity,
-    totalTokens: ordered.reduce((sum, block) => sum + Math.max(0, block.token_count), 0),
+    totalTokens: blocks.reduce((sum, block) => sum + Math.max(0, block.token_count), 0),
     rows,
   }
 }

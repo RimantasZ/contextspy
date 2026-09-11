@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { useState } from 'react';
-import { useProxyStatus, useProxyStart, useProxyStop, useInstallCert } from '../api/hooks';
+import { useProxyStatus, useInstallCert } from '../api/hooks';
 
 function Tab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
@@ -30,9 +30,7 @@ function Tab({ label, active, onClick }: { label: string; active: boolean; onCli
 }
 
 function ProxyTab() {
-  const { data: status, isLoading } = useProxyStatus();
-  const startProxy = useProxyStart();
-  const stopProxy = useProxyStop();
+  const { data: status } = useProxyStatus();
   const installCert = useInstallCert();
   const [certMsg, setCertMsg] = useState<string | null>(null);
 

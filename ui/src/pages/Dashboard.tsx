@@ -18,9 +18,10 @@ import { useStatsOverview, useRequests, useToolStats, useSessions, useSessionsSu
 import { TokenDonut } from '../components/TokenDonut';
 import { RequestTable } from '../components/RequestTable';
 import { SessionControls } from '../components/SessionControls';
-import { ToolBreakdownCharts, ToolBreakdownTable } from '../components/ToolBreakdown';
+import { ToolBreakdownSection } from '../components/ToolBreakdown';
 import { OutputSplit } from '../components/OutputSplit';
 import type { SessionSummaryEntry, LatencyStats } from '../api/client';
+import { formatElapsedDuration } from '../lib/format';
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: ReactNode }) {
   return (
@@ -38,18 +39,6 @@ function fmtMs(ms: number | null): string {
   if (ms === null) return '—';
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function formatDuration(durationMs: number | null): string {
-  if (durationMs === null) return 'active';
-  if (durationMs < 0) return '—';
-  const totalSeconds = Math.floor(durationMs / 1000);
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
 }
 
 function formatStart(ts: string): string {
@@ -120,7 +109,7 @@ function SessionsTable({ entries, onSessionClick }: {
                   {formatStart(entry.started_at)}
                 </td>
                 <td className="whitespace-nowrap py-2 pr-4 text-[var(--text-muted)]">
-                  {formatDuration(entry.duration_ms)}
+                  {formatElapsedDuration(entry.duration_ms, 'active')}
                 </td>
                 <td className="py-2 pr-4 text-right tabular-nums text-[var(--text)]">
                   {entry.request_count.toLocaleString()}
@@ -292,10 +281,7 @@ export default function Overview() {
       </div>
 
       {/* Tool breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} totalInputTokens={s?.tokens_total_input} />
-        <ToolBreakdownTable tools={toolStats.data?.tools ?? []} totalInputTokens={s?.tokens_total_input} />
-      </div>
+      <ToolBreakdownSection tools={toolStats.data?.tools ?? []} totalInputTokens={s?.tokens_total_input} />
 
       {/* Model breakdown + Latency */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

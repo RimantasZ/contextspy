@@ -158,22 +158,6 @@ export function useProxyStatus() {
   })
 }
 
-export function useProxyStart() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => proxyApi.start(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['proxy', 'status'] }),
-  })
-}
-
-export function useProxyStop() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => proxyApi.stop(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['proxy', 'status'] }),
-  })
-}
-
 export function useInstallCert() {
   const qc = useQueryClient()
   return useMutation({

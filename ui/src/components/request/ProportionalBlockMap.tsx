@@ -1,18 +1,17 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { RequestBlock } from '../../api/client'
 import { layoutProportionalBlocks } from '../../lib/blockLayout'
-import { BLOCK_VISUALS, blockAccessibleName, blockBackground, visualOf } from '../../lib/blockVisuals'
-import type { GroupMode } from './BlockToolbar'
+import { BLOCK_VISUALS, visualOf } from '../../lib/blockVisuals'
+import { BlockTile } from './BlockTile'
 
 const BLOCK_GAP_PX = 4
 const CANVAS_HORIZONTAL_PADDING_PX = 24
 const FALLBACK_ROW_CAPACITY = 12
 
-export function ProportionalBlockMap({ blocks, selectedId, density, grouping = 'sequence', onSelect }: {
+export function ProportionalBlockMap({ blocks, selectedId, density, onSelect }: {
   blocks: RequestBlock[]
   selectedId: number | null
   density: number
-  grouping?: GroupMode
   onSelect: (block: RequestBlock | null) => void
 }) {
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -39,7 +38,7 @@ export function ProportionalBlockMap({ blocks, selectedId, density, grouping = '
     return () => window.removeEventListener('resize', updateCapacity)
   }, [density])
 
-  const layout = useMemo(() => layoutProportionalBlocks(blocks, rowCapacity, grouping === 'size' ? 'size' : 'sequence'), [blocks, grouping, rowCapacity])
+  const layout = useMemo(() => layoutProportionalBlocks(blocks, rowCapacity), [blocks, rowCapacity])
   const items = layout.rows.flatMap((row) => row.items)
 
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, blockId: number) {
@@ -89,31 +88,23 @@ export function ProportionalBlockMap({ blocks, selectedId, density, grouping = '
             const blockStyle = BLOCK_VISUALS[visual]
             const selected = selectedId === item.blockId
             return (
-              <button
+              <BlockTile
                 key={item.blockId}
                 id={`block-segment-${item.blockId}`}
-                data-block-map-item
-                data-block-id={item.blockId}
-                type="button"
+                block={item.block}
+                selected={selected}
                 tabIndex={selected || (selectedId == null && items[0]?.blockId === item.blockId) ? 0 : -1}
-                aria-label={blockAccessibleName(item.block)}
-                aria-pressed={selected}
-                title={blockAccessibleName(item.block)}
-                onClick={() => onSelect(selected ? null : item.block)}
+                onSelect={() => onSelect(selected ? null : item.block)}
                 onKeyDown={(event) => onKeyDown(event, item.blockId)}
-                className="composition-block flex min-w-0 items-center justify-center overflow-hidden border-[var(--graphical-border)] text-center"
+                className="flex min-w-0 items-center justify-center overflow-hidden text-center"
                 style={{
                   gridColumn: `${item.columnStart + 1} / span ${item.span}`,
-                  backgroundColor: blockBackground(item.block),
-                  borderColor: blockStyle.border,
-                  boxShadow: selected ? '0 0 0 3px var(--focus)' : undefined,
                 }}
               >
                 <span className="min-w-0 truncate px-1" aria-hidden="true">
                   {blockStyle.short}{item.span > 1 && <> · {item.block.token_count.toLocaleString()}</>}
                 </span>
-                {item.block.content_purged && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full border border-[var(--surface)] bg-[var(--danger)]" />}
-              </button>
+              </BlockTile>
             )
           })}
         </div>

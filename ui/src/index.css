@@ -324,36 +324,6 @@ pre, code { overflow-wrap: anywhere; }
   .workbench-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); }
 }
 
-/*
- * Compatibility mapping for the legacy request/response viewers. They are no
- * longer used by the main request workbench, but keeping their old utility
- * colors mapped to semantic tokens prevents theme regressions for downstream
- * consumers while those exports remain public.
- */
-.bg-gray-950 { background-color: var(--canvas) !important; }
-.bg-gray-900 { background-color: var(--surface-code) !important; }
-.bg-gray-800 { background-color: var(--surface) !important; }
-.bg-gray-700, .bg-gray-700\/50, .bg-gray-700\/40, .bg-gray-750 { background-color: var(--surface-muted) !important; }
-.text-gray-100, .text-gray-200, .text-gray-300 { color: var(--text) !important; }
-.text-gray-400, .text-gray-500, .text-gray-600 { color: var(--text-muted) !important; }
-.border-gray-800, .border-gray-700, .border-gray-700\/50, .border-gray-700\/40, .border-gray-600, .border-gray-500 { border-color: var(--border) !important; }
-.hover\:bg-gray-800:hover, .hover\:bg-gray-700:hover, .hover\:bg-gray-700\/30:hover, .hover\:bg-gray-700\/40:hover, .hover\:bg-gray-600:hover, .hover\:bg-gray-750:hover { background-color: var(--surface-hover) !important; }
-.hover\:text-white:hover, .hover\:text-gray-200:hover, .hover\:text-gray-300:hover { color: var(--text) !important; }
-.bg-green-900, .bg-green-900\/60 { background-color: var(--success-bg) !important; }
-.text-green-300, .text-green-400 { color: var(--success) !important; }
-.bg-red-900, .bg-red-900\/60, .bg-red-950 { background-color: var(--danger-bg) !important; }
-.text-red-300, .text-red-400 { color: var(--danger) !important; }
-.bg-orange-900, .bg-orange-950, .bg-amber-950 { background-color: var(--warning-bg) !important; }
-.text-orange-300, .text-orange-400, .text-amber-300, .text-amber-400 { color: var(--warning) !important; }
-.bg-indigo-900, .bg-indigo-950 { background-color: var(--accent-soft) !important; }
-.text-indigo-300, .text-indigo-400 { color: var(--accent-soft-text) !important; }
-.bg-purple-900 { background-color: var(--thinking-bg) !important; }
-.text-purple-300, .text-purple-400, .text-violet-300, .text-violet-400 { color: var(--thinking) !important; }
-.bg-blue-900 { background-color: var(--info-bg) !important; }
-.text-blue-300, .text-blue-400 { color: var(--info) !important; }
-.bg-teal-900 { background-color: var(--success-bg) !important; }
-.text-teal-300, .text-teal-400 { color: var(--success) !important; }
-
 @media (max-width: 960px) {
   .workbench-grid { grid-template-columns: minmax(0, 1fr); }
 }

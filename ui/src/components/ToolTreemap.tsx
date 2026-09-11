@@ -2,10 +2,9 @@ import { useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { ResponsiveContainer, Tooltip, Treemap } from 'recharts'
 import type { ToolStat } from '../api/client'
+import { formatPercent } from '../lib/format'
 
-export const TOOL_TREEMAP_FRAME_STYLE = { border: '1px solid var(--graphical-border)' } as const
-
-export interface ToolTreemapLeaf {
+interface ToolTreemapLeaf {
   name: 'Definitions' | 'Results'
   toolName: string
   category: 'definition' | 'result'
@@ -14,7 +13,7 @@ export interface ToolTreemapLeaf {
   fill: string
 }
 
-export interface ToolTreemapNode {
+interface ToolTreemapNode {
   name: string
   value: number
   total: number
@@ -87,7 +86,7 @@ interface ContentProps {
   onSelect?: (selection: ToolTreemapSelection) => void
 }
 
-export interface ToolTreemapSelection {
+interface ToolTreemapSelection {
   key: string
   label: string
   value: number
@@ -107,7 +106,7 @@ function toolTreemapItemLabel(toolName: string | undefined, name: string): strin
   return toolName ? `${toolName} ${name.toLowerCase()}` : name
 }
 
-export function ToolTreemapTooltip({ active, payload }: TreemapTooltipProps) {
+function ToolTreemapTooltip({ active, payload }: TreemapTooltipProps) {
   const item = payload?.[0]?.payload
   if (!active || !item?.name) return null
 
@@ -118,7 +117,7 @@ export function ToolTreemapTooltip({ active, payload }: TreemapTooltipProps) {
   )
 }
 
-export function TreemapContent({
+function TreemapContent({
   x = 0,
   y = 0,
   width = 0,
@@ -210,7 +209,7 @@ export function TreemapContent({
   )
 }
 
-export function ToolTreemapSelectionDetails({
+function ToolTreemapSelectionDetails({
   selected,
   totalToolTokens,
   totalInputTokens,
@@ -220,12 +219,10 @@ export function ToolTreemapSelectionDetails({
   totalInputTokens?: number
 }) {
   if (!selected) return null
-  const toolShare = totalToolTokens && totalToolTokens > 0
-    ? `${((selected.value / totalToolTokens) * 100).toFixed(1)}% of tool footprint`
-    : null
-  const contextShare = totalInputTokens && totalInputTokens > 0
-    ? `${((selected.value / totalInputTokens) * 100).toFixed(1)}% of context window`
-    : null
+  const toolPercent = formatPercent(selected.value, totalToolTokens)
+  const contextPercent = formatPercent(selected.value, totalInputTokens)
+  const toolShare = toolPercent ? `${toolPercent} of tool footprint` : null
+  const contextShare = contextPercent ? `${contextPercent} of context window` : null
 
   return (
     <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-md border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2 text-xs" role="status">
@@ -250,7 +247,7 @@ export function ToolTreemap({ tools, totalInputTokens }: { tools: ToolStat[]; to
       <div
         data-tool-treemap-frame
         className="overflow-hidden"
-        style={TOOL_TREEMAP_FRAME_STYLE}
+        style={{ border: '1px solid var(--graphical-border)' }}
       >
         <ResponsiveContainer width="100%" height={260}>
           <Treemap

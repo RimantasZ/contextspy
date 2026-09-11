@@ -1,7 +1,6 @@
 import type { BlockVisual } from '../../lib/blockVisuals'
 import { BLOCK_VISUALS } from '../../lib/blockVisuals'
-
-export type GroupMode = 'sequence' | 'turn' | 'tool' | 'size'
+import type { ArrangementPreset } from '../../lib/blockArrangement'
 
 const FILTERS: BlockVisual[] = ['system', 'user', 'assistant', 'thinking', 'tool_call', 'tool_result', 'tool_definition', 'prefill', 'other']
 const COMPACT_TOKENS = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
@@ -11,13 +10,13 @@ export function BlockToolbar({
   active,
   tokenTotals,
   search,
-  grouping,
-  groupingDisabled = false,
+  arrangement,
+  arrangementDisabled = false,
   hideZero,
   density,
   onToggleType,
   onSearch,
-  onGrouping,
+  onArrangement,
   onHideZero,
   onDensity,
   onLargest,
@@ -26,13 +25,13 @@ export function BlockToolbar({
   active: Set<BlockVisual>
   tokenTotals: Partial<Record<BlockVisual, number>>
   search: string
-  grouping: GroupMode
-  groupingDisabled?: boolean
+  arrangement: ArrangementPreset
+  arrangementDisabled?: boolean
   hideZero: boolean
   density: number
   onToggleType: (visual: BlockVisual) => void
   onSearch: (value: string) => void
-  onGrouping: (value: GroupMode) => void
+  onArrangement: (value: ArrangementPreset) => void
   onHideZero: (value: boolean) => void
   onDensity: (value: number) => void
   onLargest: () => void
@@ -52,18 +51,18 @@ export function BlockToolbar({
           />
         </label>
         <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-          Group
+          Arrange
           <select
-            value={grouping}
-            disabled={groupingDisabled}
-            title={groupingDisabled ? 'Grouping is available for request blocks only' : undefined}
-            onChange={(event) => onGrouping(event.target.value as GroupMode)}
+            value={arrangement}
+            disabled={arrangementDisabled}
+            title={arrangementDisabled ? 'Arrangement options are available for request blocks only' : undefined}
+            onChange={(event) => onArrangement(event.target.value as ArrangementPreset)}
             className="app-field py-1.5"
           >
             <option value="sequence">Sequence</option>
             <option value="turn">Turn</option>
-            <option value="tool">Tool pair</option>
-            <option value="size">Size (largest first)</option>
+            <option value="toolPair">Tool pair</option>
+            <option value="largestFirst">Size (largest first)</option>
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
