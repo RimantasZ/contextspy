@@ -1,5 +1,29 @@
 # What's New
 
+## Unreleased
+
+### UI redesign
+
+- Reworked the application shell around semantic light/dark themes, saved theme preference,
+  responsive desktop/icon-rail/mobile navigation, and route-level overflow containment.
+- Made request composition the primary request-detail view. The new Request/Response workbench
+  provides Compact, relative-size Proportional, and Raw views; block-type filters; content/tool
+  search; Compact-view sequence/turn/tool grouping; three block-size choices; zero-token
+  visibility; and a jump-to-largest action.
+- Added keyboard-operable block maps and a persistent inspector with token/position/message
+  metadata, first-seen request tracking, content state, and jumpable tool and previous-message
+  relationships. Selected and raw content can be searched, pretty-printed, and copied; normalized
+  response events remain available from the Raw view.
+- Replaced tool-definition/result donuts with a stable-colour treemap and sortable exact-value
+  table. Tools below 1% of tool tokens are grouped under **Other** in the treemap.
+- Simplified request lists into responsive desktop tables and mobile cards. Empty requests are
+  hidden by default, secondary metadata is expandable, filter values come from captured data, and
+  selecting **Unknown** agent now includes rows with missing agent metadata.
+- Refreshed Overview, Sessions, Session Detail, and Settings to use the same responsive visual
+  system while preserving session controls, PDF export, capture notices, and diagnostic details.
+- Added Vitest/React Testing Library coverage for the theme control, request filters and lists,
+  workbench, block maps/inspector/layout, searchable content, and tool-treemap transformation.
+
 ## v0.3.5
 
 ### Fixes & improvements
@@ -64,7 +88,7 @@
   part of `output_tokens` the visible response does not account for, so reasoning stops
   appearing free. Add `"showThinkingSummaries": true` to `~/.claude/settings.json` to capture
   the reasoning text as well — see the
-  [FAQ](faq.md#the-thinking-tab-shows-a-token-count-but-no-reasoning-text).
+  [FAQ](faq.md#a-thinking-block-shows-a-token-count-but-no-reasoning-text).
 - **OpenAI Responses API** — a reasoning item with an empty summary no longer swallows the
   reported `reasoning_tokens`, which previously made hidden reasoning read as zero.
 - Thinking-token reconciliation is now shared by all four wire-format adapters

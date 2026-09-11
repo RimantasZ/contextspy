@@ -4,7 +4,10 @@
 
 ### What is ContextSpy?
 
-ContextSpy is a profiler tool for analysing context usage of LLM applications. It is implemented as a local proxy that sits between your coding agent and the LLM API. It records every request and breaks down where the input tokens are going — system prompt, tool definitions, file contents, conversation history, and so on — so you can see how the context window is actually being used.
+ContextSpy is a profiler tool for analysing context usage of LLM applications. It is implemented
+as a local proxy that sits between your coding agent and the LLM API. It records supported model
+invocations and breaks down where the input tokens are going — system prompt, tool definitions,
+file contents, conversation history, and so on — so you can see how the context window is used.
 
 ### Something does not work, there is a bug!
 
@@ -30,7 +33,7 @@ If you don't feel comfortable running binaries as root, you can run `contextspy 
 
 | | Cloud mode | Local mode |
 |---|---|---|
-| Targets | OpenAI, Anthropic, Copilot, Azure | Ollama, llama-server, vLLM |
+| Targets | OpenAI, Anthropic, Azure OpenAI, Copilot, opencode gateway, Codex ChatGPT backend | Ollama, llama-server, vLLM |
 | Proxy type | Forward proxy (HTTPS_PROXY) | Reverse proxy (base_url) |
 | CA cert required | Yes | No |
 | Default port | 8888 | 8889 |
@@ -69,8 +72,8 @@ Some agents batch or internally deduplicate requests before sending them to the 
 
 For registered protocols, yes. ContextSpy identifies provider response invocations inside the
 frame stream, reconstructs provider-shaped request/response JSON, and sends those documents
-through the same analysis used for REST. The normal request list and detail page intentionally do
-not expose the transport.
+through the same analysis used for REST. A WS badge and transport diagnostics identify the source,
+but the primary request-composition experience stays transport-neutral.
 
 One `response.create` lifecycle produces one row even if it contains hundreds of streaming
 frames. Several tool-loop `response.create` lifecycles produce several rows because each has its
@@ -80,8 +83,8 @@ produce rows.
 Codex continuations commonly send only a `previous_response_id` and the latest tool result.
 ContextSpy follows that exact ID and expands the canonical input as prior input + prior output +
 current input. The resulting context composition therefore grows in the same way as an explicitly
-expanded REST conversation. Original frames may be retained as diagnostics but are not the source
-shown in the normal request viewer.
+expanded REST conversation. Original frames may be retained as diagnostics and are available from
+the Raw response's **Events** view; the canonical provider payload remains the default.
 
 See [REST, streaming, and WebSocket request handling](transport-normalization.md) for the complete
 invocation, reconstruction, storage, and token-accounting model, including why a reconstructed
@@ -157,7 +160,7 @@ When the provider reports exact token counts in the API response (e.g. Anthropic
 
 The estimate is deterministic for a given input, so if counts differ, the request content changed — for example, the agent added a new tool result or the conversation history grew. Token counts grow with each turn as history accumulates.
 
-### The Thinking tab shows a token count but no reasoning text
+### A Thinking block shows a token count but no reasoning text
 
 That is the provider withholding it, not ContextSpy dropping it. Current Claude models default to `thinking.display: "omitted"`, which returns a thinking block with an empty text field — the reasoning happened and was billed, but the text never leaves Anthropic's side.
 
@@ -169,9 +172,15 @@ That is the provider withholding it, not ContextSpy dropping it. Current Claude 
 }
 ```
 
-Claude Code then asks for summarized thinking, and the Thinking tab shows the actual text instead of just the count. Note this is a *summary* of the reasoning, not the raw chain of thought — no provider exposes that.
+Claude Code then asks for summarized thinking. On Request Detail, switch the composition
+workbench to **Response**, select a Thinking block, and its returned text appears below the map.
+This is a *summary* of the reasoning, not the raw chain of thought — no provider exposes that.
 
-The **token count appears either way**. When the text is withheld, ContextSpy derives the count from the part of `output_tokens` the visible response does not account for, so thinking never silently reads as free. The Thinking tab labels which of the two you are looking at; see [token estimation accuracy](development.md#token-estimation-accuracy) for the caveat on derived counts.
+The **token count appears either way**. When the text is withheld, ContextSpy derives the count
+from the part of `output_tokens` the visible response does not account for, so thinking never
+silently reads as free. The block's stored `token_source` records whether the count was reported,
+estimated, derived, or unknown; see [token estimation accuracy](development.md#token-estimation-accuracy)
+for the caveat on derived counts.
 
 ---
 
@@ -189,7 +198,7 @@ All data lives in `~/.contextspy/`:
 ### How long is request data kept?
 
 Decoded request payloads, canonical response payloads, streamed event logs, and the underlying
-block contents are automatically purged 7 days after capture by default — configurable via
+block contents become eligible for purging 7 days after capture by default — configurable via
 `[retention]` in `~/.contextspy/config.toml`
 (`raw_body_days`, `block_content_days`; `0` keeps forever). Purging only happens at server startup,
 not on a background timer, so a long-running `contextspy` process won't re-purge until restarted.
@@ -221,11 +230,14 @@ ContextSpy has tested setup helpers for:
 - Ollama (`contextspy setup-ollama`)
 - vLLM (`contextspy setup-vllm`)
 
-Any agent that respects `HTTPS_PROXY` (or lets you set a `base_url`) will work — the setup helpers just print the configuration snippet.
+Any agent that respects `HTTPS_PROXY` (or lets you set a `base_url`) can work when it targets a
+supported host and wire format — the setup helpers just print the configuration snippet.
 
 ### Which LLM providers are supported?
 
-Cloud mode: OpenAI, Anthropic, Azure OpenAI, GitHub Copilot.  
+Cloud mode: OpenAI, Anthropic, Azure OpenAI, GitHub Copilot, opencode's gateway, and the ChatGPT
+backend used by Codex CLI.
+
 Local mode: Ollama, llama-server, vLLM (any OpenAI-compatible server).
 
 ### Does it work with the OpenAI Python SDK?

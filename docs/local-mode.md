@@ -55,7 +55,7 @@ provider    = "openai"
 | `name` | yes | Human-readable label shown in the CLI and logs |
 | `listen_port` | yes | Port ContextSpy binds on `127.0.0.1` |
 | `target_url` | yes | Full base URL of the local LLM server |
-| `provider` | yes | Response parser — use `"openai"` for all three servers above |
+| `provider` | no (`"openai"`) | Label stored on captures; keep `"openai"` for the OpenAI-compatible endpoints above. The request path selects the adapter. |
 
 All three servers implement the OpenAI-compatible `/v1/chat/completions` API.
 
@@ -118,7 +118,7 @@ contextspy setup-ollama
 ```
 
 > **Alternative:** If your Ollama client respects `HTTPS_PROXY`, cloud/forward proxy
-> mode also works — Ollama's hostname is in the built-in filter list.
+> mode also works — traffic to port `11434` is detected as Ollama.
 
 ### vLLM
 

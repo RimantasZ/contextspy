@@ -18,10 +18,10 @@ In VS Code settings.json:
 { "http.proxy": "http://127.0.0.1:8888", "http.proxyStrictSSL": false }
 ```
 
-Run your agent task. In the dashboard → **Requests**, click any request and open the
-**Overview** tab. The block map shows each tool result as a proportional rectangle.
-Hover to see exact token counts. Category breakdown in the sidebar shows the
-`tool_results` slice as a percentage of total input tokens.
+Run your agent task. In the dashboard → **All Requests**, click any request. The composition
+workbench opens in **Compact** mode; tool results use `R` tiles. Switch to **Proportional** for a
+log-scaled relative-size view, or select a block to see its exact token count, content, and linked
+tool call/definition. Open **Analytics** for the `tool_results` share and per-tool treemap/table.
 
 ---
 
@@ -101,10 +101,11 @@ response = client.chat.completions.create(
 
 ## Find which requests are hitting the context limit
 
-In the **Requests** table, the `Tokens in` column shows total input tokens per request.
-Sort descending to find the largest ones. Click a request to see the **Overview** tab —
-blocks near or at the model's context window will be obvious from the sheer size of the
-block map.
+In the **All Requests** table, the **Input** column shows total input tokens per request.
+Sort descending to find the largest ones. Click a request and use the composition workbench's
+**Proportional** view plus **Jump to largest** to find the heaviest individual blocks; select any
+block for its exact count. The view deliberately caps visual growth, so use the inspector and
+Analytics totals for exact comparisons.
 
 Use **Sessions** to track token growth over a multi-turn conversation: each successive
 request will show the growing `conversation_history` slice.

@@ -76,8 +76,8 @@ export default function SessionDetail() {
     if (renamingTitle) renameTitleRef.current?.select();
   }, [renamingTitle]);
 
-  if (session.isLoading) return <div className="p-6 text-gray-400">Loading…</div>;
-  if (!session.data) return <div className="p-6 text-red-400">Session not found.</div>;
+  if (session.isLoading) return <div className="page-shell text-[var(--text-muted)]">Loading…</div>;
+  if (!session.data) return <div className="page-shell text-[var(--danger)]">Session not found.</div>;
 
   const s = session.data.session;
   const st = stats.data;
@@ -306,13 +306,13 @@ export default function SessionDetail() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="page-shell">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/sessions')} className="text-gray-400 hover:text-white text-sm">
+          <button onClick={() => navigate('/sessions')} className="app-button-ghost text-sm">
             ← Sessions
           </button>
-          <h1 className="text-xl font-bold text-white">
+          <h1 className="text-xl font-bold text-[var(--text)]">
             {renamingTitle ? (
               <span className="flex items-center gap-1">
                 <input
@@ -320,18 +320,19 @@ export default function SessionDetail() {
                   value={renameValue}
                   onChange={(e) => setRenameValue(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingTitle(false); }}
-                  className="bg-gray-700 text-white text-xl font-bold rounded px-2 py-0.5 border border-gray-500 focus:outline-none focus:border-indigo-400 w-64"
+                  aria-label="Session name"
+                  className="app-field w-64 py-0.5 text-xl font-bold"
                 />
-                <button onClick={commitRename} className="text-green-400 hover:text-green-300 text-sm px-1" title="Save">✓</button>
-                <button onClick={() => setRenamingTitle(false)} className="text-gray-400 hover:text-gray-300 text-sm px-1" title="Cancel">✕</button>
+                <button onClick={commitRename} className="app-button h-8 w-8 px-0 text-[var(--success)]" title="Save" aria-label="Save session name">✓</button>
+                <button onClick={() => setRenamingTitle(false)} className="app-button h-8 w-8 px-0" title="Cancel" aria-label="Cancel rename">✕</button>
               </span>
             ) : (
               s.name
             )}
           </h1>
           {s.ended_at === null && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-900 text-green-300 text-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            <span className="app-badge status-success gap-1">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--success)]" />
               Active
             </span>
           )}
@@ -341,26 +342,26 @@ export default function SessionDetail() {
             <button
               onClick={() => endSession.mutate(s.id)}
               disabled={endSession.isPending}
-              className="px-3 py-1 text-sm bg-red-700 hover:bg-red-600 text-white rounded disabled:opacity-50"
+              className="app-button-danger"
             >
               End session
             </button>
           )}
           <button
             onClick={exportPdf}
-            className="px-3 py-1 text-sm bg-indigo-700 hover:bg-indigo-600 text-white rounded"
+            className="app-button-primary"
           >
             Export PDF
           </button>
           <button
             onClick={startRename}
-            className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded"
+            className="app-button"
           >
             Rename
           </button>
           <button
             onClick={() => setDeletingSession(true)}
-            className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-red-400 rounded"
+            className="app-button-danger-ghost"
           >
             Delete
           </button>
@@ -368,33 +369,33 @@ export default function SessionDetail() {
       </div>
 
       {/* Timing panel */}
-      <div className="bg-gray-800 rounded-lg p-4">
+      <div className="panel">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4 text-sm">
           <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Session started</p>
-            <p className="text-white font-medium">{fmtTime(s.started_at)}</p>
+            <p className="eyebrow mb-0.5">Session started</p>
+            <p className="font-medium text-[var(--text)]">{fmtTime(s.started_at)}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Session closed</p>
-            <p className="text-white font-medium">
-              {s.ended_at ? fmtTime(s.ended_at) : <span className="text-green-400">Active</span>}
+            <p className="eyebrow mb-0.5">Session closed</p>
+            <p className="font-medium text-[var(--text)]">
+              {s.ended_at ? fmtTime(s.ended_at) : <span className="text-[var(--success)]">Active</span>}
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">First request</p>
-            <p className="text-white font-medium">{fmtTime(st?.session_timing?.first_request_at)}</p>
+            <p className="eyebrow mb-0.5">First request</p>
+            <p className="font-medium text-[var(--text)]">{fmtTime(st?.session_timing?.first_request_at)}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Last request</p>
-            <p className="text-white font-medium">{fmtTime(st?.session_timing?.last_request_at)}</p>
+            <p className="eyebrow mb-0.5">Last request</p>
+            <p className="font-medium text-[var(--text)]">{fmtTime(st?.session_timing?.last_request_at)}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Active duration</p>
-            <p className="text-white font-medium">{fmtMs(st?.session_timing?.active_duration_ms)}</p>
+            <p className="eyebrow mb-0.5">Active duration</p>
+            <p className="font-medium text-[var(--text)]">{fmtMs(st?.session_timing?.active_duration_ms)}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">Elapsed time</p>
-            <p className="text-white font-medium">{fmtMs(st?.session_timing?.elapsed_ms)}</p>
+            <p className="eyebrow mb-0.5">Elapsed time</p>
+            <p className="font-medium text-[var(--text)]">{fmtMs(st?.session_timing?.elapsed_ms)}</p>
           </div>
         </div>
       </div>
@@ -410,25 +411,25 @@ export default function SessionDetail() {
           },
           { label: 'Requests', value: st?.request_count ?? '—' },
         ] as Array<{ label: string; value: string | number; sub?: ReactNode }>).map(({ label, value, sub }) => (
-          <div key={label} className="bg-gray-800 rounded-lg p-4">
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>
-            <p className="text-2xl font-semibold text-white">{value}</p>
-            {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
+          <div key={label} className="panel">
+            <p className="eyebrow mb-1">{label}</p>
+            <p className="text-2xl font-semibold text-[var(--text)]">{value}</p>
+            {sub && <p className="mt-0.5 text-xs text-[var(--text-muted)]">{sub}</p>}
           </div>
         ))}
       </div>
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-gray-800 rounded-lg p-4">
-          <p className="text-sm font-medium text-gray-300 mb-3">Token composition</p>
+        <div className="panel">
+          <p className="section-title mb-3">Token composition</p>
           {st ? (
             <TokenDonut data={Object.fromEntries(Object.entries(st.by_category).map(([k, v]) => [k, v.tokens]))} />
           ) : (
-            <div className="h-60 flex items-center justify-center text-gray-500 text-sm">No data</div>
+            <div className="flex h-60 items-center justify-center text-sm text-[var(--text-muted)]">No data</div>
           )}
         </div>
-        <div className="bg-gray-800 rounded-lg p-4">
+        <div className="panel">
           <TimeSeriesChart
             data={timeline.data?.timeline ?? []}
             bucket={bucket}
@@ -440,13 +441,13 @@ export default function SessionDetail() {
 
       {/* Tool breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} />
+        <ToolBreakdownCharts tools={toolStats.data?.tools ?? []} totalInputTokens={st?.tokens_total_input} />
         <ToolBreakdownTable tools={toolStats.data?.tools ?? []} totalInputTokens={st?.tokens_total_input} />
       </div>
 
       {/* Requests table */}
-      <div className="bg-gray-800 rounded-lg p-4">
-        <p className="text-sm font-medium text-gray-300 mb-4">Requests in this session</p>
+      <div className="panel">
+        <p className="section-title mb-4">Requests in this session</p>
         <RequestTable
           requests={requests.data?.requests ?? []}
           sessions={[s]}

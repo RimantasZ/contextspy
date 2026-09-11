@@ -32,7 +32,7 @@ export function OutputSplit({
   return (
     <>
       {text.toLocaleString()} output ·{' '}
-      <span className="text-violet-400">{thinking.toLocaleString()} thinking</span>
+      <span className="text-[var(--thinking)]">{thinking.toLocaleString()} thinking</span>
     </>
   );
 }

@@ -1,282 +1,189 @@
-﻿// Copyright 2026 Rimantas Zukaitis
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-import { useState } from 'react';
-import type { Request, Session } from '../api/client';
-import { ContextBar } from './ContextBar';
+// Copyright 2026 Rimantas Zukaitis
+import { useState } from 'react'
+import type { KeyboardEvent, MouseEvent } from 'react'
+import type { Request, Session } from '../api/client'
+import { ContextBar } from './ContextBar'
 
-const PROVIDER_COLORS: Record<string, string> = {
-  openai: 'bg-green-900 text-green-300',
-  anthropic: 'bg-orange-900 text-orange-300',
-  ollama: 'bg-blue-900 text-blue-300',
-  unknown: 'bg-gray-700 text-gray-400',
-};
-
-const AGENT_COLORS: Record<string, string> = {
-  copilot: 'bg-purple-900 text-purple-300',
-  claude: 'bg-orange-900 text-orange-300',
-  cursor: 'bg-blue-900 text-blue-300',
-  codex: 'bg-teal-900 text-teal-300',
-  unknown: 'bg-gray-700 text-gray-400',
-};
-
-export type SortKey =
-  | 'timestamp'
-  | 'tokens_total_input'
-  | 'tokens_output_text'
-  | 'tokens_output_thinking'
-  | 'duration_ms'
-  | 'status_code'
-  | 'session'
-  | 'provider'
-  | 'agent'
-  | 'model';
-
-function SortHeader({
-  label,
-  col,
-  sortKey,
-  sortDir,
-  onSort,
-  className = '',
-}: {
-  label: string;
-  col: SortKey;
-  sortKey: SortKey | null;
-  sortDir: 'asc' | 'desc';
-  onSort: (col: SortKey) => void;
-  className?: string;
-}) {
-  const active = sortKey === col;
-  return (
-    <th
-      className={`pb-2 pr-3 font-medium cursor-pointer select-none whitespace-nowrap hover:text-gray-200 ${className}`}
-      onClick={() => onSort(col)}
-    >
-      <span className="inline-flex items-center gap-1">
-        {label}
-        {active && <span className="text-indigo-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
-      </span>
-    </th>
-  );
-}
-
-function statusBadge(code: number | null, outcome: Request['invocation_outcome']) {
-  if (code === null && outcome === 'unknown') return null;
-  let cls = 'bg-gray-700 text-gray-400';
-  if (outcome === 'completed' || (code !== null && code >= 200 && code < 300)) {
-    cls = 'bg-green-900 text-green-300';
-  } else if (outcome === 'failed' || (code !== null && code >= 500)) {
-    cls = 'bg-red-900 text-red-300';
-  } else if (outcome === 'incomplete' || (code !== null && code >= 400)) {
-    cls = 'bg-orange-900 text-orange-300';
-  }
-  const label = code ?? outcome;
-  return (
-    <span className={`px-1.5 py-0.5 rounded text-xs font-mono font-medium ${cls}`}>
-      {label}
-    </span>
-  );
-}
+export type SortKey = 'timestamp' | 'tokens_total_input' | 'tokens_output_text' | 'tokens_output_thinking' | 'duration_ms' | 'status_code' | 'session' | 'provider' | 'agent' | 'model'
 
 function formatDuration(ms: number | null): string {
-  if (ms === null) return '—';
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  if (ms == null) return '—'
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
-function formatTime(ts: string): string {
-  // Backend emits UTC without 'Z'; append it so JS parses as UTC, then displays in local timezone.
-  const s = ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z';
-  return new Date(s).toLocaleString(undefined, {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+function formatTime(timestamp: string): string {
+  const utc = timestamp.endsWith('Z') || timestamp.includes('+') ? timestamp : `${timestamp}Z`
+  return new Date(utc).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function StatusBadge({ request }: { request: Request }) {
+  const success = request.invocation_outcome === 'completed' || (request.status_code != null && request.status_code >= 200 && request.status_code < 300)
+  const failure = request.invocation_outcome === 'failed' || (request.status_code != null && request.status_code >= 500)
+  const warning = request.invocation_outcome === 'incomplete' || (request.status_code != null && request.status_code >= 400)
+  const tone = success ? 'status-success' : failure ? 'status-danger' : warning ? 'status-warning' : ''
+  return <span className={`app-badge font-mono ${tone}`}>{request.status_code ?? request.invocation_outcome}</span>
+}
+
+function SortHeader({ label, col, sortKey, sortDir, onSort, className = '' }: {
+  label: string; col: SortKey; sortKey: SortKey | null; sortDir: 'asc' | 'desc'; onSort: (key: SortKey) => void; className?: string
+}) {
+  const active = col === sortKey
+  return (
+    <th aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'} className={`p-2 font-medium ${className}`}>
+      <button type="button" onClick={() => onSort(col)} className="inline-flex items-center gap-1 whitespace-nowrap hover:text-[var(--text)]">
+        {label}{active && <span aria-hidden="true">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+      </button>
+    </th>
+  )
 }
 
 interface Props {
-  requests: Request[];
-  sessions?: Session[];
-  onRowClick: (id: string) => void;
-  /** Controlled sort — when provided the parent owns sort state */
-  sortKey?: SortKey | null;
-  sortDir?: 'asc' | 'desc';
-  onSortChange?: (key: SortKey | null, dir: 'asc' | 'desc') => void;
-  /** Show the Session column — default true; pass false on pages already scoped to one session */
-  showSession?: boolean;
+  requests: Request[]
+  sessions?: Session[]
+  onRowClick: (id: string) => void
+  sortKey?: SortKey | null
+  sortDir?: 'asc' | 'desc'
+  onSortChange?: (key: SortKey | null, direction: 'asc' | 'desc') => void
+  showSession?: boolean
 }
 
-export function RequestTable({ requests, sessions, onRowClick, sortKey: extSortKey, sortDir: extSortDir, onSortChange, showSession = true }: Props) {
-  const [hideEmpty, setHideEmpty] = useState(true);
-  const [internalSortKey, setInternalSortKey] = useState<SortKey | null>(null);
-  const [internalSortDir, setInternalSortDir] = useState<'asc' | 'desc'>('asc');
-  const sessionMap = new Map((sessions ?? []).map(s => [s.id, s.name]));
+export function RequestTable({ requests, sessions, onRowClick, sortKey: externalKey, sortDir: externalDirection, onSortChange, showSession = true }: Props) {
+  const [hideEmpty, setHideEmpty] = useState(true)
+  const [internalKey, setInternalKey] = useState<SortKey | null>(null)
+  const [internalDirection, setInternalDirection] = useState<'asc' | 'desc'>('asc')
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const sessionMap = new Map((sessions ?? []).map((session) => [session.id, session.name]))
+  const controlled = onSortChange != null
+  const sortKey = controlled ? (externalKey ?? null) : internalKey
+  const sortDir = controlled ? (externalDirection ?? 'asc') : internalDirection
 
-  const controlled = onSortChange !== undefined;
-  const sortKey  = controlled ? (extSortKey  ?? null)  : internalSortKey;
-  const sortDir  = controlled ? (extSortDir  ?? 'asc') : internalSortDir;
-
-  function handleSort(col: SortKey) {
-    let newKey: SortKey | null;
-    let newDir: 'asc' | 'desc';
-    if (sortKey === col) {
-      if (sortDir === 'asc') { newKey = col;  newDir = 'desc'; }
-      else                   { newKey = null; newDir = 'asc';  }
-    } else {
-      newKey = col; newDir = 'asc';
-    }
-    if (controlled) {
-      onSortChange(newKey, newDir);
-    } else {
-      setInternalSortKey(newKey);
-      setInternalSortDir(newDir);
-    }
+  function sort(key: SortKey) {
+    let nextKey: SortKey | null = key
+    let nextDirection: 'asc' | 'desc' = 'asc'
+    if (sortKey === key && sortDir === 'asc') nextDirection = 'desc'
+    else if (sortKey === key && sortDir === 'desc') nextKey = null
+    if (controlled) onSortChange?.(nextKey, nextDirection)
+    else { setInternalKey(nextKey); setInternalDirection(nextDirection) }
   }
 
-  const filtered = hideEmpty
-    ? requests.filter(r => r.tokens_total_input > 0 || r.tokens_total_output > 0)
-    : requests;
+  const filtered = hideEmpty ? requests.filter((request) => request.tokens_total_input > 0 || request.tokens_total_output > 0) : requests
+  const visible = !controlled && sortKey ? [...filtered].sort((a, b) => {
+    let left: string | number | null | undefined
+    let right: string | number | null | undefined
+    if (sortKey === 'session') { left = a.session_id ? sessionMap.get(a.session_id) : ''; right = b.session_id ? sessionMap.get(b.session_id) : '' }
+    else { left = a[sortKey] as string | number | null; right = b[sortKey] as string | number | null }
+    if (left == null) return 1
+    if (right == null) return -1
+    const result = typeof left === 'string' ? left.localeCompare(String(right)) : left - Number(right)
+    return sortDir === 'asc' ? result : -result
+  }) : filtered
 
-  const visible = (!controlled && sortKey)
-    ? [...filtered].sort((a, b) => {
-        let av: string | number | null | undefined;
-        let bv: string | number | null | undefined;
-        if (sortKey === 'session') {
-          av = a.session_id ? (sessionMap.get(a.session_id) ?? '') : '';
-          bv = b.session_id ? (sessionMap.get(b.session_id) ?? '') : '';
-        } else {
-          av = a[sortKey] as string | number | null;
-          bv = b[sortKey] as string | number | null;
-        }
-        if (av == null) return sortDir === 'asc' ? 1 : -1;
-        if (bv == null) return sortDir === 'asc' ? -1 : 1;
-        if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
-        return sortDir === 'asc' ? (av as number) - (bv as number) : (bv as number) - (av as number);
-      })
-    : filtered;
-
-  if (requests.length === 0) {
-    return (
-      <div className="text-center py-12 text-gray-500 text-sm">
-        No requests captured yet.
-      </div>
-    );
+  function toggleDetails(id: string, event?: MouseEvent) {
+    event?.stopPropagation()
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
   }
+
+  function onRowKey(event: KeyboardEvent, id: string) {
+    if (event.key === 'Enter') onRowClick(id)
+    if (event.key === ' ') { event.preventDefault(); toggleDetails(id) }
+  }
+
+  if (requests.length === 0) return <div className="py-12 text-center text-sm text-[var(--text-muted)]">No requests captured yet.</div>
 
   return (
-    <div className="overflow-x-auto">
-      {/* Filter row */}
-      <div className="flex items-center gap-2 mb-3">
-        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={hideEmpty}
-            onChange={e => setHideEmpty(e.target.checked)}
-            className="accent-indigo-500 w-3.5 h-3.5 cursor-pointer"
-          />
+    <div className="min-w-0">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+          <input type="checkbox" checked={hideEmpty} onChange={(event) => setHideEmpty(event.target.checked)} />
           Hide empty requests
         </label>
-        {hideEmpty && requests.length !== visible.length && (
-          <span className="text-xs text-gray-600">
-            ({requests.length - visible.length} hidden)
-          </span>
-        )}
+        {hideEmpty && requests.length !== visible.length && <span className="text-xs text-[var(--text-muted)]">({requests.length - visible.length} hidden)</span>}
       </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-gray-400 border-b border-gray-700">
-            <SortHeader label="Time" col="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-36" />
-            <SortHeader label="Tokens (in)" col="tokens_total_input" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-            <SortHeader label="Output" col="tokens_output_text" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-            <SortHeader label="Thinking" col="tokens_output_thinking" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-            <th className="pb-2 pr-3 font-medium whitespace-nowrap" style={{ minWidth: 256 }}>Context</th>
-            <SortHeader label="Duration" col="duration_ms" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-            <SortHeader label="Status" col="status_code" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-            {showSession && (
-              <SortHeader label="Session" col="session" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            )}
-            <SortHeader label="Provider" col="provider" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortHeader label="Agent" col="agent" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortHeader label="Model" col="model" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-          </tr>
-        </thead>
-        <tbody>
-          {visible.map((req) => (
-            <tr
-              key={req.id}
-              onClick={() => onRowClick(req.id)}
-              className="border-b border-gray-800 hover:bg-gray-800 cursor-pointer transition-colors"
-            >
-              <td className="py-2 pr-3 text-gray-400 font-mono text-xs whitespace-nowrap">
-                {formatTime(req.timestamp)}
-              </td>
-              <td className="py-2 pr-3 text-right text-gray-300">
-                {req.tokens_total_input > 0 ? req.tokens_total_input.toLocaleString() : '—'}
-              </td>
-              <td className="py-2 pr-3 text-right text-gray-300">
-                {req.tokens_output_text > 0 ? req.tokens_output_text.toLocaleString() : '—'}
-              </td>
-              <td className="py-2 pr-3 text-right text-gray-300">
-                {req.tokens_output_thinking > 0 ? req.tokens_output_thinking.toLocaleString() : '—'}
-              </td>
-              <td className="py-2 pr-3">
-                <ContextBar data={req} />
-              </td>
-              <td className="py-2 pr-3 text-right text-gray-400 whitespace-nowrap">
-                {formatDuration(req.duration_ms)}
-              </td>
-              <td className="py-2 pr-3 text-right">
-                {statusBadge(req.status_code, req.invocation_outcome)}
-              </td>
-              {showSession && (
-                <td className="py-2 pr-3">
-                  {req.session_id && sessionMap.has(req.session_id) ? (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900 text-indigo-300 truncate max-w-[100px] inline-block" title={sessionMap.get(req.session_id)}>
-                      {sessionMap.get(req.session_id)}
-                    </span>
-                  ) : (
-                    <span className="text-gray-600 text-xs">n/a</span>
-                  )}
-                </td>
-              )}
-              <td className="py-2 pr-3">
-                <span
-                  className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                    PROVIDER_COLORS[req.provider] ?? PROVIDER_COLORS.unknown
-                  }`}
-                >
-                  {req.provider}
-                </span>
-              </td>
-              <td className="py-2 pr-3">
-                <span
-                  className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                    AGENT_COLORS[req.agent ?? 'unknown'] ?? AGENT_COLORS.unknown
-                  }`}
-                >
-                  {req.agent}
-                </span>
-              </td>
-              <td className="py-2 text-gray-300 truncate max-w-[120px]">
-                {req.model ?? '—'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+
+      <div className="hidden min-w-0 overflow-x-auto md:block">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead><tr className="border-b border-[var(--border)] text-left text-xs text-[var(--text-muted)]">
+            <SortHeader label="Time" col="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={sort} />
+            <SortHeader label="Input" col="tokens_total_input" sortKey={sortKey} sortDir={sortDir} onSort={sort} className="text-right" />
+            <th className="w-[22%] p-2 font-medium">Context summary</th>
+            <SortHeader label="Duration" col="duration_ms" sortKey={sortKey} sortDir={sortDir} onSort={sort} className="text-right" />
+            <SortHeader label="Status" col="status_code" sortKey={sortKey} sortDir={sortDir} onSort={sort} className="text-right" />
+            <SortHeader label="Model / source" col="model" sortKey={sortKey} sortDir={sortDir} onSort={sort} />
+            <th className="w-10 p-2"><span className="sr-only">Details</span></th>
+          </tr></thead>
+          <tbody>
+            {visible.map((request) => {
+              const open = expanded.has(request.id)
+              return (
+                <RequestRow key={request.id} request={request} open={open} showSession={showSession} sessionName={request.session_id ? sessionMap.get(request.session_id) : undefined} onOpen={() => onRowClick(request.id)} onToggle={toggleDetails} onKey={onRowKey} />
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="space-y-2 md:hidden">
+        {visible.map((request) => {
+          const open = expanded.has(request.id)
+          return (
+            <article key={request.id} tabIndex={0} onKeyDown={(event) => onRowKey(event, request.id)} className="surface rounded-lg border border-[var(--border)] p-3">
+              <div className="flex items-start justify-between gap-3">
+                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onRowClick(request.id)}>
+                  <span className="block text-xs text-[var(--text-muted)]">{formatTime(request.timestamp)}</span>
+                  <strong className="mt-1 block truncate text-sm">{request.model ?? request.provider}</strong>
+                </button>
+                <StatusBadge request={request} />
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                <div><span className="block text-[var(--text-muted)]">Input</span><strong className="tabular-nums">{request.tokens_total_input.toLocaleString()}</strong></div>
+                <div><span className="block text-[var(--text-muted)]">Output</span><strong className="tabular-nums">{request.tokens_total_output.toLocaleString()}</strong></div>
+                <div><span className="block text-[var(--text-muted)]">Duration</span><strong className="tabular-nums">{formatDuration(request.duration_ms)}</strong></div>
+              </div>
+              <div className="mt-3"><ContextBar data={request} /></div>
+              <button type="button" aria-expanded={open} onClick={(event) => toggleDetails(request.id, event)} className="mt-3 text-xs font-medium text-[var(--accent-soft-text)]">{open ? 'Hide details' : 'More details'}</button>
+              {open && <RequestDetails request={request} showSession={showSession} sessionName={request.session_id ? sessionMap.get(request.session_id) : undefined} />}
+            </article>
+          )
+        })}
+      </div>
+      {visible.length === 0 && <div className="py-8 text-center text-sm text-[var(--text-muted)]">All requests are hidden by the current filter.</div>}
     </div>
-  );
+  )
+}
+
+function RequestRow({ request, open, showSession, sessionName, onOpen, onToggle, onKey }: {
+  request: Request; open: boolean; showSession: boolean; sessionName?: string; onOpen: () => void
+  onToggle: (id: string, event?: MouseEvent) => void; onKey: (event: KeyboardEvent, id: string) => void
+}) {
+  return (
+    <>
+      <tr tabIndex={0} onClick={onOpen} onKeyDown={(event) => onKey(event, request.id)} className="cursor-pointer border-b border-[var(--border)] hover:bg-[var(--surface-muted)]">
+        <td className="whitespace-nowrap p-2 font-mono text-xs text-[var(--text-muted)]">{formatTime(request.timestamp)}</td>
+        <td className="p-2 text-right tabular-nums">{request.tokens_total_input > 0 ? request.tokens_total_input.toLocaleString() : '—'}</td>
+        <td className="p-2"><ContextBar data={request} /></td>
+        <td className="whitespace-nowrap p-2 text-right tabular-nums text-[var(--text-muted)]">{formatDuration(request.duration_ms)}</td>
+        <td className="p-2 text-right"><StatusBadge request={request} /></td>
+        <td className="max-w-[200px] p-2"><span className="block truncate font-medium" title={request.model ?? request.provider}>{request.model ?? '—'}</span><span className="block truncate text-[10px] text-[var(--text-muted)]">{request.provider}{request.agent ? ` · ${request.agent}` : ''}</span></td>
+        <td className="p-2 text-right"><button type="button" aria-label={`${open ? 'Hide' : 'Show'} request details`} aria-expanded={open} onClick={(event) => onToggle(request.id, event)} className="app-button h-8 w-8 px-0">{open ? '−' : '+'}</button></td>
+      </tr>
+      {open && <tr className="border-b border-[var(--border)]"><td colSpan={7} className="bg-[var(--surface-muted)] px-3 py-0"><RequestDetails request={request} showSession={showSession} sessionName={sessionName} /></td></tr>}
+    </>
+  )
+}
+
+function RequestDetails({ request, showSession, sessionName }: { request: Request; showSession: boolean; sessionName?: string }) {
+  return (
+    <dl className="grid grid-cols-2 gap-3 py-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
+      <div><dt className="text-[var(--text-muted)]">Output text</dt><dd className="font-medium tabular-nums">{request.tokens_output_text.toLocaleString()}</dd></div>
+      <div><dt className="text-[var(--text-muted)]">Thinking</dt><dd className="font-medium tabular-nums">{request.tokens_output_thinking.toLocaleString()}</dd></div>
+      <div><dt className="text-[var(--text-muted)]">Provider</dt><dd className="font-medium">{request.provider}</dd></div>
+      <div><dt className="text-[var(--text-muted)]">Agent</dt><dd className="font-medium">{request.agent ?? '—'}</dd></div>
+      {showSession && <div><dt className="text-[var(--text-muted)]">Session</dt><dd className="truncate font-medium" title={sessionName}>{sessionName ?? 'n/a'}</dd></div>}
+      <div><dt className="text-[var(--text-muted)]">Endpoint</dt><dd className="truncate font-medium" title={request.endpoint}>{request.endpoint}</dd></div>
+    </dl>
+  )
 }

@@ -26,9 +26,10 @@ pytest tests/test_providers.py::test_name   # run a single test
 contextspy start    # production entrypoint: starts proxy + web server together
 ```
 
-There is no linter/formatter configured. The only tests live in `tests/test_providers.py`
-(adapter request-parsing + classifier + block persistence). When you touch `analysis/adapters/`
-or `analysis/classifier.py`, run pytest.
+There is no linter/formatter configured. Backend tests under `tests/` cover adapters/classification,
+normalization, WebSocket protocols, migrations, and request filtering. Frontend component tests
+use Vitest and React Testing Library (`cd ui && npm test`). When you touch backend analysis or
+capture code, run pytest; when you touch `ui/src/`, run the frontend tests and build.
 
 ## Build/packaging gotcha
 
@@ -133,13 +134,17 @@ Forgetting step 1 crashes every command that touches the DB with
 Forgetting step 2 means existing requests silently never get the new derived data.
 
 ### Frontend
-`ui/src/` — React + react-router + @tanstack/react-query + recharts + Tailwind. Data via
-`api/client.ts` (REST) and `api/useWebSocket.ts` (live updates). Pages in `pages/`
-(Dashboard, Requests, RequestDetail, Sessions, SessionDetail, Settings); the context-window
-visual block map lives in components like `ContextBar`, `TokenDonut`, `ToolBreakdown`.
+`ui/src/` — React + react-router + @tanstack/react-query + recharts + Tailwind. Data comes through
+`api/client.ts` (REST) and `api/useWebSocket.ts` (live updates). Pages live in `pages/`
+(Dashboard, Requests, RequestDetail, Sessions, SessionDetail, Settings). The main request-detail
+surface is `components/request/RequestWorkbench.tsx`, backed by compact/relative-size block maps,
+a persistent inspector, and searchable content viewer. `ToolTreemap` and `ToolBreakdown` provide
+share-of-total and exact-value tool views; semantic light/dark theme tokens live in `index.css`.
 
 ## Reference docs
-- `SPEC.md` — full product/technical spec. `PLAN.md` — implementation plan.
+- `SPEC.md` — current product/technical spec. `docs/transport-normalization.md` — detailed
+  transport and canonical-invocation contract. Files ending in `_PLAN.md` and documents under
+  `plans/` are historical implementation plans unless their status note says otherwise.
 - `docs/development.md` — architecture diagrams, data storage layout, token accuracy bands.
 - `docs/` also has install/cloud-mode/local-mode/examples/cli guides.
 - `~/.contextspy/`: `contextspy.db` (SQLite), `config.toml` (auto-created). Raw request bodies

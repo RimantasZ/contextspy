@@ -51,16 +51,16 @@ export function TimeSeriesChart({ data, bucket, onBucketChange, loading }: Props
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <span className="text-sm text-gray-400">Token usage over time</span>
+        <span className="text-sm text-[var(--text-muted)]">Token usage over time</span>
         <div className="flex gap-1">
           {(['minute', 'hour', 'day'] as Bucket[]).map((b) => (
             <button
               key={b}
               onClick={() => onBucketChange(b)}
-              className={`px-2 py-1 text-xs rounded ${
+              className={`min-h-8 rounded px-2 py-1 text-xs ${
                 bucket === b
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                  ? 'bg-[var(--accent)] text-[var(--text-on-accent)]'
+                  : 'bg-[var(--surface-muted)] text-[var(--text-muted)] hover:bg-[var(--surface-hover)]'
               }`}
             >
               {b}
@@ -70,25 +70,25 @@ export function TimeSeriesChart({ data, bucket, onBucketChange, loading }: Props
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center h-40 text-gray-500 text-sm">
+        <div className="flex h-40 items-center justify-center text-sm text-[var(--text-muted)]">
           Loading…
         </div>
       ) : formatted.length === 0 ? (
-        <div className="flex items-center justify-center h-40 text-gray-500 text-sm">
+        <div className="flex h-40 items-center justify-center text-sm text-[var(--text-muted)]">
           No data yet
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={200}>
           <LineChart data={formatted} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
             <XAxis
               dataKey="label"
-              tick={{ fill: '#9ca3af', fontSize: 11 }}
+              tick={{ fill: 'var(--chart-axis)', fontSize: 11 }}
               tickLine={false}
-              axisLine={{ stroke: '#374151' }}
+              axisLine={{ stroke: 'var(--chart-grid)' }}
             />
             <YAxis
-              tick={{ fill: '#9ca3af', fontSize: 11 }}
+              tick={{ fill: 'var(--chart-axis)', fontSize: 11 }}
               tickLine={false}
               axisLine={false}
               width={50}
@@ -96,17 +96,17 @@ export function TimeSeriesChart({ data, bucket, onBucketChange, loading }: Props
             />
             <Tooltip
               formatter={(value: number) => [`${value.toLocaleString()} tokens`]}
-              contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '6px' }}
-              labelStyle={{ color: '#f9fafb' }}
-              itemStyle={{ color: '#d1d5db' }}
+              contentStyle={{ backgroundColor: 'var(--chart-tooltip)', border: '1px solid var(--border)', borderRadius: '6px' }}
+              labelStyle={{ color: 'var(--chart-tooltip-text)' }}
+              itemStyle={{ color: 'var(--text-muted)' }}
             />
             <Line
               type="monotone"
-              dataKey="total_tokens"
-              stroke="#6366f1"
+              dataKey="tokens_total_input"
+              stroke="var(--chart-line)"
               strokeWidth={2}
               dot={false}
-              activeDot={{ r: 4, fill: '#6366f1' }}
+              activeDot={{ r: 4, fill: 'var(--chart-line)' }}
             />
           </LineChart>
         </ResponsiveContainer>

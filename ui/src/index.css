@@ -1,3 +1,367 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * ContextSpy theme palette
+ * ------------------------
+ * Components should consume these semantic tokens (or the component classes
+ * below) instead of declaring colors locally. Keeping both palettes here makes
+ * visual review and future adjustments intentionally boring.
+ */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Page and component surfaces */
+  --canvas: #f7f7f4;
+  --surface: #ffffff;
+  --surface-elevated: #fffefa;
+  --surface-muted: #f0f1ee;
+  --surface-hover: #e9ece7;
+  --surface-inset: #fafaf8;
+  --surface-code: #f3f4f1;
+  --overlay: rgb(20 24 21 / 48%);
+
+  /* Text, borders, focus, and shadows */
+  --text: #1c201d;
+  --text-muted: #626963;
+  --text-subtle: #858c86;
+  --text-on-accent: #ffffff;
+  --border: #d8dcd6;
+  --border-strong: #1c201d;
+  --graphical-border: #1c201d;
+  --focus: #786cc2;
+  --shadow: 0 10px 30px rgb(28 32 29 / 12%);
+
+  /* Brand and interaction */
+  --accent: #6558ad;
+  --accent-hover: #51458f;
+  --accent-soft: #e8e4f8;
+  --accent-soft-hover: #ddd7f3;
+  --accent-soft-text: #3f356f;
+  --logo-tile: #242824;
+
+  /* Status and action colors */
+  --success: #176b43;
+  --success-bg: #d9f5e5;
+  --success-solid: #23764d;
+  --success-solid-hover: #185e3c;
+  --warning: #855116;
+  --warning-bg: #ffead1;
+  --danger: #96313c;
+  --danger-bg: #fbe0e2;
+  --danger-solid: #b33c48;
+  --danger-solid-hover: #912e38;
+  --info: #285f8e;
+  --info-bg: #dcecfb;
+  --thinking: #694180;
+  --thinking-bg: #eadff5;
+
+  /* Request block fills; --block-ink must contrast with every fill. */
+  --block-ink: #171a18;
+  --block-system: #ded7f7;
+  --block-tool-definition: #ffe3b4;
+  --block-user: #cfe4fb;
+  --block-assistant: #d2eedf;
+  --block-tool-call: #ffd9c4;
+  --block-tool-result: #c9eee8;
+  --block-thinking: #ead8f4;
+  --block-prefill: #edf0b8;
+  --block-other: #e8d4c2;
+  /* Light mode intentionally keeps the original uniform, ink-like outline. */
+  --block-system-border: var(--graphical-border);
+  --block-tool-definition-border: var(--graphical-border);
+  --block-user-border: var(--graphical-border);
+  --block-assistant-border: var(--graphical-border);
+  --block-tool-call-border: var(--graphical-border);
+  --block-tool-result-border: var(--graphical-border);
+  --block-thinking-border: var(--graphical-border);
+  --block-prefill-border: var(--graphical-border);
+  --block-other-border: var(--graphical-border);
+
+  /* Charts and compact context bars */
+  --category-system: #6d5fe5;
+  --category-tool-definitions: #8a62dc;
+  --category-tool-results: #a487e8;
+  --category-file-contents: #309b61;
+  --category-conversation: #4d7fe5;
+  --category-user: #269aad;
+  --category-prefill: #d28b22;
+  --category-other: #7d847e;
+  --chart-grid: #dfe3dd;
+  --chart-axis: #6d756e;
+  --chart-line: #6558ad;
+  --chart-tooltip: #ffffff;
+  --chart-tooltip-text: #1c201d;
+  --syntax-key: #6d4586;
+  --syntax-string: #27764c;
+  --syntax-number: #2e6b9c;
+  --syntax-boolean: #9a641c;
+  --search-mark: #f4d46a;
+  --search-mark-text: #30280d;
+  /* Zero-token blocks retain their category hue, softened with this neutral. */
+  --zero-token-neutral: #929893;
+  --zero-token-category-share: 58%;
+
+  /* Per-token highlighting and generated tool colors */
+  --token-highlight-1: #e5e1f8;
+  --token-highlight-2: #d5f0eb;
+  --token-highlight-3: #fff0c9;
+  --token-highlight-4: #fbe0e2;
+  --token-highlight-5: #dcecfb;
+  --token-highlight-6: #eadff5;
+  --token-highlight-7: #ffe3d2;
+  --token-highlight-8: #d9f2df;
+  --token-highlight-9: #f8ddeb;
+  --token-highlight-10: #d4efec;
+  --tool-color-saturation: 48%;
+  --tool-fill-base: 77%;
+  --tool-fill-definition: 82%;
+  --tool-fill-result: 72%;
+  --tool-other-definition: hsl(80 10% 82%);
+  --tool-other-result: hsl(80 10% 72%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: #111412;
+  --surface: #191d1a;
+  --surface-elevated: #202521;
+  --surface-muted: #282e29;
+  --surface-hover: #323a33;
+  --surface-inset: #151815;
+  --surface-code: #101310;
+  --overlay: rgb(0 0 0 / 68%);
+
+  --text: #eff3ef;
+  --text-muted: #adb5ae;
+  --text-subtle: #7f8981;
+  --text-on-accent: #ffffff;
+  --border: #394039;
+  --border-strong: #c5ccc6;
+  --graphical-border: #0a0d0b;
+  --focus: #a99de9;
+  --shadow: 0 12px 36px rgb(0 0 0 / 36%);
+
+  --accent: #8d80d4;
+  --accent-hover: #a397e2;
+  --accent-soft: #352f55;
+  --accent-soft-hover: #403766;
+  --accent-soft-text: #ded8ff;
+  --logo-tile: #0d100e;
+
+  --success: #88d7aa;
+  --success-bg: #193d2b;
+  --success-solid: #2a8156;
+  --success-solid-hover: #329965;
+  --warning: #f1bd70;
+  --warning-bg: #493319;
+  --danger: #f0a1a9;
+  --danger-bg: #51262b;
+  --danger-solid: #b94350;
+  --danger-solid-hover: #d25360;
+  --info: #9bc9ef;
+  --info-bg: #20384d;
+  --thinking: #d6a9eb;
+  --thinking-bg: #3e2c49;
+
+  --block-ink: #111412;
+  --block-system: #8074b0;
+  --block-tool-definition: #a77d43;
+  --block-user: #6588a8;
+  --block-assistant: #5d9474;
+  --block-tool-call: #a86e54;
+  --block-tool-result: #55958c;
+  --block-thinking: #8a689b;
+  --block-prefill: #919756;
+  --block-other: #876f5b;
+  /* Dark-mode outlines are brighter, more saturated versions of each block fill. */
+  --block-system-border: #d4cbff;
+  --block-tool-definition-border: #ffd58f;
+  --block-user-border: #c2e1ff;
+  --block-assistant-border: #b3efca;
+  --block-tool-call-border: #ffc0a3;
+  --block-tool-result-border: #a6f3e8;
+  --block-thinking-border: #e8c0f7;
+  --block-prefill-border: #edf39f;
+  --block-other-border: #f2cfad;
+
+  --category-system: #9588f0;
+  --category-tool-definitions: #ad83ed;
+  --category-tool-results: #c3a5f2;
+  --category-file-contents: #64bf88;
+  --category-conversation: #79a0ef;
+  --category-user: #63bccb;
+  --category-prefill: #e4aa50;
+  --category-other: #909891;
+  --chart-grid: #353c36;
+  --chart-axis: #a7b0a8;
+  --chart-line: #a99de9;
+  --chart-tooltip: #222723;
+  --chart-tooltip-text: #eff3ef;
+  --syntax-key: #d8acec;
+  --syntax-string: #8bd6a9;
+  --syntax-number: #9bc9ef;
+  --syntax-boolean: #f1bd70;
+  --search-mark: #776424;
+  --search-mark-text: #fff4c7;
+  --zero-token-neutral: #414642;
+  --zero-token-category-share: 58%;
+
+  --token-highlight-1: #40395e;
+  --token-highlight-2: #294b45;
+  --token-highlight-3: #574924;
+  --token-highlight-4: #542e33;
+  --token-highlight-5: #29465e;
+  --token-highlight-6: #4c3557;
+  --token-highlight-7: #55372b;
+  --token-highlight-8: #284934;
+  --token-highlight-9: #533143;
+  --token-highlight-10: #244a48;
+  --tool-color-saturation: 38%;
+  --tool-fill-base: 45%;
+  --tool-fill-definition: 54%;
+  --tool-fill-result: 36%;
+  --tool-other-definition: hsl(80 8% 48%);
+  --tool-other-result: hsl(80 8% 34%);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+}
+
+html { overflow-x: hidden; }
+
+body {
+  background: var(--canvas);
+  color: var(--text);
+  overflow-x: hidden;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button, input, select, textarea { font: inherit; }
+button, [role="button"] { touch-action: manipulation; }
+input, select, textarea { accent-color: var(--accent); }
+::placeholder { color: var(--text-subtle); opacity: 1; }
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--focus) 70%, transparent);
+  outline-offset: 2px;
+}
+
+pre, code { overflow-wrap: anywhere; }
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+@layer components {
+  /* Layout and surfaces */
+  .page-shell { @apply mx-auto w-full max-w-[1680px] space-y-5 p-4 sm:p-5 lg:p-6; }
+  .panel { @apply min-w-0 rounded-lg border p-4; background: var(--surface); border-color: var(--border); }
+  .panel-elevated { @apply min-w-0 rounded-lg border p-4; background: var(--surface-elevated); border-color: var(--border); box-shadow: var(--shadow); }
+  .surface { background: var(--surface); color: var(--text); }
+  .surface-elevated { background: var(--surface-elevated); color: var(--text); }
+  .surface-muted { background: var(--surface-muted); color: var(--text); }
+  .surface-inset { background: var(--surface-inset); color: var(--text); }
+  .code-surface { background: var(--surface-code); color: var(--text); }
+  .section-title { @apply text-sm font-semibold; color: var(--text); }
+  .eyebrow { @apply text-xs font-medium; color: var(--text-muted); }
+  .muted { color: var(--text-muted); }
+  .subtle { color: var(--text-subtle); }
+  .divider { border-color: var(--border); }
+
+  /* Form controls */
+  .app-field { @apply rounded-md border px-3 py-2 text-sm; background: var(--surface); border-color: var(--border); color: var(--text); }
+  .app-field:hover { border-color: color-mix(in srgb, var(--border-strong) 45%, var(--border)); }
+  .app-field:disabled { cursor: not-allowed; opacity: .55; }
+
+  /* Buttons: neutral, brand-primary, destructive, and low-emphasis danger. */
+  .app-button { @apply inline-flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors; background: var(--surface); border-color: var(--border); color: var(--text); }
+  .app-button:hover:not(:disabled) { background: var(--surface-hover); }
+  .app-button:disabled { cursor: not-allowed; opacity: .45; }
+  .app-button-primary { @apply app-button border-transparent; background: var(--accent); color: var(--text-on-accent); }
+  .app-button-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .app-button-danger { @apply app-button border-transparent; background: var(--danger-solid); color: var(--text-on-accent); }
+  .app-button-danger:hover:not(:disabled) { background: var(--danger-solid-hover); }
+  .app-button-ghost { @apply app-button border-transparent; background: transparent; color: var(--text-muted); }
+  .app-button-ghost:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+  .app-button-danger-ghost { @apply app-button; background: transparent; border-color: color-mix(in srgb, var(--danger) 32%, var(--border)); color: var(--danger); }
+  .app-button-danger-ghost:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); }
+
+  /* Badges and notices */
+  .app-badge { @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium; background: var(--surface-muted); color: var(--text-muted); }
+  .status-success { background: var(--success-bg); color: var(--success); }
+  .status-warning { background: var(--warning-bg); color: var(--warning); }
+  .status-danger { background: var(--danger-bg); color: var(--danger); }
+  .status-info { background: var(--info-bg); color: var(--info); }
+  .status-thinking { background: var(--thinking-bg); color: var(--thinking); }
+  .notice { @apply rounded-lg border px-4 py-3 text-sm; }
+  .notice-warning { @apply notice; background: var(--warning-bg); border-color: color-mix(in srgb, var(--warning) 42%, var(--border)); color: var(--warning); }
+  .notice-danger { @apply notice; background: var(--danger-bg); border-color: color-mix(in srgb, var(--danger) 42%, var(--border)); color: var(--danger); }
+
+  /* Navigation and modal chrome */
+  .nav-link { @apply flex min-h-10 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors; color: var(--text-muted); }
+  .nav-link:hover { background: var(--surface-hover); color: var(--text); }
+  .nav-link-active { background: var(--accent-soft); color: var(--accent-soft-text); }
+  .modal-backdrop { @apply fixed inset-0 z-50 flex items-center justify-center; background: var(--overlay); }
+  .modal-dialog { @apply rounded-lg border p-6; background: var(--surface-elevated); border-color: var(--border); box-shadow: var(--shadow); color: var(--text); }
+  .theme-toggle { @apply app-button min-h-9 justify-start gap-2; }
+
+  /* Shared request-block treatment keeps Compact and Proportional views related. */
+  .composition-block {
+    @apply relative rounded-[3px] border text-[9px] font-bold leading-none text-[var(--block-ink)] transition-transform;
+  }
+  .composition-block:hover { @apply z-[1] scale-110; }
+  .search-match-active { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+  .workbench-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); }
+}
+
+/*
+ * Compatibility mapping for the legacy request/response viewers. They are no
+ * longer used by the main request workbench, but keeping their old utility
+ * colors mapped to semantic tokens prevents theme regressions for downstream
+ * consumers while those exports remain public.
+ */
+.bg-gray-950 { background-color: var(--canvas) !important; }
+.bg-gray-900 { background-color: var(--surface-code) !important; }
+.bg-gray-800 { background-color: var(--surface) !important; }
+.bg-gray-700, .bg-gray-700\/50, .bg-gray-700\/40, .bg-gray-750 { background-color: var(--surface-muted) !important; }
+.text-gray-100, .text-gray-200, .text-gray-300 { color: var(--text) !important; }
+.text-gray-400, .text-gray-500, .text-gray-600 { color: var(--text-muted) !important; }
+.border-gray-800, .border-gray-700, .border-gray-700\/50, .border-gray-700\/40, .border-gray-600, .border-gray-500 { border-color: var(--border) !important; }
+.hover\:bg-gray-800:hover, .hover\:bg-gray-700:hover, .hover\:bg-gray-700\/30:hover, .hover\:bg-gray-700\/40:hover, .hover\:bg-gray-600:hover, .hover\:bg-gray-750:hover { background-color: var(--surface-hover) !important; }
+.hover\:text-white:hover, .hover\:text-gray-200:hover, .hover\:text-gray-300:hover { color: var(--text) !important; }
+.bg-green-900, .bg-green-900\/60 { background-color: var(--success-bg) !important; }
+.text-green-300, .text-green-400 { color: var(--success) !important; }
+.bg-red-900, .bg-red-900\/60, .bg-red-950 { background-color: var(--danger-bg) !important; }
+.text-red-300, .text-red-400 { color: var(--danger) !important; }
+.bg-orange-900, .bg-orange-950, .bg-amber-950 { background-color: var(--warning-bg) !important; }
+.text-orange-300, .text-orange-400, .text-amber-300, .text-amber-400 { color: var(--warning) !important; }
+.bg-indigo-900, .bg-indigo-950 { background-color: var(--accent-soft) !important; }
+.text-indigo-300, .text-indigo-400 { color: var(--accent-soft-text) !important; }
+.bg-purple-900 { background-color: var(--thinking-bg) !important; }
+.text-purple-300, .text-purple-400, .text-violet-300, .text-violet-400 { color: var(--thinking) !important; }
+.bg-blue-900 { background-color: var(--info-bg) !important; }
+.text-blue-300, .text-blue-400 { color: var(--info) !important; }
+.bg-teal-900 { background-color: var(--success-bg) !important; }
+.text-teal-300, .text-teal-400 { color: var(--success) !important; }
+
+@media (max-width: 960px) {
+  .workbench-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .nav-label, .nav-wordmark { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

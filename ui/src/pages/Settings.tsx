@@ -20,8 +20,8 @@ function Tab({ label, active, onClick }: { label: string; active: boolean; onCli
       onClick={onClick}
       className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
         active
-          ? 'border-indigo-500 text-indigo-400'
-          : 'border-transparent text-gray-400 hover:text-gray-300'
+          ? 'border-[var(--accent)] text-[var(--accent-soft-text)]'
+          : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text)]'
       }`}
     >
       {label}
@@ -38,13 +38,13 @@ function ProxyTab() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-gray-800 rounded-lg p-5 space-y-3">
-        <h2 className="text-white font-medium">CA certificate</h2>
-        <p className="text-sm text-gray-400">
+      <div className="panel space-y-3 p-5">
+        <h2 className="font-medium text-[var(--text)]">CA certificate</h2>
+        <p className="text-sm text-[var(--text-muted)]">
           ContextSpy uses mitmproxy to intercept HTTPS traffic. Install the CA certificate
           to avoid SSL errors.
         </p>
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-[var(--text-muted)]">
                 CA cert: {status?.cert_installed ? '\u2714 installed' : '\u26A0 not installed'}
         </p>
         <button
@@ -55,12 +55,12 @@ function ProxyTab() {
             })
           }
           disabled={installCert.isPending}
-          className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded disabled:opacity-50"
+          className="app-button-primary"
         >
           Install CA certificate
         </button>
         {certMsg && (
-          <p className="text-sm text-gray-300 bg-gray-900 rounded p-3 font-mono">{certMsg}</p>
+          <p className="code-surface rounded p-3 font-mono text-sm">{certMsg}</p>
         )}
       </div>
     </div>
@@ -172,22 +172,22 @@ function AgentSetupTab() {
     <div className="space-y-6">
       <div className="space-y-4">
         <div>
-          <h2 className="text-white font-medium">Cloud APIs (forward proxy)</h2>
-          <p className="text-sm text-gray-400">
-            Proxy currently listens on <span className="font-mono text-gray-300">127.0.0.1:{port}</span>.
-            Run <span className="font-mono text-gray-300">contextspy setup-&lt;agent&gt;</span> in a
+          <h2 className="font-medium text-[var(--text)]">Cloud APIs (forward proxy)</h2>
+          <p className="text-sm text-[var(--text-muted)]">
+            Proxy currently listens on <span className="font-mono text-[var(--text)]">127.0.0.1:{port}</span>.
+            Run <span className="font-mono text-[var(--text)]">contextspy setup-&lt;agent&gt;</span> in a
             terminal for the same instructions.
           </p>
         </div>
         {cloudAgents.map((a) => (
-          <div key={a.name} className="bg-gray-800 rounded-lg p-5 space-y-3">
-            <h3 className="text-white font-medium">{a.name}</h3>
+          <div key={a.name} className="panel space-y-3 p-5">
+            <h3 className="font-medium text-[var(--text)]">{a.name}</h3>
             <ol className="list-decimal list-inside space-y-2">
               {a.steps.map((step, i) => (
-                <li key={i} className="text-sm text-gray-400">
+                <li key={i} className="text-sm text-[var(--text-muted)]">
                   {step.text}
                   {step.code && (
-                    <pre className="mt-1 ml-5 text-xs text-gray-300 bg-gray-900 rounded p-3 font-mono overflow-x-auto whitespace-pre">
+                    <pre className="code-surface ml-5 mt-1 overflow-x-auto rounded p-3 font-mono text-xs whitespace-pre">
                       {step.code.join('\n')}
                     </pre>
                   )}
@@ -200,19 +200,19 @@ function AgentSetupTab() {
 
       <div className="space-y-4">
         <div>
-          <h2 className="text-white font-medium">Local LLM servers (reverse proxy)</h2>
-          <p className="text-sm text-gray-400">
+          <h2 className="font-medium text-[var(--text)]">Local LLM servers (reverse proxy)</h2>
+          <p className="text-sm text-[var(--text-muted)]">
             Loopback traffic bypasses HTTPS_PROXY, so local servers use reverse-proxy mode instead.
-            No CA certificate needed. Add a <span className="font-mono text-gray-300">[[reverse_targets]]</span>{' '}
-            block to <span className="font-mono text-gray-300">~/.contextspy/config.toml</span>, then run{' '}
-            <span className="font-mono text-gray-300">contextspy start-local</span> and point your
+            No CA certificate needed. Add a <span className="font-mono text-[var(--text)]">[[reverse_targets]]</span>{' '}
+            block to <span className="font-mono text-[var(--text)]">~/.contextspy/config.toml</span>, then run{' '}
+            <span className="font-mono text-[var(--text)]">contextspy start-local</span> and point your
             client's base URL at ContextSpy.
           </p>
         </div>
         {localAgents.map((a) => (
-          <div key={a.name} className="bg-gray-800 rounded-lg p-5 space-y-3">
-            <h3 className="text-white font-medium">{a.name}</h3>
-            <pre className="text-xs text-gray-300 bg-gray-900 rounded p-3 font-mono overflow-x-auto whitespace-pre">
+          <div key={a.name} className="panel space-y-3 p-5">
+            <h3 className="font-medium text-[var(--text)]">{a.name}</h3>
+            <pre className="code-surface overflow-x-auto rounded p-3 font-mono text-xs whitespace-pre">
               {[
                 '[[reverse_targets]]',
                 `name        = "${a.name.toLowerCase()}"`,
@@ -221,19 +221,19 @@ function AgentSetupTab() {
                 'provider    = "openai"   # OpenAI-compatible API',
               ].join('\n')}
             </pre>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-[var(--text-muted)]">
               Point your client's base URL to{' '}
-              <span className="font-mono text-gray-300">http://127.0.0.1:{a.listenPort}/v1</span>{' '}
-              (instead of <span className="font-mono text-gray-300">:{a.serverPort}/v1</span>).
+              <span className="font-mono text-[var(--text)]">http://127.0.0.1:{a.listenPort}/v1</span>{' '}
+              (instead of <span className="font-mono text-[var(--text)]">:{a.serverPort}/v1</span>).
             </p>
             {a.launch && (
-              <p className="text-sm text-gray-400">
-                Launch as usual: <span className="font-mono text-gray-300">{a.launch}</span>
+              <p className="text-sm text-[var(--text-muted)]">
+                Launch as usual: <span className="font-mono text-[var(--text)]">{a.launch}</span>
               </p>
             )}
             {a.name === 'Ollama' && (
-              <p className="text-sm text-gray-400">
-                Alternatively, run <span className="font-mono text-gray-300">contextspy start</span>{' '}
+              <p className="text-sm text-[var(--text-muted)]">
+                Alternatively, run <span className="font-mono text-[var(--text)]">contextspy start</span>{' '}
                 (cloud mode) — Ollama on port 11434 is auto-detected by the forward proxy.
               </p>
             )}
@@ -248,10 +248,10 @@ export default function Settings() {
   const [tab, setTab] = useState<'proxy' | 'agents'>('proxy');
 
   return (
-    <div className="p-6 space-y-4">
-      <h1 className="text-2xl font-bold text-white">Settings</h1>
+    <div className="page-shell">
+      <h1 className="text-2xl font-bold text-[var(--text)]">Settings</h1>
 
-      <div className="flex gap-1 border-b border-gray-700">
+      <div className="flex gap-1 border-b border-[var(--border)]">
         <Tab label="Proxy" active={tab === 'proxy'} onClick={() => setTab('proxy')} />
         <Tab label="Agent setup" active={tab === 'agents'} onClick={() => setTab('agents')} />
       </div>

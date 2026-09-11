@@ -5,6 +5,7 @@
 """Provider-state normalization between transport capture and JSON analysis."""
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -137,6 +138,55 @@ def _injected_input(events: tuple[CapturedEvent, ...]) -> list[Any]:
     return items
 
 
+def _normalize_tool_value(value: Any) -> Any:
+    """Normalize response-echoed tool metadata for semantic comparison."""
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, child in value.items():
+            # Response snapshots add optional null fields such as
+            # ``output_schema`` that are absent from the request item.
+            if key == "output_schema" and child is None:
+                continue
+            if key == "tools" and isinstance(child, list):
+                normalized[key] = _normalize_tool_collection(child)
+            else:
+                normalized[key] = _normalize_tool_value(child)
+        return normalized
+    if isinstance(value, list):
+        return [_normalize_tool_value(child) for child in value]
+    return value
+
+
+def _normalize_tool_collection(tools: list[Any]) -> list[Any]:
+    """Treat tool and namespace-member order as non-semantic."""
+    normalized = [_normalize_tool_value(tool) for tool in tools]
+    return sorted(
+        normalized,
+        key=lambda tool: json.dumps(
+            tool, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ),
+    )
+
+
+def _response_tools_already_in_input(
+    tools: Any, input_items: list[Any],
+) -> bool:
+    """Return whether a response tool echo duplicates an input control item."""
+    if not isinstance(tools, list):
+        return False
+    normalized_tools = _normalize_tool_collection(tools)
+    for item in input_items:
+        if not isinstance(item, dict) or item.get("type") != "additional_tools":
+            continue
+        embedded_tools = item.get("tools")
+        if (
+            isinstance(embedded_tools, list)
+            and _normalize_tool_collection(embedded_tools) == normalized_tools
+        ):
+            return True
+    return False
+
+
 class OpenAIResponsesInvocationNormalizer:
     """Expand explicit Responses lineage into a standalone provider request."""
 
@@ -155,6 +205,7 @@ class OpenAIResponsesInvocationNormalizer:
         # A response snapshot may echo the configuration actually applied to
         # this invocation. Fill only from the current response, never from the
         # predecessor's top-level options.
+        tools_filled_from_response = False
         if had_ws_envelope and observed.response is not None:
             response_value = observed.response.value
             for key in (
@@ -163,6 +214,8 @@ class OpenAIResponsesInvocationNormalizer:
             ):
                 if key not in request and response_value.get(key) is not None:
                     request[key] = deepcopy(response_value[key])
+                    if key == "tools":
+                        tools_filled_from_response = True
 
         predecessor = request.pop("previous_response_id", None)
         if not isinstance(predecessor, str) or not predecessor:
@@ -202,6 +255,16 @@ class OpenAIResponsesInvocationNormalizer:
                 elif previous.context_fidelity == "opaque" and fidelity == "complete":
                     fidelity = "opaque"
                     notes.append("An earlier item in this chain contains opaque provider state")
+
+        # Codex WebSocket requests can carry tools in an ``additional_tools``
+        # input item while response snapshots echo the same effective set as
+        # top-level ``tools``. The latter is reconstruction metadata, not a
+        # second copy of the request context.
+        if (
+            tools_filled_from_response
+            and _response_tools_already_in_input(request.get("tools"), current_input)
+        ):
+            request.pop("tools", None)
 
         request["input"] = current_input
         if _contains_opaque_state(current_input):

@@ -28,7 +28,7 @@ verified yet. If you get one working, please open an issue or PR so it can be ad
         Set <code>NO_PROXY="github.com,localhost,127.0.0.1,::1"</code> so git and telemetry don't get
         routed through the proxy.<br><br>
         <strong>Thinking tokens:</strong> counts are captured automatically. To also capture the
-        reasoning <em>text</em> (Thinking tab), add
+        reasoning <em>text</em> (select a Thinking block in the Response workbench), add
         <code>{ "showThinkingSummaries": true }</code> to <code>~/.claude/settings.json</code>.
       </td>
     </tr>

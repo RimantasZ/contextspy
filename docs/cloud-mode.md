@@ -1,7 +1,8 @@
 # Cloud API Mode (Forward Proxy)
 
-Use this mode to intercept requests going to **cloud LLM APIs** such as OpenAI,
-Anthropic (Claude), GitHub Copilot, or Azure OpenAI.
+Use this mode to intercept requests going to supported **cloud LLM APIs** such as OpenAI,
+Anthropic (Claude), Azure OpenAI, GitHub Copilot, opencode's gateway, and the ChatGPT backend
+used by Codex CLI.
 
 ContextSpy acts as an HTTPS man-in-the-middle proxy. It terminates TLS, inspects the
 request, logs and analyses it, then re-encrypts and forwards it to the provider.
@@ -61,14 +62,6 @@ For some node.js based apps (e.g. VS Code), you will need to close all instances
 Pick the agent you use and follow the instructions below.
 Run `contextspy setup-<agent>` for a printed reminder at any time.
 
-This will set up necessary environment variables
-
-
-### Manual setup - agent specific
-
-Pick the agent you use and follow the instructions below.
-Run `contextspy setup-<agent>` for a printed reminder at any time.
-
 ### GitHub Copilot (VS Code)
 
 **Option A — VS Code `settings.json`** (`Ctrl+Shift+P` → "Open User Settings JSON"):
@@ -116,8 +109,8 @@ contextspy setup-claude
 ```
 
 **Optional — see the reasoning text.** Current Claude models withhold thinking text by
-default, so the request detail page's Thinking tab shows only a token count. To capture
-the text as well, add to `~/.claude/settings.json`:
+default, so the request detail page's **Response** composition shows a Thinking block with a
+token count but no content. To capture the text as well, add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -125,7 +118,8 @@ the text as well, add to `~/.claude/settings.json`:
 }
 ```
 
-Thinking *tokens* are captured either way — see the [FAQ](faq.md#the-thinking-tab-shows-a-token-count-but-no-reasoning-text).
+Thinking *tokens* are captured either way — see the
+[FAQ](faq.md#a-thinking-block-shows-a-token-count-but-no-reasoning-text).
 
 ### opencode
 
@@ -231,6 +225,7 @@ $env:HTTP_PROXY  = "http://127.0.0.1:8888"
 
 Open http://127.0.0.1:5173. Requests appear in real-time as your agent makes LLM calls.
 
-- **Dashboard** — token usage totals, category breakdown chart, model distribution
-- **Requests** — table of all captured requests with token counts and category bars
-- **Sessions** — group requests by task; click **Start Session** and give it a name
+- **Overview** — token totals, category/tool composition, sessions, models, latency/errors, and
+  recent requests
+- **All Requests** — searchable/filterable request list with token counts and category bars
+- **Sessions** — group requests by task; click **Start session** and give it a name

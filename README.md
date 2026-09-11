@@ -83,11 +83,16 @@ There are three ways you pay for extra (and sometimes unnecessary) information i
 2. **Compute and latency** - larger contexts take considerably longer to process - especially in locally hosted models
 3. **Context rot** - with larger contexts, LLMs start to lose precision rapidly, with [100k being the limit](https://www.trychroma.com/research/context-rot) where rapid degradation starts. So you are paying for more expensive model, but getting performance of cheaper one - or even worse.
 
-ContextSpy makes these costs visible so you can act on them.
+ContextSpy makes these costs visible so you can act on them. The responsive light/dark dashboard
+includes session and provider summaries, model and latency breakdowns, tool-use treemaps, and a
+request workbench with compact, relative-size, and raw payload views. Filters, linked-block
+navigation, metadata inspection, and in-content search help trace exactly where the context went.
 
 ## How does it work
 
-ContextSpy starts an HTTPS proxy (or reverse proxy for locally hosted models) which intercepts every request to LLMs, analyzes it and stores to local SQLite db. A webserver is also started on localhost, and serves dashboard to visualise all captured data.
+ContextSpy starts an HTTPS proxy (or reverse proxy for locally hosted models) that captures
+supported LLM invocation endpoints, analyzes them, and stores the results in a local SQLite
+database. A local web server serves the dashboard used to explore the captured data.
 
 ## Some screenshots
 
@@ -107,8 +112,8 @@ The proxy and dashboard server are bound to localhost, and not exposed to extern
 The intended use case is to run ContextSpy as a profiler tool on dedicated profiling and optimisation sessions, rather than keeping it permanently as a monitoring tool.
 
 The contents of requests (observed payloads, canonical request/response JSON, stream event logs,
-and block contents) are purged from the database after 7 days
-by default — configurable via `[retention]` in `~/.contextspy/config.toml`. Aggregated token counts
+and block contents) become eligible for purging after 7 days by default — configurable via
+`[retention]` in `~/.contextspy/config.toml`. Aggregated token counts
 and classifications are retained indefinitely. Purging only runs at server startup, not on a
 background timer, so a `contextspy` process left running for many days in a row won't purge again
 until it's restarted.
@@ -150,16 +155,18 @@ If that name already exists, `-1`, `-2`, and so on is added before `.back`.
 
 ## Features
 
-- **Two proxy modes** — forward proxy for cloud APIs (OpenAI, Anthropic, Copilot),
-  reverse proxy for local LLM servers (Ollama, llama.cpp, vLLM)
+- **Two proxy modes** — forward proxy for supported cloud APIs (OpenAI, Anthropic, Azure OpenAI,
+  Copilot, opencode's gateway, and Codex's ChatGPT backend); reverse proxy for local LLM servers
+  (Ollama, llama.cpp, vLLM)
 - **Context breakdown** — input tokens split into 8 categories:
   system prompt, tool definitions, tool results, file contents, conversation history,
   current user message, assistant prefill, uncategorised
-- **Live dashboard** — real-time charts and per-request detail with a visual block map
-  of the context window
+- **Live dashboard** — responsive light/dark charts, tool-use treemaps, and a request workbench
+  with compact, relative-size, and raw payload views plus block search and inspection
 - **Session tracking** — name and group requests by task to compare usage across runs
 - **SQLite storage** — all data stored locally in `~/.contextspy/`; no data leaves your machine
-- **Agent detection** — Copilot, Claude Desktop/Code, opencode, Cursor, and generic clients
+- **Agent detection** — Copilot, Claude Code/SDK, Codex CLI, opencode, Cursor, OpenAI SDK, and
+  generic clients
 
 ## Documentation links
 
