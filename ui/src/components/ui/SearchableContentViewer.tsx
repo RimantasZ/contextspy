@@ -95,10 +95,11 @@ function JsonKey({ name, query }: { name: string; query: string }) {
   )
 }
 
-function JsonTreeNode({ value, query, name, trailingComma = false, collapseAll, collapseRevision }: {
+function JsonTreeNode({ value, query, name, depth = 0, trailingComma = false, collapseAll, collapseRevision }: {
   value: JsonValue
   query: string
   name?: string
+  depth?: number
   trailingComma?: boolean
   collapseAll: boolean
   collapseRevision: number
@@ -106,7 +107,7 @@ function JsonTreeNode({ value, query, name, trailingComma = false, collapseAll, 
   const [collapsed, setCollapsed] = useState(false)
   const collection = Array.isArray(value) || (value !== null && typeof value === 'object')
 
-  useEffect(() => { setCollapsed(collapseAll) }, [collapseAll, collapseRevision])
+  useEffect(() => { setCollapsed(collapseAll && depth >= 2) }, [collapseAll, collapseRevision, depth])
 
   if (!collection) {
     return (
@@ -179,6 +180,7 @@ function JsonTreeNode({ value, query, name, trailingComma = false, collapseAll, 
                 key={key ?? index}
                 value={child}
                 name={key}
+                depth={depth + 1}
                 query={query}
                 trailingComma={index < entries.length - 1}
                 collapseAll={collapseAll}
@@ -240,10 +242,11 @@ function descendantLineCount(node: StructuredLine): number {
   return node.children.reduce((total, child) => total + 1 + descendantLineCount(child), 0)
 }
 
-function StructuredLineNodeView({ node, language, query, collapseAll, collapseRevision }: {
+function StructuredLineNodeView({ node, language, query, depth = 0, collapseAll, collapseRevision }: {
   node: StructuredLine
   language: ContentLanguage
   query: string
+  depth?: number
   collapseAll: boolean
   collapseRevision: number
 }) {
@@ -253,7 +256,7 @@ function StructuredLineNodeView({ node, language, query, collapseAll, collapseRe
   const shownCollapsed = foldable && collapsed && !searchActive
   const text = node.text.trimStart()
 
-  useEffect(() => { setCollapsed(collapseAll) }, [collapseAll, collapseRevision])
+  useEffect(() => { setCollapsed(collapseAll && depth >= 2) }, [collapseAll, collapseRevision, depth])
 
   return (
     <div>
@@ -292,6 +295,7 @@ function StructuredLineNodeView({ node, language, query, collapseAll, collapseRe
               node={child}
               language={language}
               query={query}
+              depth={depth + 1}
               collapseAll={collapseAll}
               collapseRevision={collapseRevision}
             />
@@ -523,7 +527,7 @@ export function SearchableContentViewer({
                 title={query.length > 0 ? 'Clear search to change all scopes' : undefined}
                 onClick={toggleAllScopes}
               >
-                {collapseCommand.collapsed ? 'Expand all' : 'Collapse all'}
+                {collapseCommand.collapsed ? 'Expand' : 'Collapse'}
               </button>
             )}
             {mode === 'tokens' && tokenizing && <span className="text-[10px] text-[var(--text-muted)]" role="status">Tokenizing…</span>}

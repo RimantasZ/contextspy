@@ -37,13 +37,15 @@ describe('SearchableContentViewer', () => {
   it('collapses and expands nested JSON scopes', async () => {
     render(<SearchableContentViewer title="Raw request payload" content={'{"meta":{"nested":{"enabled":true}}}'} />)
     expect(screen.getByText('true').className).toContain('syntax-boolean')
-    expect(screen.getByRole('button', { name: 'Collapse all' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Collapse' })).toBeTruthy()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Collapse all' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse' }))
     expect(screen.queryByText('true')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Expand all' })).toBeTruthy()
+    expect(screen.getByText('"meta"')).toBeTruthy()
+    expect(screen.getByText('"nested"')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Expand' })).toBeTruthy()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Expand all' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Expand' }))
     expect(screen.getByText('true')).toBeTruthy()
 
     await userEvent.click(screen.getByRole('button', { name: 'Collapse meta' }))
