@@ -3,6 +3,8 @@ import type { KeyboardEvent } from 'react'
 import { ResponsiveContainer, Tooltip, Treemap } from 'recharts'
 import type { ToolStat } from '../api/client'
 
+export const TOOL_TREEMAP_FRAME_STYLE = { border: '1px solid var(--graphical-border)' } as const
+
 export interface ToolTreemapLeaf {
   name: 'Definitions' | 'Results'
   toolName: string
@@ -145,7 +147,6 @@ export function TreemapContent({
         width={Math.max(0, width)}
         height={Math.max(0, height)}
         fill={fill}
-        opacity={selectedKey && selectedKey !== key ? 0.62 : 1}
         shapeRendering="crispEdges"
       />
       {separatorPath && (
@@ -154,6 +155,21 @@ export function TreemapContent({
           fill="none"
           stroke="var(--graphical-border)"
           strokeWidth={1}
+          shapeRendering="crispEdges"
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+        />
+      )}
+      {selectedKey === key && width > 2 && height > 2 && (
+        <rect
+          data-treemap-selection-outline
+          x={x + 1}
+          y={y + 1}
+          width={width - 2}
+          height={height - 2}
+          fill="none"
+          stroke="var(--focus)"
+          strokeWidth={2}
           shapeRendering="crispEdges"
           vectorEffect="non-scaling-stroke"
           pointerEvents="none"
@@ -187,7 +203,11 @@ export function ToolTreemap({ tools }: { tools: ToolStat[] }) {
 
   return (
     <div role="group" aria-label={`Tool token composition. ${data.map((node) => `${node.name}: ${node.total.toLocaleString()} tokens`).join('; ')}`}>
-      <div className="border border-[var(--graphical-border)]">
+      <div
+        data-tool-treemap-frame
+        className="overflow-hidden"
+        style={TOOL_TREEMAP_FRAME_STYLE}
+      >
         <ResponsiveContainer width="100%" height={260}>
           <Treemap
             data={data}

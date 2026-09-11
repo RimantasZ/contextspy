@@ -1,9 +1,13 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { ToolTreemapSelectionDetails, TreemapContent } from './ToolTreemap'
+import { TOOL_TREEMAP_FRAME_STYLE, ToolTreemapSelectionDetails, TreemapContent } from './ToolTreemap'
 
 describe('tool treemap interaction', () => {
+  it('uses the same one-pixel graphical border for the frame and block separators', () => {
+    expect(TOOL_TREEMAP_FRAME_STYLE.border).toBe('1px solid var(--graphical-border)')
+  })
+
   it('only renders compact details after a block is selected', () => {
     const { container, rerender } = render(<ToolTreemapSelectionDetails selected={null} />)
     expect(container.childElementCount).toBe(0)
@@ -47,6 +51,7 @@ describe('tool treemap interaction', () => {
     const rect = container.querySelector('rect')
     expect(rect?.getAttribute('shape-rendering')).toBe('crispEdges')
     expect(rect?.hasAttribute('stroke')).toBe(false)
+    expect(rect?.hasAttribute('opacity')).toBe(false)
     expect(container.querySelector('path')).toBeNull()
 
     await userEvent.click(block)
@@ -55,6 +60,40 @@ describe('tool treemap interaction', () => {
     block.focus()
     await userEvent.keyboard('{Enter}')
     expect(onSelect).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps every block fill unchanged and marks selection with an inset focus outline', () => {
+    const { container } = render(
+      <svg>
+        <TreemapContent
+          x={12}
+          y={8}
+          width={120}
+          height={60}
+          depth={2}
+          name="Results"
+          value={80}
+          fill="#abc"
+          toolName="search"
+          category="result"
+          selectedKey="search:result"
+        />
+      </svg>,
+    )
+
+    const rectangles = container.querySelectorAll('rect')
+    expect(rectangles).toHaveLength(2)
+    expect(rectangles[0].getAttribute('fill')).toBe('#abc')
+    expect(rectangles[0].hasAttribute('opacity')).toBe(false)
+
+    const outline = container.querySelector('[data-treemap-selection-outline]')
+    expect(outline?.getAttribute('x')).toBe('13')
+    expect(outline?.getAttribute('y')).toBe('9')
+    expect(outline?.getAttribute('width')).toBe('118')
+    expect(outline?.getAttribute('height')).toBe('58')
+    expect(outline?.getAttribute('fill')).toBe('none')
+    expect(outline?.getAttribute('stroke')).toBe('var(--focus)')
+    expect(outline?.getAttribute('stroke-width')).toBe('2')
   })
 
   it('draws a shared internal edge once from the block on its right', () => {
