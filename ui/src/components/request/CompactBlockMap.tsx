@@ -1,19 +1,14 @@
 import type { KeyboardEvent } from 'react'
 import type { RequestBlock } from '../../api/client'
-import type { GroupMode } from './BlockToolbar'
-import { BLOCK_VISUALS, blockAccessibleName, blockBackground, visualOf } from '../../lib/blockVisuals'
-
-function groupKey(block: RequestBlock, grouping: GroupMode): string {
-  if (grouping === 'turn') return block.message_index == null ? 'structural' : `message-${block.message_index}`
-  if (grouping === 'tool') return block.tool_call_id ?? block.tool_name ?? `block-${block.id}`
-  return 'sequence'
-}
+import type { BlockGrouping } from '../../lib/blockArrangement'
+import { blockGroupKey } from '../../lib/blockArrangement'
+import { BlockTile } from './BlockTile'
 
 export function CompactBlockMap({ blocks, selectedId, density, grouping, onSelect }: {
   blocks: RequestBlock[]
   selectedId: number | null
   density: number
-  grouping: GroupMode
+  grouping: BlockGrouping
   onSelect: (block: RequestBlock | null) => void
 }) {
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -60,32 +55,19 @@ export function CompactBlockMap({ blocks, selectedId, density, grouping, onSelec
       style={{ gridTemplateColumns: `repeat(auto-fill, ${density}px)`, gridAutoRows: `${density}px` }}
     >
       {blocks.map((block, index) => {
-        const visual = visualOf(block)
         const selected = selectedId === block.id
-        const startsGroup = index > 0 && groupKey(blocks[index - 1], grouping) !== groupKey(block, grouping)
+        const startsGroup = index > 0 && blockGroupKey(blocks[index - 1], grouping) !== blockGroupKey(block, grouping)
         return (
-          <button
+          <BlockTile
             key={block.id}
             id={`block-tile-${block.id}`}
-            data-block-map-item
-            data-block-id={block.id}
-            type="button"
-            aria-label={blockAccessibleName(block)}
-            aria-pressed={selected}
+            block={block}
+            selected={selected}
             tabIndex={selected || (selectedId == null && index === 0) ? 0 : -1}
-            title={blockAccessibleName(block)}
-            onClick={() => onSelect(selected ? null : block)}
+            onSelect={() => onSelect(selected ? null : block)}
             onKeyDown={(event) => onKeyDown(event, index)}
-            className="composition-block border-[var(--graphical-border)]"
-            style={{
-              backgroundColor: blockBackground(block),
-              borderColor: BLOCK_VISUALS[visual].border,
-              boxShadow: selected ? '0 0 0 3px var(--focus)' : startsGroup ? '-3px 0 0 var(--focus)' : undefined,
-            }}
-          >
-            <span aria-hidden="true">{BLOCK_VISUALS[visual].short}</span>
-            {block.content_purged && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full border border-[var(--surface)] bg-[var(--danger)]" />}
-          </button>
+            style={{ boxShadow: startsGroup ? '-3px 0 0 var(--focus)' : undefined }}
+          />
         )
       })}
     </div>

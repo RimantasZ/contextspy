@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Request, RequestBlock } from '../../api/client'
 import { useRequestBlocks } from '../../api/hooks'
+import type { ArrangementPreset } from '../../lib/blockArrangement'
+import { ARRANGEMENT_PRESETS, buildWorkbenchBlockModel } from '../../lib/blockArrangement'
 import type { BlockVisual } from '../../lib/blockVisuals'
-import { BLOCK_VISUALS, sortedBlocks, visualOf } from '../../lib/blockVisuals'
+import { BLOCK_VISUALS, visualOf } from '../../lib/blockVisuals'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { SearchableContentViewer } from '../ui/SearchableContentViewer'
 import { BlockInspector } from './BlockInspector'
 import { BlockLegend } from './BlockLegend'
 import { BlockToolbar } from './BlockToolbar'
-import type { GroupMode } from './BlockToolbar'
 import { CompactBlockMap } from './CompactBlockMap'
 import { ProportionalBlockMap } from './ProportionalBlockMap'
 
@@ -16,6 +17,15 @@ export type WorkbenchDirection = 'input' | 'output'
 type WorkbenchView = 'compact' | 'proportional' | 'raw'
 
 const ALL_VISUALS: BlockVisual[] = ['system', 'tool_definition', 'user', 'assistant', 'tool_call', 'tool_result', 'thinking', 'prefill', 'other']
+
+function revealBlock(blockId: number, view: WorkbenchView, block: ScrollLogicalPosition) {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const prefix = view === 'compact' ? 'block-tile' : 'block-segment'
+    const element = document.getElementById(`${prefix}-${blockId}`)
+    element?.scrollIntoView({ block, inline: 'nearest' })
+    element?.focus({ preventScroll: true })
+  }))
+}
 
 function rawPayload(request: Request, direction: WorkbenchDirection): string | null | undefined {
   if (direction === 'input') return request.request_body ?? request.canonical_request_body ?? request.raw_request_body
@@ -61,36 +71,29 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
   const [view, setView] = useState<WorkbenchView>('compact')
   const [activeTypes, setActiveTypes] = useState<Set<BlockVisual>>(() => new Set(ALL_VISUALS))
   const [search, setSearch] = useState('')
-  const [grouping, setGrouping] = useState<GroupMode>('sequence')
+  const [arrangement, setArrangement] = useState<ArrangementPreset>('sequence')
   const [hideZero, setHideZero] = useState(false)
   const [density, setDensity] = useState(26)
   const [selection, setSelection] = useState<Record<WorkbenchDirection, number | null>>({ input: null, output: null })
 
-  const allBlocks = sortedBlocks(blocksQuery.data?.blocks ?? [])
-  const directionBlocks = allBlocks.filter((block) => block.direction === activeDirection)
-  const effectiveGrouping: GroupMode = activeDirection === 'output' ? 'sequence' : grouping
-  const available = new Set(directionBlocks.map(visualOf))
-  const tokenTotals = directionBlocks.reduce<Partial<Record<BlockVisual, number>>>((totals, block) => {
-    const visual = visualOf(block)
-    totals[visual] = (totals[visual] ?? 0) + block.token_count
-    return totals
-  }, {})
-  const query = search.trim().toLocaleLowerCase()
-  const visibleBlocks = useMemo(() => {
-    const filtered = directionBlocks.filter((block) => {
-      if (hideZero && block.token_count <= 0) return false
-      if (!activeTypes.has(visualOf(block))) return false
-      if (!query) return true
-      return [block.content, block.tool_name, block.block_type, block.category, block.tool_call_id]
-        .some((value) => String(value ?? '').toLocaleLowerCase().includes(query))
-    })
-    return effectiveGrouping === 'size'
-      ? [...filtered].sort((a, b) => b.token_count - a.token_count || a.position - b.position || a.id - b.id)
-      : filtered
-  }, [directionBlocks, activeTypes, hideZero, query, effectiveGrouping])
+  const effectivePreset: ArrangementPreset = activeDirection === 'output' ? 'sequence' : arrangement
+  const blockModel = useMemo(() => buildWorkbenchBlockModel(blocksQuery.data?.blocks ?? [], {
+    direction: activeDirection,
+    activeTypes,
+    hideZero,
+    query: search,
+    arrangement: ARRANGEMENT_PRESETS[effectivePreset],
+  }), [activeDirection, activeTypes, blocksQuery.data?.blocks, effectivePreset, hideZero, search])
+  const { allBlocks, available, tokenTotals, visibleBlocks } = blockModel
 
   const selectedId = selection[activeDirection]
   const selected = allBlocks.find((block) => block.id === selectedId) ?? null
+
+  useEffect(() => {
+    if (selectedId != null && !visibleBlocks.some((block) => block.id === selectedId)) {
+      setSelection((current) => ({ ...current, [activeDirection]: null }))
+    }
+  }, [activeDirection, selectedId, visibleBlocks])
 
   function select(block: RequestBlock | null) {
     setSelection((current) => ({ ...current, [activeDirection]: block?.id ?? null }))
@@ -104,16 +107,14 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
     setActiveTypes((current) => new Set(current).add(visualOf(target)))
     if (target.token_count <= 0) setHideZero(false)
     setSelection((current) => ({ ...current, [target.direction]: target.id }))
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      document.getElementById(view === 'compact' ? `block-tile-${target.id}` : `block-segment-${target.id}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-    }))
+    revealBlock(target.id, view, 'nearest')
   }
 
   function jumpLargest() {
     const largest = visibleBlocks.reduce<RequestBlock | null>((winner, block) => !winner || block.token_count > winner.token_count ? block : winner, null)
     if (!largest) return
     select(largest)
-    requestAnimationFrame(() => document.getElementById(view === 'compact' ? `block-tile-${largest.id}` : `block-segment-${largest.id}`)?.scrollIntoView({ block: 'center' }))
+    revealBlock(largest.id, view, 'center')
   }
 
   return (
@@ -156,8 +157,8 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
             active={activeTypes}
             tokenTotals={tokenTotals}
             search={search}
-            grouping={effectiveGrouping}
-            groupingDisabled={activeDirection === 'output'}
+            arrangement={effectivePreset}
+            arrangementDisabled={activeDirection === 'output'}
             hideZero={hideZero}
             density={density}
             onToggleType={(visual) => setActiveTypes((current) => {
@@ -166,7 +167,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
               return next
             })}
             onSearch={setSearch}
-            onGrouping={setGrouping}
+            onArrangement={setArrangement}
             onHideZero={setHideZero}
             onDensity={setDensity}
             onLargest={jumpLargest}
@@ -176,9 +177,9 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
               <div className="surface min-w-0 overflow-hidden rounded-md border border-[var(--border)]">
                 <div className="max-h-[480px] min-h-32 overflow-auto">
                   {view === 'compact' ? (
-                    <CompactBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={effectiveGrouping} onSelect={select} />
+                    <CompactBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={ARRANGEMENT_PRESETS[effectivePreset].grouping} onSelect={select} />
                   ) : (
-                    <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={effectiveGrouping} onSelect={select} />
+                    <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} onSelect={select} />
                   )}
                 </div>
                 <BlockLegend blocks={visibleBlocks} />

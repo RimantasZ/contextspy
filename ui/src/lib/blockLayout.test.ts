@@ -16,14 +16,14 @@ describe('proportionalBlockSpan', () => {
 })
 
 describe('layoutProportionalBlocks', () => {
-  it('preserves position order and renders exactly one item per block', () => {
+  it('preserves caller-provided order and renders exactly one item per block', () => {
     const blocks = [
       makeBlock({ id: 3, position: 2, token_count: 2_000 }),
       makeBlock({ id: 1, position: 0, token_count: 20 }),
       makeBlock({ id: 2, position: 1, token_count: 200 }),
     ]
     const layout = layoutProportionalBlocks(blocks, 12)
-    expect(layout.rows.flatMap((row) => row.items).map((item) => item.blockId)).toEqual([1, 2, 3])
+    expect(layout.rows.flatMap((row) => row.items).map((item) => item.blockId)).toEqual([3, 1, 2])
     expect(layout.rows.flatMap((row) => row.items)).toHaveLength(blocks.length)
     expect(layout.totalTokens).toBe(2_220)
   })
@@ -47,16 +47,6 @@ describe('layoutProportionalBlocks', () => {
     ], 8)
     expect(layout.rows.flatMap((row) => row.items).map((item) => [item.blockId, item.span])).toEqual([[1, 2], [9, 1]])
     expect(layout.totalTokens).toBe(100)
-  })
-
-  it('can order blocks from largest to smallest', () => {
-    const layout = layoutProportionalBlocks([
-      makeBlock({ id: 1, position: 0, token_count: 20 }),
-      makeBlock({ id: 2, position: 1, token_count: 2_000 }),
-      makeBlock({ id: 3, position: 2, token_count: 200 }),
-    ], 12, 'size')
-
-    expect(layout.rows.flatMap((row) => row.items).map((item) => item.blockId)).toEqual([2, 3, 1])
   })
 
   it('handles empty input', () => {

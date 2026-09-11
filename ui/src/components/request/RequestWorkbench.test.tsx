@@ -85,26 +85,36 @@ describe('RequestWorkbench', () => {
     expect(map.style.gridTemplateColumns).toContain('30px')
   })
 
+  it('clears selection when its block is filtered out', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks }), { status: 200 }))
+    renderWorkbench()
+    await userEvent.click(await screen.findByRole('button', { name: /User.*position 2/i }))
+    expect(screen.getByRole('region', { name: /User content/i })).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'User10' }))
+    await waitFor(() => expect(screen.queryByRole('region', { name: /User content/i })).toBeNull())
+    expect(screen.getByText(/Select a block to inspect/i)).toBeTruthy()
+  })
+
   it('orders request blocks by size and disables grouping for the response', async () => {
     const differentlySizedBlocks = blocks.map((block) => block.id === 2 ? { ...block, token_count: 30 } : block)
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks: differentlySizedBlocks }), { status: 200 }))
     renderWorkbench()
 
     const map = await screen.findByRole('group', { name: 'Compact block map' })
-    const grouping = screen.getByRole('combobox', { name: 'Group' }) as HTMLSelectElement
-    expect(Array.from(grouping.options, (option) => option.text)).toEqual([
+    const arrangement = screen.getByRole('combobox', { name: 'Arrange' }) as HTMLSelectElement
+    expect(Array.from(arrangement.options, (option) => option.text)).toEqual([
       'Sequence', 'Turn', 'Tool pair', 'Size (largest first)',
     ])
 
-    await userEvent.selectOptions(grouping, 'size')
+    await userEvent.selectOptions(arrangement, 'largestFirst')
     expect([...map.querySelectorAll<HTMLElement>('[data-block-map-item]')].map((item) => item.dataset.blockId)).toEqual(['2', '1', '4'])
 
     await userEvent.click(screen.getByRole('button', { name: /Response/i }))
-    expect(grouping.disabled).toBe(true)
-    expect(grouping.value).toBe('sequence')
+    expect(arrangement.disabled).toBe(true)
+    expect(arrangement.value).toBe('sequence')
 
     await userEvent.click(screen.getByRole('button', { name: /Request/i }))
-    expect(grouping.disabled).toBe(false)
-    expect(grouping.value).toBe('size')
+    expect(arrangement.disabled).toBe(false)
+    expect(arrangement.value).toBe('largestFirst')
   })
 })
