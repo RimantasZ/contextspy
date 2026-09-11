@@ -1,10 +1,5 @@
 import type { Request } from '../../api/client'
-
-function formatDuration(ms: number | null): string {
-  if (ms == null) return '—'
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
-}
+import { formatRequestDuration } from '../../lib/format'
 
 function statusTone(request: Request): string {
   if (request.invocation_outcome === 'completed' || (request.status_code != null && request.status_code >= 200 && request.status_code < 300)) return 'status-success'
@@ -39,7 +34,7 @@ export function RequestSummaryHeader({ request, onBack, onDirection }: {
         <button type="button" onClick={() => onDirection('output')} className="panel p-3 text-left hover:border-[var(--accent)]">
           <span className="eyebrow block">Generated</span><strong className="text-lg tabular-nums">{request.tokens_total_output.toLocaleString()}</strong>
         </button>
-        <div className="panel p-3"><span className="eyebrow block">Duration</span><strong className="text-lg tabular-nums">{formatDuration(request.duration_ms)}</strong></div>
+        <div className="panel p-3"><span className="eyebrow block">Duration</span><strong className="text-lg tabular-nums">{formatRequestDuration(request.duration_ms)}</strong></div>
         <div className="panel p-3"><span className="eyebrow block">Model</span><strong className="block truncate text-sm" title={request.model ?? undefined}>{request.model ?? '—'}</strong></div>
         <div className="panel col-span-2 p-3 sm:col-span-4 lg:col-span-1"><span className="eyebrow block">Cache activity</span><strong className="text-sm tabular-nums">{cache > 0 ? cache.toLocaleString() : 'None'}</strong></div>
       </div>

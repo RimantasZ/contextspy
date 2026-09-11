@@ -18,6 +18,7 @@ import { SessionControls } from '../components/SessionControls';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import { ContextBar } from '../components/ContextBar';
 import type { SessionSummaryEntry } from '../api/client';
+import { formatElapsedDuration } from '../lib/format';
 
 type SessionSortKey = 'name' | 'started_at' | 'duration' | 'status' | 'request_count' | 'tokens_in' | 'tokens_out';
 
@@ -41,13 +42,6 @@ function SortHeader({
       </span>
     </th>
   );
-}
-
-function formatDuration(durationMs: number): string {
-  const secs = Math.floor(durationMs / 1000);
-  if (secs < 60) return `${secs}s`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
-  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 }
 
 function InlineRename({ id, currentName, onDone }: { id: string; currentName: string; onDone: () => void }) {
@@ -89,6 +83,7 @@ export default function Sessions() {
   const [deletingSession, setDeletingSession] = useState<{ id: string; name: string } | null>(null);
   const [sortKey, setSortKey] = useState<SessionSortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [renderedAt] = useState(() => Date.now());
 
   const sessions = (data?.entries ?? []).filter(
     (e): e is SessionSummaryEntry & { session_id: string } => e.type === 'session' && e.session_id !== null
@@ -108,7 +103,7 @@ export default function Sessions() {
   // live from the start timestamp until the backend reports a final value.
   function getDurationMs(e: SessionSummaryEntry): number {
     if (e.duration_ms !== null) return e.duration_ms;
-    return Date.now() - new Date(e.started_at).getTime();
+    return renderedAt - new Date(e.started_at).getTime();
   }
 
   const sorted = sortKey
@@ -177,7 +172,7 @@ export default function Sessions() {
                     {new Date(s.started_at).toLocaleString()}
                   </td>
                   <td className="px-4 py-3 text-[var(--text-muted)]">
-                    {formatDuration(getDurationMs(s))}
+                    {formatElapsedDuration(getDurationMs(s))}
                   </td>
                   <td className="px-4 py-3">
                     {s.ended_at === null ? (
