@@ -95,7 +95,24 @@ export interface Request {
   response_events?: unknown[] | null
 }
 
-export interface CategoryStats {
+interface TokenWindowSegment {
+  text: string
+  start: number
+  end: number
+  token_count: number
+}
+
+export interface TokenWindowResponse {
+  segments: TokenWindowSegment[]
+  window_start: number
+  window_end: number
+  total_length: number
+  truncated_before: boolean
+  truncated_after: boolean
+  tokenizer: string
+}
+
+interface CategoryStats {
   tokens: number
   pct: number
 }
@@ -109,7 +126,7 @@ export interface LatencyStats {
   max_ms: number | null
 }
 
-export interface SessionTiming {
+interface SessionTiming {
   first_request_at: string | null
   last_request_at: string | null
   elapsed_ms: number | null
@@ -276,5 +293,11 @@ export const tokenizeApi = {
     apiFetch<{ results: string[][] }>('/tokenize', {
       method: 'POST',
       body: JSON.stringify({ texts }),
+    }),
+  window: (text: string, offset: number, signal?: AbortSignal) =>
+    apiFetch<TokenWindowResponse>('/tokenize/window', {
+      method: 'POST',
+      body: JSON.stringify({ text, offset }),
+      signal,
     }),
 }
