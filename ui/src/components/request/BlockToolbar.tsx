@@ -4,10 +4,12 @@ import { BLOCK_VISUALS } from '../../lib/blockVisuals'
 export type GroupMode = 'sequence' | 'turn' | 'tool'
 
 const FILTERS: BlockVisual[] = ['system', 'user', 'assistant', 'thinking', 'tool_call', 'tool_result', 'tool_definition', 'prefill', 'other']
+const COMPACT_TOKENS = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 
 export function BlockToolbar({
   available,
   active,
+  tokenTotals,
   search,
   grouping,
   hideZero,
@@ -21,6 +23,7 @@ export function BlockToolbar({
 }: {
   available: Set<BlockVisual>
   active: Set<BlockVisual>
+  tokenTotals: Partial<Record<BlockVisual, number>>
   search: string
   grouping: GroupMode
   hideZero: boolean
@@ -77,11 +80,14 @@ export function BlockToolbar({
               key={visual}
               type="button"
               aria-pressed={enabled}
+              title={`${item.label}: ${(tokenTotals[visual] ?? 0).toLocaleString()} tokens`}
               onClick={() => onToggleType(visual)}
-              className={`min-h-7 rounded-full border px-2.5 text-[11px] font-medium ${enabled ? 'border-[var(--graphical-border)] text-[var(--block-ink)]' : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] opacity-60'}`}
+              className={`inline-flex min-h-7 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium ${enabled ? 'border-[var(--graphical-border)] text-[var(--block-ink)]' : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] opacity-60'}`}
               style={enabled ? { background: item.color, borderColor: item.border } : undefined}
             >
-              <span className="font-bold" aria-hidden="true">{item.short}</span> {item.label}
+              <span className="font-bold" aria-hidden="true">{item.short}</span>
+              <span>{item.label}</span>
+              <span className="ml-0.5 tabular-nums opacity-70">{COMPACT_TOKENS.format(tokenTotals[visual] ?? 0)}</span>
             </button>
           )
         })}

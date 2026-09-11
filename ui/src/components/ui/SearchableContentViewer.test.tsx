@@ -15,23 +15,32 @@ describe('SearchableContentViewer', () => {
     expect(screen.getByText('1 / 2')).toBeTruthy()
   })
 
-  it('pretty prints JSON and can return to the raw representation', async () => {
+  it('formats JSON as a collapsible syntax-highlighted tree and can return to raw text', async () => {
     render(<SearchableContentViewer title="Raw request payload" content={'{"name":"search"}'} />)
-    expect(screen.getByText(/"name": "search"/)).toBeTruthy()
-    const formatter = screen.getByRole('checkbox', { name: 'Pretty print JSON' }) as HTMLInputElement
+    expect(screen.getByRole('region', { name: 'Formatted JSON' })).toBeTruthy()
+    expect(screen.getByText('"name"').className).toContain('syntax-key')
+    expect(screen.getByText('"search"').className).toContain('syntax-string')
+    const formatter = screen.getByRole('checkbox', { name: 'Format JSON' }) as HTMLInputElement
     expect(formatter.checked).toBe(true)
-    await userEvent.click(screen.getByText('Pretty print JSON'))
+    await userEvent.click(screen.getByText('Format JSON'))
     expect(formatter.checked).toBe(false)
-    expect(screen.getByText('Raw')).toBeTruthy()
     expect(screen.getByText('{"name":"search"}')).toBeTruthy()
+  })
+
+  it('collapses and expands nested JSON scopes', async () => {
+    render(<SearchableContentViewer title="Raw request payload" content={'{"meta":{"enabled":true}}'} />)
+    expect(screen.getByText('true').className).toContain('syntax-boolean')
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse meta' }))
+    expect(screen.queryByText('true')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Expand meta' }))
+    expect(screen.getByText('true')).toBeTruthy()
   })
 
   it('explains when plain text cannot be formatted', () => {
     render(<SearchableContentViewer title="Block content" content="plain text" />)
-    const formatter = screen.getByRole('checkbox', { name: 'Pretty print JSON' }) as HTMLInputElement
+    const formatter = screen.getByRole('checkbox', { name: 'Format JSON' }) as HTMLInputElement
     expect(formatter.disabled).toBe(true)
     expect(formatter.checked).toBe(false)
-    expect(screen.getByText('Plain text')).toBeTruthy()
   })
 })
 

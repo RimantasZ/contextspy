@@ -69,6 +69,11 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
   const allBlocks = sortedBlocks(blocksQuery.data?.blocks ?? [])
   const directionBlocks = allBlocks.filter((block) => block.direction === activeDirection)
   const available = new Set(directionBlocks.map(visualOf))
+  const tokenTotals = directionBlocks.reduce<Partial<Record<BlockVisual, number>>>((totals, block) => {
+    const visual = visualOf(block)
+    totals[visual] = (totals[visual] ?? 0) + block.token_count
+    return totals
+  }, {})
   const query = search.trim().toLocaleLowerCase()
   const visibleBlocks = useMemo(() => directionBlocks.filter((block) => {
     if (hideZero && block.token_count <= 0) return false
@@ -143,6 +148,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
           <BlockToolbar
             available={available}
             active={activeTypes}
+            tokenTotals={tokenTotals}
             search={search}
             grouping={grouping}
             hideZero={hideZero}
