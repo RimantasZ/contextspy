@@ -24,6 +24,9 @@ pytest tests/test_providers.py::test_name
 
 cd ui
 npm test
+
+# Run the complete UI validation suite (types, lint, tests, unused code, build)
+npm run check
 ```
 
 When modifying `analysis/adapters/`, `analysis/classifier.py`, normalization, capture, database, or

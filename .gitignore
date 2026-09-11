@@ -70,6 +70,7 @@ pyrightconfig.json
 
 # Node / Frontend
 ui/node_modules/
+*.tsbuildinfo
 ui/dist/
 ui/.vite/
 ui/coverage/
