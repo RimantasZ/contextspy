@@ -693,7 +693,8 @@ Stats response shape (shared by overview and per-session):
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/tokenize` | Body: `{ "texts": string[] }`. Returns `{ "results": string[][] }` — per-text token strings. Processing is capped at 200 inputs and 50,000 characters per input. The endpoint remains available for compatibility; the primary request workbench does not tokenize every block on load. |
+| `POST` | `/api/tokenize` | Compatibility endpoint. Body: `{ "texts": string[] }`. Returns `{ "results": string[][] }` — per-text token strings. Processing is capped at 200 inputs and 50,000 characters per input. |
+| `POST` | `/api/tokenize/window` | Body: `{ "text": string, "offset": number }`, with the offset expressed in UTF-16 code units. Returns Unicode-safe token display segments, absolute UTF-16 window bounds, truncation flags, total length, and tokenizer ID. The server caps each window at 50,000 characters and 8,000 tokens. |
 
 #### WebSocket
 

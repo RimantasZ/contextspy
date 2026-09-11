@@ -71,3 +71,39 @@ def get_token_strings(text: str, max_tokens: int = 8_000) -> list[str]:
     if len(ids) > max_tokens:
         ids = ids[:max_tokens]
     return [_get_encoder().decode([t]) for t in ids]
+
+
+def get_token_text_segments(text: str, max_tokens: int = 8_000) -> list[tuple[str, int]]:
+    """Return Unicode-safe text segments and the tokens represented by each.
+
+    A BPE token can end in the middle of a UTF-8 sequence. Rendering the decoded
+    tokens independently would insert replacement characters and make it
+    impossible for the browser to map the result back to the source. Adjacent
+    token bytes are therefore combined only when necessary to produce valid
+    Unicode. For ordinary prose and code, each segment still represents one
+    token.
+    """
+    if not text or max_tokens <= 0:
+        return []
+
+    encoder = _get_encoder()
+    token_ids = encoder.encode(text[:200_000], disallowed_special=())[:max_tokens]
+    segments: list[tuple[str, int]] = []
+    pending = bytearray()
+    pending_tokens = 0
+
+    for token_id in token_ids:
+        pending.extend(encoder.decode_single_token_bytes(token_id))
+        pending_tokens += 1
+        try:
+            decoded = pending.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        segments.append((decoded, pending_tokens))
+        pending.clear()
+        pending_tokens = 0
+
+    # An 8,000-token boundary may split a multi-byte character. The incomplete
+    # bytes are deliberately omitted; the returned window ends at the last
+    # source position that can be represented losslessly.
+    return segments
