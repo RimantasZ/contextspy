@@ -13,8 +13,8 @@
 // limitations under the License.
 import { useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useSession, useStatsSession, useTimeline, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useSession, useSessionLineage, useStatsSession, useTimeline, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
@@ -22,6 +22,8 @@ import type { SortKey } from '../components/RequestTable';
 import { ToolBreakdownSection } from '../components/ToolBreakdown';
 import { OutputSplit } from '../components/OutputSplit';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
+import { SessionLineage } from '../components/SessionLineage';
+import { SegmentedControl } from '../components/ui/SegmentedControl';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -49,7 +51,9 @@ function fmtMs(ms: number | null | undefined): string {
 export default function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [bucket, setBucket] = useState<Bucket>('hour');
+  const view: 'summary' | 'lineage' = searchParams.get('view') === 'lineage' ? 'lineage' : 'summary';
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameTitleRef = useRef<HTMLInputElement>(null);
@@ -63,6 +67,7 @@ export default function SessionDetail() {
   }
 
   const session = useSession(id ?? '');
+  const lineage = useSessionLineage(id ?? '', view === 'lineage');
   const stats = useStatsSession(id ?? '');
   const timeline = useTimeline(id, bucket);
   const requests = useRequests({ session_id: id, sort_by: reqSortKey ?? undefined, sort_dir: reqSortKey ? reqSortDir : undefined, limit: 500 });
@@ -77,7 +82,7 @@ export default function SessionDetail() {
   }, [renamingTitle]);
 
   if (session.isLoading) return <div className="page-shell text-[var(--text-muted)]">Loading…</div>;
-  if (!session.data) return <div className="page-shell text-[var(--danger)]">Session not found.</div>;
+  if (!session.data) return <div className="page-shell text-[var(--danger)]">Capture not found.</div>;
 
   const s = session.data.session;
   const st = stats.data;
@@ -124,8 +129,8 @@ export default function SessionDetail() {
       head: [['', '']],
       showHead: 'never',
       body: [
-        ['Session opened', fmtTime(s.started_at)],
-        ['Session closed', s.ended_at ? fmtTime(s.ended_at) : 'Active'],
+        ['Capture opened', fmtTime(s.started_at)],
+        ['Capture closed', s.ended_at ? fmtTime(s.ended_at) : 'Active'],
         ['First request', fmtTime(timing?.first_request_at)],
         ['Last request', fmtTime(timing?.last_request_at)],
         ['Elapsed time', fmtMs(timing?.elapsed_ms)],
@@ -310,7 +315,7 @@ export default function SessionDetail() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/sessions')} className="app-button-ghost text-sm">
-            ← Sessions
+            ← Captures
           </button>
           <h1 className="text-xl font-bold text-[var(--text)]">
             {renamingTitle ? (
@@ -320,10 +325,10 @@ export default function SessionDetail() {
                   value={renameValue}
                   onChange={(e) => setRenameValue(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingTitle(false); }}
-                  aria-label="Session name"
+                  aria-label="Capture name"
                   className="app-field w-64 py-0.5 text-xl font-bold"
                 />
-                <button onClick={commitRename} className="app-button h-8 w-8 px-0 text-[var(--success)]" title="Save" aria-label="Save session name">✓</button>
+                <button onClick={commitRename} className="app-button h-8 w-8 px-0 text-[var(--success)]" title="Save" aria-label="Save capture name">✓</button>
                 <button onClick={() => setRenamingTitle(false)} className="app-button h-8 w-8 px-0" title="Cancel" aria-label="Cancel rename">✕</button>
               </span>
             ) : (
@@ -344,7 +349,7 @@ export default function SessionDetail() {
               disabled={endSession.isPending}
               className="app-button-danger"
             >
-              End session
+              End capture
             </button>
           )}
           <button
@@ -368,15 +373,45 @@ export default function SessionDetail() {
         </div>
       </div>
 
+      <div className="flex justify-end">
+        <SegmentedControl
+          label="Capture view"
+          value={view}
+          options={[
+            { value: 'summary', label: 'Summary' },
+            { value: 'lineage', label: 'Lineage', count: lineage.data?.nodes.filter((node) => !node.external).length },
+          ]}
+          onChange={(nextView) => {
+            const next = new URLSearchParams(searchParams)
+            if (nextView === 'lineage') next.set('view', 'lineage')
+            else next.delete('view')
+            setSearchParams(next, { replace: true })
+          }}
+        />
+      </div>
+
+      {view === 'lineage' ? (
+        <div className="panel">
+          {lineage.isLoading ? (
+            <div className="py-12 text-center text-sm text-[var(--text-muted)]">Analyzing context lineage…</div>
+          ) : lineage.error || !lineage.data ? (
+            <div className="py-12 text-center text-sm text-[var(--danger)]">Context lineage could not be loaded.</div>
+          ) : (
+            <SessionLineage graph={lineage.data} />
+          )}
+        </div>
+      ) : (
+        <>
+
       {/* Timing panel */}
       <div className="panel">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4 text-sm">
           <div>
-            <p className="eyebrow mb-0.5">Session started</p>
+            <p className="eyebrow mb-0.5">Capture started</p>
             <p className="font-medium text-[var(--text)]">{fmtTime(s.started_at)}</p>
           </div>
           <div>
-            <p className="eyebrow mb-0.5">Session closed</p>
+            <p className="eyebrow mb-0.5">Capture closed</p>
             <p className="font-medium text-[var(--text)]">
               {s.ended_at ? fmtTime(s.ended_at) : <span className="text-[var(--success)]">Active</span>}
             </p>
@@ -444,7 +479,7 @@ export default function SessionDetail() {
 
       {/* Requests table */}
       <div className="panel">
-        <p className="section-title mb-4">Requests in this session</p>
+        <p className="section-title mb-4">Requests in this capture</p>
         <RequestTable
           requests={requests.data?.requests ?? []}
           sessions={[s]}
@@ -455,6 +490,8 @@ export default function SessionDetail() {
           showSession={false}
         />
       </div>
+        </>
+      )}
 
       {deletingSession && (
         <DeleteSessionModal

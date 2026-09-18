@@ -40,6 +40,9 @@ export interface Request {
   id: string
   session_id: string | null
   timestamp: string
+  started_at: string | null
+  completed_at: string
+  started_at_source: 'observed' | 'estimated' | 'completion_fallback'
   provider: string
   model: string | null
   agent: string | null
@@ -207,6 +210,107 @@ export interface RequestBlock {
   first_seen_session_seq: number | null
 }
 
+interface LineageDeltaBucket {
+  blocks: number
+  tokens: number
+  by_category: Record<string, { blocks: number; tokens: number }>
+  by_block_type: Record<string, { blocks: number; tokens: number }>
+}
+
+interface LineageDeltaSummary {
+  persisted: LineageDeltaBucket
+  promoted: LineageDeltaBucket
+  added: LineageDeltaBucket
+  removed: LineageDeltaBucket
+  replaced: {
+    blocks: number
+    tokens_before: number
+    tokens_after: number
+  }
+}
+
+export interface LineageNode {
+  request_id: string
+  session_id: string | null
+  session_seq: number | null
+  started_at: string
+  started_at_source: 'observed' | 'estimated' | 'completion_fallback'
+  completed_at: string
+  duration_ms: number | null
+  provider: string
+  agent: string | null
+  model: string | null
+  endpoint: string
+  context_fidelity: 'complete' | 'partial' | 'opaque'
+  tokens_total_input: number
+  tokens_total_output: number
+  provider_response_id: string | null
+  predecessor_response_id: string | null
+  external: boolean
+  parent_state: 'exact' | 'inferred' | 'ambiguous' | 'root' | 'unresolved_exact' | 'unavailable' | 'external'
+  lineage_key: string
+  lineage_number: number
+  depth: number
+  branch: number
+  is_fork: boolean
+}
+
+export interface LineageEdge {
+  source_request_id: string
+  target_request_id: string
+  relation_type: 'context_continuation' | 'delegation' | 'contribution'
+  certainty: 'exact' | 'inferred' | 'suggested'
+  confidence: number | null
+  evidence_source: 'provider' | 'agent' | 'tool' | 'context_diff'
+  evidence: {
+    reason_codes?: string[]
+    predecessor_response_id?: string
+    candidate_margin?: number
+    retained_weight?: number
+    promoted_weight?: number
+    child_coverage?: number
+  }
+  delta: { summary: LineageDeltaSummary } | null
+  external_source: boolean
+}
+
+export interface LineageGraph {
+  capture: Session
+  analysis_version: string
+  nodes: LineageNode[]
+  edges: LineageEdge[]
+  unresolved_predecessors: Array<{
+    request_id: string
+    provider: string
+    predecessor_response_id: string
+    reason?: string
+  }>
+  ambiguous_candidates: Array<{
+    request_id: string
+    reason?: string
+    candidates: Array<{
+      request_id: string
+      confidence: number
+      evidence: LineageEdge['evidence']
+    }>
+  }>
+}
+
+export interface ContextDiffResponse {
+  parent_request_id: string
+  child_request_id: string
+  delta: {
+    summary: LineageDeltaSummary
+    persisted: Array<{ parent_block_id: number; child_block_id: number }>
+    promoted: Array<{ parent_block_id: number; child_block_id: number }>
+    added: number[]
+    removed: number[]
+    replaced: Array<{ parent_block_id: number; child_block_id: number; slot: string }>
+    unavailable_parent_blocks: number[]
+    unavailable_child_blocks: number[]
+  }
+}
+
 export interface ProxyStatus {
   running: boolean
   port: number
@@ -232,6 +336,7 @@ export const sessionsApi = {
     }),
   delete: (id: string, deleteRequests = false) =>
     apiFetch<{ deleted: string }>(`/sessions/${id}?delete_requests=${deleteRequests}`, { method: 'DELETE' }),
+  lineage: (id: string) => apiFetch<LineageGraph>(`/sessions/${id}/lineage`),
 }
 
 // ---- Requests API ---------------------------------------------------------
@@ -254,6 +359,8 @@ export const requestsApi = {
   get: (id: string) => apiFetch<{ request: Request }>(`/requests/${id}`),
   blocks: (id: string) =>
     apiFetch<{ session_seq: number | null; blocks: RequestBlock[] }>(`/requests/${id}/blocks`),
+  contextDiff: (id: string, parentId: string) =>
+    apiFetch<ContextDiffResponse>(`/requests/${id}/context-diff?parent_id=${encodeURIComponent(parentId)}`),
 }
 
 // ---- Stats API ------------------------------------------------------------

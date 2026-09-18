@@ -16,8 +16,9 @@ Codex CLI (ChatGPT-plan) frame-stream assembler."""
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
-from contextspy.proxy.ws_protocols import get_ws_protocol
+from contextspy.proxy.ws_protocols import InvocationCaptureContext, get_ws_protocol
 from contextspy.proxy.ws_protocols.codex import CodexResponsesSession
 
 
@@ -56,9 +57,16 @@ def _make_codex_event_frames(
 
 
 def _feed(session: CodexResponsesSession, *, from_client: bool, obj: dict, timestamp: float,
-          raw_text: str | None = None) -> list:
+          raw_text: str | None = None,
+          capture_context: InvocationCaptureContext | None = None) -> list:
     content = (raw_text if raw_text is not None else json.dumps(obj)).encode()
-    return session.on_message(from_client=from_client, content=content, is_text=True, timestamp=timestamp)
+    return session.on_message(
+        from_client=from_client,
+        content=content,
+        is_text=True,
+        timestamp=timestamp,
+        capture_context=capture_context,
+    )
 
 
 def _payloads(exchange) -> list:
@@ -118,6 +126,33 @@ class TestCodexSession:
         assert ex.request_ts == 1.0
         assert ex.first_event_ts == 2.0
         assert ex.last_event_ts == 3.0
+
+    def test_invocation_start_capture_context_is_carried_to_completion(self):
+        session = CodexResponsesSession()
+        obj, text = _make_codex_request_frame()
+        capture_context = InvocationCaptureContext(
+            started_at=datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc),
+            session_id="capture-at-start",
+        )
+        _feed(
+            session,
+            from_client=True,
+            obj=obj,
+            timestamp=1.0,
+            raw_text=text,
+            capture_context=capture_context,
+        )
+
+        result = []
+        for index, event in enumerate(_make_codex_event_frames()):
+            result = _feed(
+                session,
+                from_client=False,
+                obj=event,
+                timestamp=2.0 + index * 0.1,
+            )
+
+        assert result[0].capture_context == capture_context
 
     def test_multi_turn_no_event_bleed(self):
         session = CodexResponsesSession()

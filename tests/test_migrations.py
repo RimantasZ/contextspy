@@ -21,7 +21,7 @@ def test_inspect_migration_state_is_read_only_for_legacy_database(tmp_path):
     version_from, pending = migrations.inspect_migration_state(db_path)
 
     assert version_from == 1
-    assert pending == [2, 3, 4]
+    assert pending == [2, 3, 4, 5]
     assert db_path.read_bytes() == original_bytes
     with sqlite3.connect(db_path) as conn:
         tables = {
@@ -77,7 +77,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
     settings = Settings(config_dir=tmp_path)
     settings.storage.db_path = db_path
     monkeypatch.setattr(Settings, "load", classmethod(lambda cls: settings))
-    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3, 4]))
+    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3, 4, 5]))
 
     events = []
     real_create_backup = migrations.create_migration_backup
@@ -100,8 +100,8 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
         yield object()
 
     monkeypatch.setattr(migrations, "create_migration_backup", create_backup)
-    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3, 4])
-    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3, 4])
+    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3, 4, 5])
+    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3, 4, 5])
     monkeypatch.setattr(database, "init_db", init_db)
     monkeypatch.setattr(database, "get_db", get_db)
 
@@ -115,7 +115,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
 
     cli.db_upgrade()
 
-    backup_path = tmp_path / "profile_backup_v1_to_v4_2026-08-27-0000.back"
+    backup_path = tmp_path / "profile_backup_v1_to_v5_2026-08-27-0000.back"
     assert events == ["backup", "init"]
     assert backup_path.read_bytes() == original_bytes
     assert db_path.read_bytes() == b"database changed by init"
@@ -323,3 +323,81 @@ def test_v4_reanalyzes_inline_media_without_tokenizing_base64(tmp_path):
     assert result["content"] == "Screenshot captured\n[input_image]"
     assert result["attrs"]["contains_media"] is True
     assert tool_stats[0]["result_tokens"] < 20
+
+
+def test_v5_preserves_valid_capture_sequences_and_initializes_counter(tmp_path):
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "sequence-v5.db")
+    with get_db() as db:
+        session = crud.create_session(db, "capture")
+        session_id = session.id
+        crud.create_request(db, {
+            "id": "sequence-a",
+            "session_id": session_id,
+            "session_seq": 4,
+            "timestamp": datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc),
+            "provider": "openai",
+            "endpoint": "/v1/responses",
+        })
+        crud.create_request(db, {
+            "id": "sequence-b",
+            "session_id": session_id,
+            "session_seq": 8,
+            "timestamp": datetime(2026, 9, 11, 12, 1, tzinfo=timezone.utc),
+            "provider": "openai",
+            "endpoint": "/v1/responses",
+        })
+
+    with get_db() as db:
+        migrations._migrate_to_v5(db)
+
+    with get_db() as db:
+        assert crud.get_request(db, "sequence-a").session_seq == 4
+        assert crud.get_request(db, "sequence-b").session_seq == 8
+        created = crud.create_request(db, {
+            "id": "sequence-c",
+            "session_id": session_id,
+            "timestamp": datetime(2026, 9, 11, 12, 2, tzinfo=timezone.utc),
+            "provider": "openai",
+            "endpoint": "/v1/responses",
+        })
+        assert created.session_seq == 9
+
+
+def test_v5_repairs_duplicate_capture_sequences_before_adding_unique_index(tmp_path):
+    from sqlalchemy import text
+
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "duplicate-sequence-v5.db")
+    with get_db() as db:
+        db.execute(text("DROP INDEX idx_requests_session_seq_unique"))
+        capture = crud.create_session(db, "legacy concurrent capture")
+        capture_id = capture.id
+        for request_id, minute in (("duplicate-a", 0), ("duplicate-b", 1)):
+            crud.create_request(db, {
+                "id": request_id,
+                "session_id": capture_id,
+                "session_seq": 3,
+                "timestamp": datetime(2026, 9, 11, 12, minute, tzinfo=timezone.utc),
+                "provider": "openai",
+                "endpoint": "/v1/responses",
+            })
+
+    with get_db() as db:
+        migrations._migrate_to_v5(db)
+
+    with get_db() as db:
+        assert crud.get_request(db, "duplicate-a").session_seq == 1
+        assert crud.get_request(db, "duplicate-b").session_seq == 2
+        created = crud.create_request(db, {
+            "id": "duplicate-c",
+            "session_id": capture_id,
+            "timestamp": datetime(2026, 9, 11, 12, 2, tzinfo=timezone.utc),
+            "provider": "openai",
+            "endpoint": "/v1/responses",
+        })
+        assert created.session_seq == 3

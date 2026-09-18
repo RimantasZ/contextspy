@@ -30,7 +30,12 @@ import logging
 from typing import Any
 
 from contextspy.analysis.capture import CapturedEvent
-from contextspy.proxy.ws_protocols.base import CompletedExchange, WsProtocol, WsSession
+from contextspy.proxy.ws_protocols.base import (
+    CompletedExchange,
+    InvocationCaptureContext,
+    WsProtocol,
+    WsSession,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,7 @@ class CodexResponsesSession(WsSession):
 
     def on_message(
         self, *, from_client: bool, content: bytes, is_text: bool, timestamp: float,
+        capture_context: InvocationCaptureContext | None = None,
     ) -> list[CompletedExchange]:
         if not is_text:
             if self._pending is not None:
@@ -83,10 +89,16 @@ class CodexResponsesSession(WsSession):
             return []
 
         if from_client:
-            return self._on_client_frame(obj, text, timestamp)
+            return self._on_client_frame(obj, text, timestamp, capture_context)
         return self._on_server_frame(obj, timestamp)
 
-    def _on_client_frame(self, obj: dict, text: str, timestamp: float) -> list[CompletedExchange]:
+    def _on_client_frame(
+        self,
+        obj: dict,
+        text: str,
+        timestamp: float,
+        capture_context: InvocationCaptureContext | None,
+    ) -> list[CompletedExchange]:
         if obj.get("type") != "response.create":
             if self._pending is not None:
                 self._append_event(
@@ -99,7 +111,10 @@ class CodexResponsesSession(WsSession):
             self._pending.outcome = "incomplete"
             flushed.append(self._pending)
         self._pending = CompletedExchange(
-            request_body=obj, raw_request_text=text, request_ts=timestamp,
+            request_body=obj,
+            raw_request_text=text,
+            request_ts=timestamp,
+            capture_context=capture_context,
         )
         return flushed
 

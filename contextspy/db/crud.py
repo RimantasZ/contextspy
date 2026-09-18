@@ -113,10 +113,27 @@ def delete_session_with_requests(db: OrmSession, session_id: str) -> bool:
 def _next_session_seq(db: OrmSession, session_id: str | None) -> int | None:
     if session_id is None:
         return None
-    max_seq = db.execute(
-        select(func.max(Request.session_seq)).where(Request.session_id == session_id)
-    ).scalar()
-    return (max_seq or 0) + 1
+    # Increment and return in one SQLite write statement so concurrent proxy
+    # workers cannot both observe the same MAX(session_seq). The MAX fallback
+    # also makes upgraded databases safe before their v5 data migration has
+    # initialized next_request_seq from historical rows.
+    next_value = db.execute(
+        text("""
+            UPDATE sessions
+            SET next_request_seq = MAX(
+                next_request_seq,
+                (
+                    SELECT COALESCE(MAX(session_seq), 0) + 1
+                    FROM requests
+                    WHERE session_id = :session_id
+                )
+            ) + 1
+            WHERE id = :session_id
+            RETURNING next_request_seq
+        """),
+        {"session_id": session_id},
+    ).scalar_one_or_none()
+    return next_value - 1 if next_value is not None else None
 
 
 def create_request(db: OrmSession, data: dict[str, Any]) -> Request:
@@ -144,6 +161,125 @@ def get_request_by_provider_response_id(
         )
         .order_by(Request.timestamp.desc())
     ).scalars().first()
+
+
+def _lineage_snapshots_for_requests(
+    db: OrmSession, requests: list[Request],
+) -> list:
+    """Materialize provider-neutral lineage snapshots with one bulk block query."""
+    from contextspy.analysis.context_diff import ContextBlock
+    from contextspy.analysis.lineage import RequestSnapshot
+
+    request_ids = [request.id for request in requests]
+    blocks_by_request: dict[str, list[ContextBlock]] = {
+        request_id: [] for request_id in request_ids
+    }
+    if request_ids:
+        rows = db.execute(
+            select(BlockRecord)
+            .where(BlockRecord.request_id.in_(request_ids))
+            .order_by(
+                BlockRecord.request_id.asc(),
+                BlockRecord.direction.asc(),
+                BlockRecord.position.asc(),
+                BlockRecord.id.asc(),
+            )
+        ).scalars().all()
+        for block in rows:
+            try:
+                attrs = json.loads(block.attrs) if block.attrs else {}
+            except (json.JSONDecodeError, TypeError):
+                attrs = {}
+            blocks_by_request[block.request_id].append(ContextBlock(
+                id=block.id,
+                request_id=block.request_id,
+                direction=block.direction,
+                position=block.position,
+                message_index=block.message_index,
+                block_type=block.block_type,
+                category=block.category,
+                content_hash=block.content_hash,
+                token_count=block.token_count,
+                tool_name=block.tool_name,
+                tool_call_id=block.tool_call_id,
+                attrs=attrs,
+            ))
+
+    return [RequestSnapshot(
+        id=request.id,
+        session_id=request.session_id,
+        session_seq=request.session_seq,
+        timestamp=request.timestamp,
+        started_at=request.started_at,
+        duration_ms=request.duration_ms,
+        provider=request.provider,
+        model=request.model,
+        agent=request.agent,
+        endpoint=request.endpoint,
+        provider_response_id=request.provider_response_id,
+        predecessor_response_id=request.predecessor_response_id,
+        context_fidelity=request.context_fidelity,
+        tokens_total_input=request.tokens_total_input,
+        tokens_total_output=request.tokens_total_output,
+        blocks=tuple(blocks_by_request.get(request.id, ())),
+        external=False,
+    ) for request in requests]
+
+
+def get_session_lineage_snapshots(db: OrmSession, session_id: str) -> tuple[list, list]:
+    """Load one capture and any exact parents outside it without N+1 queries."""
+    from dataclasses import replace
+
+    requests = list(db.execute(
+        select(Request)
+        .where(Request.session_id == session_id)
+        .order_by(Request.session_seq.asc(), Request.timestamp.asc(), Request.id.asc())
+    ).scalars().all())
+    internal = _lineage_snapshots_for_requests(db, requests)
+
+    internal_response_ids = {
+        (request.provider, request.provider_response_id)
+        for request in requests if request.provider_response_id
+    }
+    missing_ids = {
+        (request.provider, request.predecessor_response_id)
+        for request in requests
+        if request.predecessor_response_id
+        and (request.provider, request.predecessor_response_id) not in internal_response_ids
+    }
+    if not missing_ids:
+        return internal, []
+
+    response_ids = {response_id for _, response_id in missing_ids}
+    candidates = list(db.execute(
+        select(Request)
+        .where(Request.provider_response_id.in_(response_ids))
+        .order_by(Request.timestamp.desc(), Request.id.desc())
+    ).scalars().all())
+    selected: dict[tuple[str, str], Request] = {}
+    for request in candidates:
+        key = (request.provider, request.provider_response_id or "")
+        if key in missing_ids:
+            selected.setdefault(key, request)
+    external = [
+        replace(snapshot, external=True)
+        for snapshot in _lineage_snapshots_for_requests(db, list(selected.values()))
+    ]
+    return internal, external
+
+
+def get_context_diff_snapshots(
+    db: OrmSession, parent_id: str, child_id: str,
+) -> tuple | None:
+    rows = list(db.execute(
+        select(Request).where(Request.id.in_((parent_id, child_id)))
+    ).scalars().all())
+    if len(rows) != 2:
+        return None
+    snapshots = {
+        snapshot.id: snapshot for snapshot in _lineage_snapshots_for_requests(db, rows)
+    }
+    return snapshots[parent_id], snapshots[child_id]
 
 
 _SORT_COLUMNS = {

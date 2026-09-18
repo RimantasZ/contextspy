@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from contextspy.api.websocket import ConnectionManager
+from contextspy.analysis.lineage import build_lineage_graph
 from contextspy.db import crud
 from contextspy.db.database import get_db
 
@@ -73,6 +74,24 @@ def get_session(session_id: str):
             raise HTTPException(status_code=404, detail="Session not found")
         stats = crud.get_stats(db, session_id)
         return {"session": session.to_dict(), "stats": stats}
+
+
+@router.get("/sessions/{session_id}/lineage")
+def get_session_lineage(session_id: str):
+    """Return the complete, backend-derived invocation graph for one capture."""
+    with get_db() as db:
+        session = crud.get_session(db, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        requests, external_requests = crud.get_session_lineage_snapshots(db, session_id)
+        graph = build_lineage_graph(
+            requests,
+            external_requests=external_requests,
+        )
+        return {
+            "capture": session.to_dict(),
+            **graph,
+        }
 
 
 @router.post("/sessions/{session_id}/end")

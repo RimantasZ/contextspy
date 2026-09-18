@@ -15,8 +15,17 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from contextspy.analysis.capture import CapturedEvent
+
+
+@dataclass(frozen=True)
+class InvocationCaptureContext:
+    """Capture membership and wall-clock time observed at invocation start."""
+
+    started_at: datetime
+    session_id: str | None
 
 
 @dataclass
@@ -30,6 +39,7 @@ class CompletedExchange:
     # and auxiliary client frames remain available in the normalized capture.
     events: list[CapturedEvent] = field(default_factory=list)
     request_ts: float | None = None
+    capture_context: InvocationCaptureContext | None = None
     first_event_ts: float | None = None
     last_event_ts: float | None = None
     error: dict | None = None   # {"status", "code", "message"}
@@ -43,6 +53,7 @@ class WsSession(ABC):
     @abstractmethod
     def on_message(
         self, *, from_client: bool, content: bytes, is_text: bool, timestamp: float,
+        capture_context: InvocationCaptureContext | None = None,
     ) -> list[CompletedExchange]:
         """Feed one frame; return any exchanges that just completed (usually 0 or 1)."""
 

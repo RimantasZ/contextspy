@@ -24,7 +24,7 @@ export function makeBlock(overrides: Partial<RequestBlock> = {}): RequestBlock {
 
 export function makeRequest(overrides: Partial<Request> = {}): Request {
   return {
-    id: 'request-1', session_id: null, timestamp: '2026-09-09T10:00:00', provider: 'openai', model: 'gpt-test', agent: 'codex', endpoint: '/v1/responses',
+    id: 'request-1', session_id: null, timestamp: '2026-09-09T10:00:00', started_at: null, completed_at: '2026-09-09T10:00:00', started_at_source: 'estimated', provider: 'openai', model: 'gpt-test', agent: 'codex', endpoint: '/v1/responses',
     duration_ms: 250, ttft_ms: 80, status_code: 200, transport: 'https', response_transport: 'sse', response_reconstructed: false,
     response_complete: true, capture_error: null, provider_response_id: null, predecessor_response_id: null, invocation_outcome: 'completed',
     context_fidelity: 'complete', context_notes: [], tokens_system_prompt: 20, tokens_tool_definitions: 0, tokens_tool_results: 0,

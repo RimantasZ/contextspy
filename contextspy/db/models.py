@@ -43,6 +43,9 @@ class Session(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    next_request_seq: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
 
     requests: Mapped[list["Request"]] = relationship(
         "Request", back_populates="session", passive_deletes=True
@@ -66,6 +69,9 @@ class Request(Base):
         String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
     )
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Observed invocation start. Historical rows remain NULL; ``timestamp``
+    # keeps its compatibility meaning as completion/persistence time.
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     provider: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     agent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -149,6 +155,11 @@ class Request(Base):
             "id": self.id,
             "session_id": self.session_id,
             "timestamp": self.timestamp.isoformat(),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.timestamp.isoformat(),
+            "started_at_source": "observed" if self.started_at else (
+                "estimated" if self.duration_ms is not None else "completion_fallback"
+            ),
             "provider": self.provider,
             "model": self.model,
             "agent": self.agent,
@@ -226,8 +237,6 @@ Index("idx_requests_timestamp", Request.timestamp)
 Index("idx_requests_provider", Request.provider)
 Index("idx_requests_provider_response", Request.provider, Request.provider_response_id)
 Index("idx_requests_predecessor_response", Request.predecessor_response_id)
-
-
 class ToolStat(Base):
     """Per-tool token breakdown — one row per tool name per request."""
 

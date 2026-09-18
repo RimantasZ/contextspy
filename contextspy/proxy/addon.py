@@ -41,12 +41,19 @@ from contextspy.normalization import (
     PersistedCanonicalInvocation,
     normalize_invocation,
 )
-from contextspy.proxy.ws_protocols import CompletedExchange, WsSession, get_ws_protocol
+from contextspy.proxy.ws_protocols import (
+    CompletedExchange,
+    InvocationCaptureContext,
+    WsSession,
+    get_ws_protocol,
+)
 
 if TYPE_CHECKING:
     from contextspy.api.websocket import ConnectionManager
 
 logger = logging.getLogger(__name__)
+
+_CAPTURE_UNSET = object()
 
 # ---------------------------------------------------------------------------
 # Host → provider mapping
@@ -284,6 +291,15 @@ class ContextSpyAddon:
 
     def request(self, flow: http.HTTPFlow) -> None:
         flow.metadata["ts_start"] = time.monotonic()
+        flow.metadata["contextspy_started_at"] = datetime.now(timezone.utc)
+        provider = self._get_provider(flow.request.pretty_host, flow.request.port)
+        if provider is not None:
+            with get_db() as db:
+                active_session = crud.get_active_session(db)
+                flow.metadata["contextspy_session_id_at_start"] = (
+                    active_session.id if active_session else None
+                )
+                flow.metadata["contextspy_capture_resolved"] = True
         try:
             flow.metadata["contextspy_request_body"] = flow.request.get_text()
         except Exception as exc:
@@ -450,6 +466,11 @@ class ContextSpyAddon:
             response_transport="sse", response_reconstructed=response_reconstructed,
             response_complete=response_complete, response_events=response_events,
             capture_error=capture_error, canonical=canonical_invocation,
+            started_at=flow.metadata.get("contextspy_started_at"),
+            session_id=(
+                flow.metadata.get("contextspy_session_id_at_start")
+                if flow.metadata.get("contextspy_capture_resolved") else _CAPTURE_UNSET
+            ),
         )
         flow.metadata["contextspy_saved"] = True
 
@@ -595,6 +616,11 @@ class ContextSpyAddon:
             response_events=response_events,
             capture_error=capture_error,
             canonical=canonical_invocation,
+            started_at=flow.metadata.get("contextspy_started_at"),
+            session_id=(
+                flow.metadata.get("contextspy_session_id_at_start")
+                if flow.metadata.get("contextspy_capture_resolved") else _CAPTURE_UNSET
+            ),
         )
         flow.metadata["contextspy_saved"] = True
 
@@ -607,7 +633,9 @@ class ContextSpyAddon:
                       response_complete: bool = True,
                       response_events: str | None = None,
                       capture_error: dict | None = None,
-                      canonical: CanonicalInvocation | None = None) -> None:
+                      canonical: CanonicalInvocation | None = None,
+                      started_at: datetime | None = None,
+                      session_id: str | None | object = _CAPTURE_UNSET) -> None:
         # Skip non-LLM endpoints (telemetry, auth, health checks, etc.)
         # Only persist requests that we could actually parse OR that look like
         # known LLM API paths so telemetry traffic is not stored as empty rows.
@@ -648,13 +676,17 @@ class ContextSpyAddon:
                         canonical.provider_response_id,
                     )
                     return
-            active_session = crud.get_active_session(db)
-            session_id = active_session.id if active_session else None
+            if session_id is _CAPTURE_UNSET:
+                active_session = crud.get_active_session(db)
+                resolved_session_id = active_session.id if active_session else None
+            else:
+                resolved_session_id = session_id
 
             data: dict = {
                 "id": str(uuid.uuid4()),
-                "session_id": session_id,
+                "session_id": resolved_session_id,
                 "timestamp": datetime.now(timezone.utc),
+                "started_at": started_at,
                 "provider": provider,
                 "model": model,
                 "agent": agent,
@@ -771,12 +803,21 @@ class ContextSpyAddon:
             return
 
         message = flow.websocket.messages[-1]
+        capture_context = None
+        if message.from_client:
+            with get_db() as db:
+                active_session = crud.get_active_session(db)
+                capture_context = InvocationCaptureContext(
+                    started_at=datetime.now(timezone.utc),
+                    session_id=active_session.id if active_session else None,
+                )
         try:
             exchanges = state.session.on_message(
                 from_client=message.from_client,
                 content=message.content,
                 is_text=message.is_text,
                 timestamp=message.timestamp,
+                capture_context=capture_context,
             )
         except Exception as exc:
             logger.warning("WS session.on_message error: %s", exc, exc_info=True)
@@ -869,6 +910,11 @@ class ContextSpyAddon:
             response_complete=False,
             capture_error=capture_error,
             canonical=canonical_invocation,
+            started_at=flow.metadata.get("contextspy_started_at"),
+            session_id=(
+                flow.metadata.get("contextspy_session_id_at_start")
+                if flow.metadata.get("contextspy_capture_resolved") else _CAPTURE_UNSET
+            ),
         )
         flow.metadata["contextspy_saved"] = True
 
@@ -955,4 +1001,11 @@ class ContextSpyAddon:
             response_events=response_events,
             capture_error=capture_error,
             canonical=canonical_invocation,
+            started_at=(
+                ex.capture_context.started_at if ex.capture_context is not None else None
+            ),
+            session_id=(
+                ex.capture_context.session_id
+                if ex.capture_context is not None else _CAPTURE_UNSET
+            ),
         )

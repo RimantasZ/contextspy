@@ -41,10 +41,12 @@ export function useWebSocket() {
             qc.invalidateQueries({ queryKey: ['requests'] })
             qc.invalidateQueries({ queryKey: ['stats'] })
             qc.invalidateQueries({ queryKey: ['stats', 'sessions-summary'] })
+            qc.invalidateQueries({ queryKey: ['lineage'] })
           } else if (msg.event === 'session_started' || msg.event === 'session_ended') {
             qc.invalidateQueries({ queryKey: ['sessions'] })
             qc.invalidateQueries({ queryKey: ['stats'] })
             qc.invalidateQueries({ queryKey: ['stats', 'sessions-summary'] })
+            qc.invalidateQueries({ queryKey: ['lineage'] })
           }
         } catch {
           // Ignore malformed messages and keep the live connection open.

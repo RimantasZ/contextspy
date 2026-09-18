@@ -41,7 +41,7 @@ contextspy session start "after-refactor"
 contextspy session end
 ```
 
-Go to **Sessions** in the dashboard. Select each session to compare total token usage,
+Go to **Captures** in the dashboard. Select each capture to compare total token usage,
 category breakdowns, and per-request details side by side.
 
 ---
@@ -107,8 +107,9 @@ Sort descending to find the largest ones. Click a request and use the compositio
 block for its exact count. The view deliberately caps visual growth, so use the inspector and
 Analytics totals for exact comparisons.
 
-Use **Sessions** to track token growth over a multi-turn conversation: each successive
-request will show the growing `conversation_history` slice.
+Use **Captures** to track token growth across a task. Open a capture's **Lineage** view to see
+whether requests continued one context, forked, overlapped, or were unrelated; capture numbers
+show recording order and do not by themselves imply a conversation sequence.
 
 ---
 

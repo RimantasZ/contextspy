@@ -71,7 +71,7 @@ export function BlockInspector({ block, blocks, onJump, onClear }: {
         <div><dt className="text-[var(--text-muted)]">Tokens</dt><dd className="font-medium tabular-nums">{block.token_count.toLocaleString()}</dd></div>
         <div><dt className="text-[var(--text-muted)]">Position</dt><dd className="font-medium tabular-nums">{block.position + 1}</dd></div>
         <div><dt className="text-[var(--text-muted)]">Message</dt><dd className="font-medium">{block.message_index ?? 'Structural'}</dd></div>
-        <div><dt className="text-[var(--text-muted)]">First seen</dt><dd className="font-medium">{block.first_seen_session_seq != null ? `Request #${block.first_seen_session_seq}` : '—'}</dd></div>
+        <div><dt className="text-[var(--text-muted)]">First seen in capture</dt><dd className="font-medium">{block.first_seen_session_seq != null ? `Capture #${block.first_seen_session_seq}` : '—'}</dd></div>
         <div><dt className="text-[var(--text-muted)]">Content</dt><dd className="font-medium">{block.content_purged ? 'Purged' : block.content == null ? 'Not captured' : 'Available'}</dd></div>
         {block.tool_call_id && <div className="col-span-2"><dt className="text-[var(--text-muted)]">Tool call ID</dt><dd className="truncate font-mono text-[11px]" title={block.tool_call_id}>{block.tool_call_id}</dd></div>}
       </dl>

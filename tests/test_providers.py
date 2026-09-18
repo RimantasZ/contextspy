@@ -1962,6 +1962,46 @@ class TestAddonCaptureBoundaries:
             metadata={"contextspy_request_body": request_text}, error=error,
         )
 
+    def test_request_keeps_capture_membership_from_start_after_capture_ends(self, tmp_path):
+        from contextspy.db import crud
+        from contextspy.db.database import get_db, init_db
+        from contextspy.proxy.addon import ContextSpyAddon
+
+        init_db(tmp_path / "capture_membership.db")
+        with get_db() as db:
+            capture = crud.create_session(db, "capture at invocation start")
+            capture_id = capture.id
+
+        request_text = json.dumps({
+            "model": "gpt-test",
+            "input": [{"role": "user", "content": "hello"}],
+        })
+        response_text = json.dumps({
+            "id": "response-after-capture",
+            "model": "gpt-test",
+            "output": [{
+                "type": "message",
+                "content": [{"type": "output_text", "text": "hello"}],
+            }],
+            "usage": {"input_tokens": 5, "output_tokens": 1},
+        })
+        flow = self._flow(request_text=request_text, response_text=response_text)
+        flow.metadata = {}
+        addon = ContextSpyAddon()
+
+        addon.request(flow)
+        observed_start = flow.metadata["contextspy_started_at"]
+        with get_db() as db:
+            crud.end_session(db, capture_id)
+
+        addon._handle_response(flow)
+
+        with get_db() as db:
+            rows = crud.list_requests(db)
+            assert len(rows) == 1
+            assert rows[0].session_id == capture_id
+            assert rows[0].started_at == observed_start.replace(tzinfo=None)
+
     def test_stream_capture_survives_both_analysis_failures(self, tmp_path, monkeypatch):
         from contextspy.analysis.capture import CanonicalResponse
         from contextspy.db import crud
