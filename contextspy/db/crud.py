@@ -254,6 +254,34 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
     output_text = sum(r.tokens_output_text for r in rows)
     output_thinking = sum(r.tokens_output_thinking for r in rows)
 
+    # Provider-reported cache usage (cache_read_tokens/cache_creation_tokens are
+    # None for requests whose provider doesn't report cache usage at all — those
+    # are excluded rather than treated as 0%, since 0% is itself a meaningful
+    # value for a provider that does report but had no cache hit). Two views are
+    # kept because they answer different questions: avg_pct treats every request
+    # equally (a 10k-token request at 50% cached counts the same as a 100k-token
+    # request at 95%), while overall_pct is token-weighted, so a session
+    # dominated by one huge highly-cached request isn't diluted by many small
+    # uncached ones.
+    cache_rows = [
+        r for r in rows
+        if r.provider_input_tokens and (r.cache_read_tokens is not None or r.cache_creation_tokens is not None)
+    ]
+    if cache_rows:
+        cache_pct_values = [
+            ((r.cache_read_tokens or 0) + (r.cache_creation_tokens or 0)) / r.provider_input_tokens * 100
+            for r in cache_rows
+        ]
+        total_cache_tokens = sum((r.cache_read_tokens or 0) + (r.cache_creation_tokens or 0) for r in cache_rows)
+        total_cache_input = sum(r.provider_input_tokens for r in cache_rows)
+        cache = {
+            "avg_pct": round(sum(cache_pct_values) / len(cache_pct_values), 1),
+            "overall_pct": round(total_cache_tokens / total_cache_input * 100, 1) if total_cache_input else None,
+            "reporting_request_count": len(cache_rows),
+        }
+    else:
+        cache = {"avg_pct": None, "overall_pct": None, "reporting_request_count": 0}
+
     by_category: dict[str, dict] = {}
     for col in _CATEGORY_COLS:
         cat_key = col[len("tokens_"):]
@@ -323,6 +351,7 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         "tokens_total_output": total_output,
         "tokens_output_text": output_text,
         "tokens_output_thinking": output_thinking,
+        "cache": cache,
         "by_category": by_category,
         "by_provider": by_provider,
         "by_agent": by_agent,
@@ -344,6 +373,7 @@ def _empty_stats() -> dict:
         "tokens_total_output": 0,
         "tokens_output_text": 0,
         "tokens_output_thinking": 0,
+        "cache": {"avg_pct": None, "overall_pct": None, "reporting_request_count": 0},
         "by_category": {
             col[len("tokens_"):]: {"tokens": 0, "pct": 0.0}
             for col in _CATEGORY_COLS

@@ -133,6 +133,15 @@ interface SessionTiming {
   active_duration_ms: number | null
 }
 
+export interface CacheStats {
+  /** Mean of each request's own (cache_read + cache_creation) / provider_input_tokens, as a %. */
+  avg_pct: number | null
+  /** Token-weighted: sum(cache_read + cache_creation) / sum(provider_input_tokens) across the session, as a %. */
+  overall_pct: number | null
+  /** Requests whose provider reported cache usage at all (others are excluded, not counted as 0%). */
+  reporting_request_count: number
+}
+
 export interface Stats {
   request_count: number
   tokens_total_input: number
@@ -140,6 +149,8 @@ export interface Stats {
   /** Output split: generated text vs. reasoning. Both roll up into tokens_total_output. */
   tokens_output_text: number
   tokens_output_thinking: number
+  /** Provider-reported prompt-cache usage, aggregated across the requests (see CacheStats). */
+  cache: CacheStats
   by_category: Record<string, CategoryStats>
   by_provider: Record<string, number>
   by_agent: Record<string, number>
