@@ -269,8 +269,63 @@ export const requestsApi = {
 
 // ---- Stats API ------------------------------------------------------------
 
+export interface DashboardActiveSession {
+  id: string
+  name: string
+  started_at: string
+  request_count: number
+  tokens_total_input: number
+  tokens_total_output: number
+}
+
+export interface DashboardRequestFlowItem {
+  id: string
+  session_seq: number | null
+  timestamp: string
+  model: string | null
+  duration_ms: number | null
+  status_code: number | null
+  invocation_outcome: Request['invocation_outcome']
+  tokens_total_input: number
+  tokens_total_output: number
+}
+
+export interface DashboardActivityPoint {
+  id: string
+  session_seq: number | null
+  timestamp: string
+  tokens_total_input: number
+  tokens_total_output: number
+}
+
+export interface DashboardBlockChange {
+  block_type: string
+  current_count: number
+  previous_count: number
+  delta: number
+}
+
+export interface DashboardContextChange {
+  request_id: string
+  session_seq: number | null
+  tokens_total_input: number
+  previous_request_id: string | null
+  previous_session_seq: number | null
+  token_delta: number | null
+  comparison_fidelity: 'complete' | 'partial' | 'unavailable'
+  block_changes: DashboardBlockChange[]
+}
+
+export interface DashboardLiveData {
+  active_session: DashboardActiveSession | null
+  request_flow: DashboardRequestFlowItem[]
+  activity: DashboardActivityPoint[]
+  context_change: DashboardContextChange | null
+}
+
 export const statsApi = {
   overview: () => apiFetch<Stats>('/stats/overview'),
+  dashboardLive: () => apiFetch<DashboardLiveData>('/stats/dashboard-live'),
   session: (id: string) => apiFetch<Stats>(`/stats/session/${id}`),
   timeline: (params: { session_id?: string; bucket?: string }) => {
     const q = new URLSearchParams()

@@ -12,35 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { useState } from 'react';
-import { useSessions, useCreateSession, useEndSession } from '../api/hooks';
+import { useSessions, useEndSession } from '../api/hooks';
+import { StartSessionDialog } from './StartSessionDialog';
 
 export function SessionControls() {
   const [showModal, setShowModal] = useState(false);
-  const [name, setName] = useState('');
 
   const { data: sessions } = useSessions();
-  const createSession = useCreateSession();
   const endSession = useEndSession();
 
   const active = sessions?.sessions?.find((s) => s.ended_at === null);
-
-  function handleStart() {
-    if (!name.trim()) return;
-    createSession.mutate(
-      name.trim(),
-      {
-        onSuccess: () => {
-          setName('');
-          setShowModal(false);
-        },
-      }
-    );
-  }
-
-  function handleEnd() {
-    if (!active) return;
-    endSession.mutate(active.id);
-  }
 
   return (
     <>
@@ -52,7 +33,7 @@ export function SessionControls() {
               {active.name}
             </span>
             <button
-              onClick={handleEnd}
+              onClick={() => endSession.mutate(active.id)}
               disabled={endSession.isPending}
               className="app-button-danger min-h-8 py-1 text-xs"
             >
@@ -72,38 +53,7 @@ export function SessionControls() {
         )}
       </div>
 
-      {showModal && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal-dialog w-80" role="dialog" aria-modal="true" aria-labelledby="start-session-title">
-            <h2 id="start-session-title" className="mb-4 font-semibold">Start a session</h2>
-            <input
-              autoFocus
-              type="text"
-              placeholder="Session name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleStart()}
-              aria-label="Session name"
-              className="app-field mb-4 w-full"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowModal(false)}
-                className="app-button-ghost"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleStart}
-                disabled={!name.trim() || createSession.isPending}
-                className="app-button-primary"
-              >
-                Start
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showModal && <StartSessionDialog onClose={() => setShowModal(false)} />}
     </>
   );
 }

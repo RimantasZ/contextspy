@@ -737,3 +737,145 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
 
     entries.sort(key=lambda e: e["started_at"], reverse=True)
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Live dashboard (active session)
+# ---------------------------------------------------------------------------
+
+_LIVE_FLOW_LIMIT = 5
+_LIVE_ACTIVITY_LIMIT = 10
+
+
+def _block_counts(db: OrmSession, request_ids: list[str]) -> dict[str, dict[str, int]]:
+    rows = db.execute(
+        select(
+            BlockRecord.request_id,
+            BlockRecord.block_type,
+            func.count().label("block_count"),
+        )
+        .where(
+            BlockRecord.request_id.in_(request_ids),
+            BlockRecord.direction == Direction.INPUT,
+        )
+        .group_by(BlockRecord.request_id, BlockRecord.block_type)
+    ).all()
+    counts: dict[str, dict[str, int]] = {rid: {} for rid in request_ids}
+    for row in rows:
+        counts[row.request_id][row.block_type] = row.block_count
+    return counts
+
+
+def _comparison_fidelity(latest: Request, previous: Request) -> str:
+    pair = {latest.context_fidelity, previous.context_fidelity}
+    if "opaque" in pair:
+        return "unavailable"
+    if "partial" in pair:
+        return "partial"
+    return "complete"
+
+
+def _context_change(db: OrmSession, latest: Request, previous: Request | None) -> dict:
+    change: dict[str, Any] = {
+        "request_id": latest.id,
+        "session_seq": latest.session_seq,
+        "tokens_total_input": latest.tokens_total_input,
+        "previous_request_id": None,
+        "previous_session_seq": None,
+        "token_delta": None,
+        "comparison_fidelity": "unavailable",
+        "block_changes": [],
+    }
+    if previous is None:
+        return change
+
+    change["previous_request_id"] = previous.id
+    change["previous_session_seq"] = previous.session_seq
+    change["token_delta"] = latest.tokens_total_input - previous.tokens_total_input
+    fidelity = _comparison_fidelity(latest, previous)
+    change["comparison_fidelity"] = fidelity
+    if fidelity == "unavailable":
+        return change
+
+    counts = _block_counts(db, [latest.id, previous.id])
+    current, prior = counts[latest.id], counts[previous.id]
+    change["block_changes"] = [
+        {
+            "block_type": block_type,
+            "current_count": current.get(block_type, 0),
+            "previous_count": prior.get(block_type, 0),
+            "delta": current.get(block_type, 0) - prior.get(block_type, 0),
+        }
+        for block_type in sorted(set(current) | set(prior))
+    ]
+    return change
+
+
+def get_dashboard_live(db: OrmSession) -> dict:
+    """Active-session snapshot for the Overview page: totals, recent requests, context change."""
+    session = get_active_session(db)
+    if session is None:
+        return {"active_session": None, "request_flow": [], "activity": [], "context_change": None}
+
+    totals = db.execute(
+        select(
+            func.count().label("n"),
+            func.coalesce(func.sum(Request.tokens_total_input), 0).label("tok_in"),
+            func.coalesce(func.sum(Request.tokens_total_output), 0).label("tok_out"),
+        ).where(Request.session_id == session.id)
+    ).one()
+
+    active_session = {
+        "id": session.id,
+        "name": session.name,
+        "started_at": session.started_at.isoformat(),
+        "request_count": totals.n,
+        "tokens_total_input": totals.tok_in,
+        "tokens_total_output": totals.tok_out,
+    }
+
+    # Newest first. SQLite sorts NULL lowest, so null-seq rows fall after sequenced ones.
+    recent = list(
+        db.execute(
+            select(Request)
+            .where(Request.session_id == session.id)
+            .order_by(Request.session_seq.desc(), Request.timestamp.desc(), Request.id.desc())
+            .limit(_LIVE_ACTIVITY_LIMIT)
+        ).scalars().all()
+    )
+
+    request_flow = [
+        {
+            "id": r.id,
+            "session_seq": r.session_seq,
+            "timestamp": r.timestamp.isoformat(),
+            "model": r.model,
+            "duration_ms": r.duration_ms,
+            "status_code": r.status_code,
+            "invocation_outcome": r.invocation_outcome,
+            "tokens_total_input": r.tokens_total_input,
+            "tokens_total_output": r.tokens_total_output,
+        }
+        for r in recent[:_LIVE_FLOW_LIMIT]
+    ]
+    activity = [
+        {
+            "id": r.id,
+            "session_seq": r.session_seq,
+            "timestamp": r.timestamp.isoformat(),
+            "tokens_total_input": r.tokens_total_input,
+            "tokens_total_output": r.tokens_total_output,
+        }
+        for r in reversed(recent)
+    ]
+
+    context_change = None
+    if recent:
+        context_change = _context_change(db, recent[0], recent[1] if len(recent) > 1 else None)
+
+    return {
+        "active_session": active_session,
+        "request_flow": request_flow,
+        "activity": activity,
+        "context_change": context_change,
+    }

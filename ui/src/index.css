@@ -92,6 +92,8 @@
   --chart-grid: #dfe3dd;
   --chart-axis: #6d756e;
   --chart-line: #6558ad;
+  --chart-input: var(--chart-line);
+  --chart-output: var(--category-user);
   --chart-tooltip: #ffffff;
   --chart-tooltip-text: #1c201d;
   --syntax-key: #6d4586;
