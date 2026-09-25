@@ -15,7 +15,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { useCreateSession, useRenameSession } from './hooks'
+import { useCreateSession, useEndSession, useRenameSession } from './hooks'
 
 vi.mock('./client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./client')>()
@@ -24,6 +24,7 @@ vi.mock('./client', async (importOriginal) => {
     sessionsApi: {
       ...actual.sessionsApi,
       create: vi.fn().mockResolvedValue({}),
+      end: vi.fn().mockResolvedValue({}),
       rename: vi.fn().mockResolvedValue({}),
     },
   }
@@ -41,10 +42,11 @@ describe('session mutation invalidation', () => {
     const { spy, wrapper } = setup()
     const { result } = renderHook(() => useCreateSession(), { wrapper })
     result.current.mutate('x')
-    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(3))
     const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey)
     expect(keys).toContainEqual(['sessions'])
     expect(keys).toContainEqual(['stats'])
+    expect(keys).toContainEqual(['stats', 'dashboard-live'])
   })
 
   it('useRenameSession invalidates the dashboard-live query', async () => {
@@ -55,5 +57,16 @@ describe('session mutation invalidation', () => {
     const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey)
     expect(keys).toContainEqual(['stats', 'dashboard-live'])
     expect(keys).toContainEqual(['session', 's1'])
+  })
+
+  it('useEndSession invalidates sessions and dashboard-live', async () => {
+    const { spy, wrapper } = setup()
+    const { result } = renderHook(() => useEndSession(), { wrapper })
+    result.current.mutate('s1')
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(3))
+    const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey)
+    expect(keys).toContainEqual(['sessions'])
+    expect(keys).toContainEqual(['stats'])
+    expect(keys).toContainEqual(['stats', 'dashboard-live'])
   })
 })

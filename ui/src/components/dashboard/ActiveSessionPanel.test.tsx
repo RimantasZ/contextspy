@@ -14,7 +14,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { DashboardActiveSession } from '../../api/client'
 import { ActiveSessionPanel } from './ActiveSessionPanel'
 
@@ -29,7 +29,7 @@ vi.mock('../../api/hooks', () => ({
 const session: DashboardActiveSession = {
   id: 's1',
   name: 'A very long session name that should be truncated visually',
-  started_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+  started_at: '2026-01-01T00:00:00.000Z',
   request_count: 18,
   tokens_total_input: 318420,
   tokens_total_output: 5921,
@@ -40,6 +40,14 @@ function renderPanel(value: DashboardActiveSession | null) {
 }
 
 describe('ActiveSessionPanel', () => {
+  beforeAll(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-01-01T00:05:00.000Z').getTime())
+  })
+
+  afterAll(() => {
+    vi.restoreAllMocks()
+  })
+
   it('shows name, elapsed time, counts and totals', () => {
     renderPanel(session)
     expect(screen.getByText('Active session')).toBeTruthy()

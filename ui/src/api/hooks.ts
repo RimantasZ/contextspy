@@ -56,6 +56,7 @@ export function useCreateSession() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['stats'] })
+      qc.invalidateQueries({ queryKey: ['stats', 'dashboard-live'] })
     },
   })
 }
@@ -67,6 +68,7 @@ export function useEndSession() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['stats'] })
+      qc.invalidateQueries({ queryKey: ['stats', 'dashboard-live'] })
     },
   })
 }
