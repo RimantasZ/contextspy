@@ -18,9 +18,9 @@ scope below focuses on input/context blocks and request JSON, because the reques
 blocks sent from the agent to the LLM.
 
 The linear first-seen semantics in this document are superseded for lineage work by
-`REQUEST_LINEAGE_PLAN.md`. A capture can contain unrelated roots and parallel branches, so a new
+`REQUEST_LINEAGE_PLAN.md`. A session can contain unrelated conversations and forked paths, so a new
 analysis screen must group changes relative to each invocation's resolved parent (and ancestor
-path), not merely the previous capture number. `first_seen_session_seq` remains compatibility
+path), not merely the previous session request number. `first_seen_session_seq` remains compatibility
 metadata for the existing request inspector.
 
 ## User outcome

@@ -171,10 +171,10 @@ function RequestDetails({ request, showSession, sessionName }: { request: Reques
     <dl className="grid grid-cols-2 gap-3 py-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
       <div><dt className="text-[var(--text-muted)]">Output text</dt><dd className="font-medium tabular-nums">{request.tokens_output_text.toLocaleString()}</dd></div>
       <div><dt className="text-[var(--text-muted)]">Thinking</dt><dd className="font-medium tabular-nums">{request.tokens_output_thinking.toLocaleString()}</dd></div>
-      {!showSession && <div><dt className="text-[var(--text-muted)]">Capture #</dt><dd className="font-medium tabular-nums">{request.session_seq ?? '—'}</dd></div>}
+      {!showSession && <div><dt className="text-[var(--text-muted)]">Session request #</dt><dd className="font-medium tabular-nums">{request.session_seq ?? '—'}</dd></div>}
       <div><dt className="text-[var(--text-muted)]">Provider</dt><dd className="font-medium">{request.provider}</dd></div>
       <div><dt className="text-[var(--text-muted)]">Agent</dt><dd className="font-medium">{request.agent ?? '—'}</dd></div>
-      {showSession && <div><dt className="text-[var(--text-muted)]">Capture</dt><dd className="truncate font-medium" title={sessionName}>{sessionName ?? 'n/a'}</dd></div>}
+      {showSession && <div><dt className="text-[var(--text-muted)]">Session</dt><dd className="truncate font-medium" title={sessionName}>{sessionName ?? 'n/a'}</dd></div>}
       <div><dt className="text-[var(--text-muted)]">Endpoint</dt><dd className="truncate font-medium" title={request.endpoint}>{request.endpoint}</dd></div>
     </dl>
   )

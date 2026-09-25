@@ -60,7 +60,7 @@ function SessionsTable({ entries, onSessionClick }: {
   const visible = entries.slice(page * SESSIONS_PAGE_SIZE, (page + 1) * SESSIONS_PAGE_SIZE);
 
   if (entries.length === 0) {
-    return <p className="py-4 text-center text-sm text-[var(--text-muted)]">No captures yet</p>;
+    return <p className="py-4 text-center text-sm text-[var(--text-muted)]">No sessions yet</p>;
   }
 
   return (
@@ -80,7 +80,7 @@ function SessionsTable({ entries, onSessionClick }: {
             const isGap = entry.type === 'gap';
             const isActive = entry.is_active;
             const name = isGap
-              ? '[No capture]'
+              ? '[No session]'
               : (entry.name ?? '(unnamed)');
 
             return (
@@ -268,7 +268,7 @@ export default function Overview() {
           )}
         </div>
         <div className="panel">
-          <p className="section-title mb-3">Captures</p>
+          <p className="section-title mb-3">Sessions</p>
           {summary.isLoading ? (
             <div className="flex h-40 items-center justify-center text-sm text-[var(--text-muted)]">Loading…</div>
           ) : (

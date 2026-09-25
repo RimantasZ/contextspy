@@ -19,7 +19,7 @@ import { ThemeToggle, useTheme } from './ui/ThemeToggle'
 const navItems = [
   { to: '/', label: 'Overview', icon: '◫', exact: true },
   { to: '/requests', label: 'All Requests', icon: '▤' },
-  { to: '/sessions', label: 'Captures', icon: '◉' },
+  { to: '/sessions', label: 'Sessions', icon: '◉' },
   { to: '/settings', label: 'Settings', icon: '⚙' },
 ]
 

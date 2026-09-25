@@ -801,15 +801,16 @@ plus navigation drawer on mobile.
 
 ##### `/sessions/:id` — Session Detail
 
-- The user-facing term is **Capture**; database names and `/sessions` routes remain compatible.
-- Summary/Lineage views are URL-backed. Lineage renders a scrollable graph/timeline with stable
-  capture numbers, parallel lanes, roots, forks, exact solid edges, inferred dashed edges,
+- The user-facing term for the recording window is **Session**. A session may contain independent
+  or forked conversations; a conversation is one path through linked requests.
+- Summary/Conversations views are URL-backed. Conversations renders a scrollable graph/timeline with stable
+  session request numbers, parallel lanes, roots, forks, exact solid edges, inferred dashed edges,
   confidence/evidence, duration bars, and an accessible table fallback. Selecting an edge exposes
   its context-change totals; selecting a node links to Request Detail.
-- Capture timing (opened/closed, first/last request, elapsed and active request duration), totals,
+- Session timing (opened/closed, first/last request, elapsed and active request duration), totals,
   token-composition donut/table, selectable minute/hour/day timeline, tool treemap/table, and up
   to 500 requests using the shared sortable request list.
-- Actions: **End capture** (when active), **Export PDF**, **Rename**, and **Delete**. The PDF
+- Actions: **End session** (when active), **Export PDF**, **Rename**, and **Delete**. The PDF
   contains timing, totals, category and tool tables, and up to the same 500 request rows; it notes
   when the list is truncated relative to the full session summary.
 

@@ -50,11 +50,11 @@ export function DeleteSessionModal({ sessionId, sessionName, onClose, onDeleted 
     >
       <div className="modal-dialog mx-4 w-full max-w-sm space-y-4" role="dialog" aria-modal="true" aria-labelledby="delete-session-title">
         <h2 id="delete-session-title" className="text-base font-semibold">
-          Delete capture &ldquo;{sessionName}&rdquo;
+          Delete session &ldquo;{sessionName}&rdquo;
         </h2>
 
         <p className="text-sm text-[var(--text-muted)]">
-          This will permanently remove the capture record. Requests can be kept or deleted.
+          This will permanently remove the session record. Requests can be kept or deleted.
         </p>
 
         <label className="flex items-center gap-2.5 cursor-pointer select-none">
@@ -65,7 +65,7 @@ export function DeleteSessionModal({ sessionId, sessionName, onClose, onDeleted 
             className="h-4 w-4 rounded"
           />
           <span className="text-sm text-[var(--text)]">
-            Also delete all requests in this capture
+            Also delete all requests in this session
           </span>
         </label>
 

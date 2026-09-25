@@ -2,18 +2,18 @@
 
 ## Unreleased
 
-### Context lineage
+### Conversations
 
-- Added a Capture Lineage view that reconstructs roots, continuations, forks, branches, and
+- Added a Conversations view on Session Detail that reconstructs roots, continuations, forks, and
   overlapping invocations. Provider predecessor IDs are authoritative; block-based inference is
   conservative, confidence-labelled, and leaves ties ambiguous.
 - Added occurrence-aware parent/child context diffs for persisted, response-promoted, added,
   removed, and replaced blocks, with token/category/type summaries and links back to requests.
-- Capture numbers are now allocated atomically and protected by a uniqueness index. New HTTP and
-  WebSocket invocations retain their observed start time and the capture active when they began,
-  even when completion order differs or a capture ends while work is in flight.
-- Updated visible UI terminology from Session to Capture while retaining existing database, API,
-  route, and CLI compatibility.
+- Session request numbers are now allocated atomically and protected by a uniqueness index. New HTTP
+  and WebSocket invocations retain their observed start time and the session active when they began,
+  even when completion order differs or a session ends while work is in flight.
+- The UI calls the recording window a session and each linked path a conversation. Forked
+  conversations may share earlier requests; existing database, API, route, and CLI names remain.
 
 ### UI redesign
 

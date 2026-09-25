@@ -225,8 +225,8 @@ $env:HTTP_PROXY  = "http://127.0.0.1:8888"
 
 Open http://127.0.0.1:5173. Requests appear in real-time as your agent makes LLM calls.
 
-- **Overview** — token totals, category/tool composition, captures, models, latency/errors, and
+- **Overview** — token totals, category/tool composition, sessions, models, latency/errors, and
   recent requests
 - **All Requests** — searchable/filterable request list with token counts and category bars
-- **Captures** — group requests by profiling window; click **Start capture**, then use Lineage to
-  distinguish sequential context, forks, parallel work, and unrelated roots
+- **Sessions** — group requests by time window; click **Start session**, then use Conversations to
+  distinguish continuing context, forks, parallel work, and unrelated roots

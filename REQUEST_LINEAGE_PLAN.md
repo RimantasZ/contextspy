@@ -9,6 +9,11 @@ capture lineage API, and the graph/timeline UI. Phases 7–9 remain follow-up wo
 overlays require observable agent/trace metadata, and inferred relations intentionally remain
 read-time results until real-capture accuracy and performance have been validated.
 
+Terminology update: the product calls the named recording window a **session** and a single
+linked path a **conversation**. The older uses of “capture” below refer to a session; `capture`
+in the lineage API is retained as a response property. Conversations are derived at read time,
+and forked conversations can share earlier requests.
+
 It extends, and partially corrects, `SESSION_ANALYSIS_PLAN.md`:
 
 - the current session-analysis plan assumes requests form one sequence;
@@ -61,25 +66,23 @@ Use these terms in new product copy and documentation:
 
 | Concept | User-facing term | Notes |
 | --- | --- | --- |
-| User-controlled named time window | Capture | Existing database/API name remains `Session` initially. |
+| User-controlled named time window | Session | Matches the existing database, API, and CLI name. |
 | One provider request/response attempt | Invocation | Existing database/API name remains `Request`. |
-| Family of evolving contexts | Context lineage | A connected component of primary continuation edges. |
-| Path created by a fork | Branch | Derived from graph shape; not stored as an edge type. |
-| Explicit provider-side grouping | Conversation | Only use when an actual provider conversation ID exists. |
+| Single linked request path | Conversation | Derived from continuation edges; forks may share earlier requests. |
+| Family of evolving contexts | Context lineage | Internal graph term for a connected component of primary continuation edges. |
+| Path created by a fork | Branch | Internal topology term; not stored as an edge type. |
+| Explicit provider-side grouping | Provider conversation | Only use when an actual provider conversation ID exists. |
 | Explicit agent execution grouping | Agent run or trace | Only use when observable metadata exists. |
 
 Avoid using `thread` as the central model. It is overloaded across chat UIs, operating-system
-threads, and agent products. Avoid calling an inferred lineage an "LLM session" because the proxy
-cannot always observe a provider or agent session boundary.
+threads, and agent products. A derived conversation is a context path, not proof of a provider
+conversation ID or agent execution boundary.
 
 Compatibility rules:
 
 - keep the `sessions` table, `session_id`, `/api/sessions`, and existing CLI commands in the first
   release;
-- update visible copy from generic "Session" to "Capture" where this does not make existing CLI
-  instructions inconsistent;
-- optionally add `contextspy capture start|end|list` as aliases later, keeping `session` commands
-  working;
+- keep "Session" in visible copy and use "Conversation" for a linked request path;
 - do not rename `Request` rows or routes; "invocation" is explanatory product language.
 
 ## Core semantic model
@@ -191,8 +194,8 @@ first-seen semantics.
 
 ### Existing number
 
-Retain `session_seq` as an immutable capture-local label. Rename its UI label from "Session
-sequence" to "Captured request #" or simply "Capture #".
+Retain `session_seq` as an immutable session-local label. Show it as "Session request #" in
+request details and "Request #" within a session graph.
 
 Do not use it to infer a parent. Today it is allocated when the completed invocation is persisted,
 so concurrent requests can be numbered in completion order rather than start order.
@@ -605,9 +608,9 @@ types.
 
 ## UI and visualization
 
-### Capture detail integration
+### Session detail integration
 
-Add a `Timeline | Lineage` view switch to the capture detail page. Retain the request table as a
+Add a `Summary | Conversations` view switch to the session detail page. Retain the request table as a
 fallback and as an accessible alternative to the graph.
 
 ### Graph design
@@ -889,7 +892,7 @@ ambiguous cases remain visibly unresolved.
 - Add frontend types/hooks and live invalidation.
 - Add a lineage tree/table first, with parent/child navigation and edge delta summaries.
 - Add previous/children links to request detail.
-- Update visible capture terminology without breaking routes or CLI compatibility.
+- Use Session for the recording window and Conversation for a linked path without changing routes or CLI commands.
 
 Acceptance: users can navigate exact/inferred branches and inspect what changed without a graphical
 canvas.

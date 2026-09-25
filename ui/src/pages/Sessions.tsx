@@ -67,10 +67,10 @@ function InlineRename({ id, currentName, onDone }: { id: string; currentName: st
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onDone(); }}
-        aria-label="Capture name"
+        aria-label="Session name"
         className="app-field w-48 py-1"
       />
-      <button onClick={save} className="app-button h-8 w-8 px-0 text-[var(--success)]" title="Save" aria-label="Save capture name">✓</button>
+      <button onClick={save} className="app-button h-8 w-8 px-0 text-[var(--success)]" title="Save" aria-label="Save session name">✓</button>
       <button onClick={onDone} className="app-button h-8 w-8 px-0" title="Cancel" aria-label="Cancel rename">✕</button>
     </div>
   );
@@ -128,7 +128,7 @@ export default function Sessions() {
   return (
     <div className="page-shell">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-[var(--text)]">Captures</h1>
+        <h1 className="text-2xl font-bold text-[var(--text)]">Sessions</h1>
         <SessionControls />
       </div>
 
@@ -137,7 +137,7 @@ export default function Sessions() {
           <div className="py-12 text-center text-sm text-[var(--text-muted)]">Loading\u2026</div>
         ) : sessions.length === 0 ? (
           <div className="py-12 text-center text-sm text-[var(--text-muted)]">
-            No captures yet. Start one to group requests recorded during the same profiling window.
+            No sessions yet. Start one to group requests recorded during the same period of time.
           </div>
         ) : (
           <table className="w-full text-sm">

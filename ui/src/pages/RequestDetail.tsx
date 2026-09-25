@@ -71,7 +71,7 @@ export default function RequestDetail() {
     ['Transport', `${request.transport} / ${request.response_transport}`],
     ['Time to first token', request.ttft_ms != null ? `${request.ttft_ms}ms` : '—'],
     ['Tokenizer', request.tokenizer],
-    ['Capture #', request.session_seq ?? '—'],
+    ['Session request #', request.session_seq ?? '—'],
     ['Provider request ID', request.provider_response_id ?? '—'],
     ['Previous response ID', request.predecessor_response_id ?? '—'],
     ['API context tokens', request.provider_input_tokens?.toLocaleString() ?? '—'],
@@ -88,7 +88,7 @@ export default function RequestDetail() {
       <CaptureNotice request={request} />
       {(parentEdge || childEdges.length > 0) && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-3 text-xs">
-          <span className="font-semibold">Context lineage</span>
+          <span className="font-semibold">Conversations</span>
           {parentEdge && (
             <button type="button" className="app-button min-h-8 py-1" onClick={() => navigate(`/requests/${parentEdge.source_request_id}`)}>
               ← Parent {parentEdge.certainty === 'inferred' ? `(${Math.round((parentEdge.confidence ?? 0) * 100)}% inferred)` : '(exact)'}
@@ -99,7 +99,7 @@ export default function RequestDetail() {
               Child {index + 1} →
             </button>
           ))}
-          {request.session_id && <button type="button" className="app-button-ghost ml-auto min-h-8 py-1" onClick={() => navigate(`/sessions/${request.session_id}?view=lineage`)}>Open capture lineage</button>}
+          {request.session_id && <button type="button" className="app-button-ghost ml-auto min-h-8 py-1" onClick={() => navigate(`/sessions/${request.session_id}?view=lineage`)}>Open session conversations</button>}
         </div>
       )}
       <RequestWorkbench request={request} activeDirection={activeDirection} onDirectionChange={setActiveDirection} />

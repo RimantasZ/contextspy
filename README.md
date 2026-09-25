@@ -87,9 +87,9 @@ ContextSpy makes these costs visible so you can act on them. The responsive ligh
 includes session and provider summaries, model and latency breakdowns, tool-use treemaps, and a
 request workbench with compact, relative-size, and raw payload views. Filters, linked-block
 navigation, metadata inspection, and in-content search help trace exactly where the context went.
-Capture detail also reconstructs context lineage: unrelated roots, exact or inferred
+Session detail also reconstructs conversations: unrelated roots, exact or inferred
 continuations, forks, parallel timing, and the blocks/tokens that persisted, were promoted from a
-parent response, added, removed, or replaced.
+parent response, added, removed, or replaced. Forked conversations can share earlier requests.
 
 ## How does it work
 
@@ -166,10 +166,10 @@ If that name already exists, `-1`, `-2`, and so on is added before `.back`.
   current user message, assistant prefill, uncategorised
 - **Live dashboard** — responsive light/dark charts, tool-use treemaps, and a request workbench
   with compact, relative-size, and raw payload views plus block search and inspection
-- **Capture tracking** — name time windows, keep stable per-capture request numbers, and compare
+- **Session tracking** — name time windows, keep stable per-session request numbers, and compare
   usage across runs
-- **Context lineage** — visualize roots, forks, and parallel invocations without assuming capture
-  order is conversation order; inspect exact/inferred evidence and parent-relative context changes
+- **Conversations** — visualize independent and forked request paths without assuming session
+  request order is conversation order; inspect exact/inferred evidence and parent-relative context changes
 - **SQLite storage** — all data stored locally in `~/.contextspy/`; no data leaves your machine
 - **Agent detection** — Copilot, Claude Code/SDK, Codex CLI, opencode, Cursor, OpenAI SDK, and
   generic clients

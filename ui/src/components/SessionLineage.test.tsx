@@ -112,10 +112,13 @@ describe('SessionLineage', () => {
   it('renders forks and exposes edge evidence and context change totals', async () => {
     render(<MemoryRouter><SessionLineage graph={graph} /></MemoryRouter>)
 
-    expect(screen.getByRole('button', { name: 'Capture #1, Lineage root' }).textContent).toContain('Fork')
-    expect(screen.getByRole('button', { name: /Inferred 91% from Capture #1 to Capture #3/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Request #1, No known parent' }).textContent).toContain('Fork')
+    expect(screen.getByRole('button', { name: /Inferred 91% from Request #1 to Request #3/ })).toBeTruthy()
 
-    await userEvent.click(screen.getByRole('button', { name: /Exact continuation from Capture #1 to Capture #2/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Request #1, No known parent' }))
+    expect(screen.getByText('Conversations 1.1, 1.2 · request depth 0')).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: /Exact continuation from Request #1 to Request #2/ }))
     expect(screen.getAllByText('Exact continuation').length).toBeGreaterThan(0)
     expect(screen.getByText('provider predecessor id')).toBeTruthy()
     expect(screen.getByText('2 blocks')).toBeTruthy()

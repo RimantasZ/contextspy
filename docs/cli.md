@@ -92,12 +92,12 @@ contextspy setup-vllm          config.toml snippet + client URL for vLLM
 
 ## Session commands
 
-Captures group requests observed during a named time window (e.g. one task or feature). The CLI
-keeps the `session` command name for compatibility; the dashboard calls these records Captures.
-Capture order is a stable recording label, not proof that requests form one conversation.
+Sessions group requests observed during a named time window (e.g. one task or feature). A session
+can contain several independent or forked conversations. Session request numbers are stable
+recording labels, not proof that requests form one conversation.
 
 ```
-contextspy session start <name>   Start a named capture session
+contextspy session start <name>   Start a named session
 contextspy session end            End the currently active session
 contextspy session list           List session names, IDs, timestamps, and active state
 ```

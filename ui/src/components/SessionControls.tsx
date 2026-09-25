@@ -56,17 +56,17 @@ export function SessionControls() {
               disabled={endSession.isPending}
               className="app-button-danger min-h-8 py-1 text-xs"
             >
-              End capture
+              End session
             </button>
           </>
         ) : (
           <>
-            <span className="text-sm text-[var(--text-muted)]">No active capture</span>
+            <span className="text-sm text-[var(--text-muted)]">No active session</span>
             <button
               onClick={() => setShowModal(true)}
               className="app-button-primary min-h-8 py-1 text-xs"
             >
-              Start capture
+              Start session
             </button>
           </>
         )}
@@ -75,15 +75,15 @@ export function SessionControls() {
       {showModal && (
         <div className="modal-backdrop" role="presentation">
           <div className="modal-dialog w-80" role="dialog" aria-modal="true" aria-labelledby="start-session-title">
-            <h2 id="start-session-title" className="mb-4 font-semibold">Start a capture</h2>
+            <h2 id="start-session-title" className="mb-4 font-semibold">Start a session</h2>
             <input
               autoFocus
               type="text"
-              placeholder="Capture name"
+              placeholder="Session name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleStart()}
-              aria-label="Capture name"
+              aria-label="Session name"
               className="app-field mb-4 w-full"
             />
             <div className="flex justify-end gap-2">
