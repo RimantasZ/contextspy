@@ -68,7 +68,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
   onDirectionChange: (direction: WorkbenchDirection) => void
 }) {
   const blocksQuery = useRequestBlocks(request.id)
-  const [view, setView] = useState<WorkbenchView>('compact')
+  const [view, setView] = useState<WorkbenchView>('proportional')
   const [activeTypes, setActiveTypes] = useState<Set<BlockVisual>>(() => new Set(ALL_VISUALS))
   const [search, setSearch] = useState('')
   const [arrangement, setArrangement] = useState<ArrangementPreset>('sequence')
@@ -137,8 +137,8 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
           value={view}
           onChange={setView}
           options={[
+            { value: 'proportional', label: 'Default' },
             { value: 'compact', label: 'Compact' },
-            { value: 'proportional', label: 'Proportional' },
             { value: 'raw', label: 'Raw' },
           ]}
         />

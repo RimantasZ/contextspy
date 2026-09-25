@@ -17,7 +17,7 @@ import { useNavigate } from 'react-router-dom';
 import { useStatsOverview, useRequests, useToolStats, useSessions, useSessionsSummary } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { RequestTable } from '../components/RequestTable';
-import { SessionControls } from '../components/SessionControls';
+import { LiveSessionSection } from '../components/dashboard/LiveSessionSection';
 import { ToolBreakdownSection } from '../components/ToolBreakdown';
 import { OutputSplit } from '../components/OutputSplit';
 import type { SessionSummaryEntry, LatencyStats } from '../api/client';
@@ -238,10 +238,7 @@ export default function Overview() {
 
   return (
     <div className="page-shell">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-[var(--text)]">Overview</h1>
-        <SessionControls />
-      </div>
+      <h1 className="text-2xl font-bold text-[var(--text)]">Overview</h1>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -254,6 +251,8 @@ export default function Overview() {
         <StatCard label="Total requests" value={s?.request_count ?? '—'} />
         <StatCard label="Providers" value={s ? Object.keys(s.by_provider).length : '—'} />
       </div>
+
+      <LiveSessionSection />
 
       {/* Charts + sessions row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

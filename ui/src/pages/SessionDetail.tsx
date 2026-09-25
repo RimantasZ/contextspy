@@ -21,6 +21,7 @@ import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
 import { ToolBreakdownSection } from '../components/ToolBreakdown';
 import { OutputSplit } from '../components/OutputSplit';
+import { CacheSplit } from '../components/CacheSplit';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import { SessionLineage } from '../components/SessionLineage';
 import { SegmentedControl } from '../components/ui/SegmentedControl';
@@ -159,6 +160,12 @@ export default function SessionDetail() {
       body: [
         ['Requests', String(st?.request_count ?? 0)],
         ['Context tokens', (st?.tokens_total_input ?? 0).toLocaleString()],
+        ...(st && st.cache.avg_pct != null && st.cache.overall_pct != null
+          ? [
+              ['   avg cached (per request)', `${st.cache.avg_pct.toFixed(1)}%`],
+              ['   overall cached (token-weighted)', `${st.cache.overall_pct.toFixed(1)}%`],
+            ]
+          : []),
         ['Generated tokens', (st?.tokens_total_output ?? 0).toLocaleString()],
         ...(st && st.tokens_output_thinking > 0
           ? [
@@ -441,7 +448,11 @@ export default function SessionDetail() {
       {/* Stat cards */}
       <div className="grid grid-cols-3 gap-4">
         {([
-          { label: 'Context tokens', value: st ? st.tokens_total_input.toLocaleString() : '—' },
+          {
+            label: 'Context tokens',
+            value: st ? st.tokens_total_input.toLocaleString() : '—',
+            sub: st && <CacheSplit cache={st.cache} />,
+          },
           {
             label: 'Generated tokens',
             value: st ? st.tokens_total_output.toLocaleString() : '—',

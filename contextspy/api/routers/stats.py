@@ -27,6 +27,12 @@ def stats_overview():
         return crud.get_stats(db)
 
 
+@router.get("/stats/dashboard-live")
+def stats_dashboard_live():
+    with get_db() as db:
+        return crud.get_dashboard_live(db)
+
+
 @router.get("/stats/session/{session_id}")
 def stats_session(session_id: str):
     with get_db() as db:
