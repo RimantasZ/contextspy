@@ -124,7 +124,7 @@ export function RequestTable({ requests, sessions, onRowClick, sortKey: external
             <article key={request.id} tabIndex={0} onKeyDown={(event) => onRowKey(event, request.id)} className="surface rounded-lg border border-[var(--border)] p-3">
               <div className="flex items-start justify-between gap-3">
                 <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onRowClick(request.id)}>
-                  <span className="block text-xs text-[var(--text-muted)]">{formatRequestTime(request.timestamp)}</span>
+                  <span className="block text-xs text-[var(--text-muted)]">{!showSession && request.session_seq != null ? `#${request.session_seq} · ` : ''}{formatRequestTime(request.timestamp)}</span>
                   <strong className="mt-1 block truncate text-sm">{request.model ?? request.provider}</strong>
                 </button>
                 <StatusBadge request={request} />
@@ -153,7 +153,7 @@ function RequestRow({ request, open, showSession, sessionName, onOpen, onToggle,
   return (
     <>
       <tr tabIndex={0} onClick={onOpen} onKeyDown={(event) => onKey(event, request.id)} className="cursor-pointer border-b border-[var(--border)] hover:bg-[var(--surface-muted)]">
-        <td className="whitespace-nowrap p-2 font-mono text-xs text-[var(--text-muted)]">{formatRequestTime(request.timestamp)}</td>
+        <td className="whitespace-nowrap p-2 font-mono text-xs text-[var(--text-muted)]">{!showSession && request.session_seq != null ? `#${request.session_seq} · ` : ''}{formatRequestTime(request.timestamp)}</td>
         <td className="p-2 text-right tabular-nums">{request.tokens_total_input > 0 ? request.tokens_total_input.toLocaleString() : '—'}</td>
         <td className="p-2"><ContextBar data={request} /></td>
         <td className="whitespace-nowrap p-2 text-right tabular-nums text-[var(--text-muted)]">{formatRequestDuration(request.duration_ms)}</td>
@@ -171,6 +171,7 @@ function RequestDetails({ request, showSession, sessionName }: { request: Reques
     <dl className="grid grid-cols-2 gap-3 py-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
       <div><dt className="text-[var(--text-muted)]">Output text</dt><dd className="font-medium tabular-nums">{request.tokens_output_text.toLocaleString()}</dd></div>
       <div><dt className="text-[var(--text-muted)]">Thinking</dt><dd className="font-medium tabular-nums">{request.tokens_output_thinking.toLocaleString()}</dd></div>
+      {!showSession && <div><dt className="text-[var(--text-muted)]">Session request #</dt><dd className="font-medium tabular-nums">{request.session_seq ?? '—'}</dd></div>}
       <div><dt className="text-[var(--text-muted)]">Provider</dt><dd className="font-medium">{request.provider}</dd></div>
       <div><dt className="text-[var(--text-muted)]">Agent</dt><dd className="font-medium">{request.agent ?? '—'}</dd></div>
       {showSession && <div><dt className="text-[var(--text-muted)]">Session</dt><dd className="truncate font-medium" title={sessionName}>{sessionName ?? 'n/a'}</dd></div>}

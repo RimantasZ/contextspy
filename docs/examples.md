@@ -107,8 +107,9 @@ Sort descending to find the largest ones. Click a request and use the compositio
 block for its exact count. The view deliberately caps visual growth, so use the inspector and
 Analytics totals for exact comparisons.
 
-Use **Sessions** to track token growth over a multi-turn conversation: each successive
-request will show the growing `conversation_history` slice.
+Use **Sessions** to track token growth across a task. Open a session's **Conversations** view to see
+whether requests continued one context, forked, overlapped, or were unrelated; session request
+numbers show recording order and do not by themselves imply a conversation sequence.
 
 ---
 

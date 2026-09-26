@@ -34,12 +34,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session as OrmSession
 
-from contextspy.db.models import BlockRecord, Request, SchemaMeta, ToolStat
+from contextspy.db.models import BlockRecord, Request, SchemaMeta, Session, ToolStat
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA_VERSION_KEY = "schema_version"
 _PENDING_KEY = "pending_data_migrations"
@@ -624,8 +624,41 @@ def _migrate_to_v4(db: OrmSession) -> None:
     _reanalyze_inline_media_requests(db)
 
 
+# ---------------------------------------------------------------------------
+# v5: concurrency-safe capture-local request numbering
+# ---------------------------------------------------------------------------
+
+def _migrate_to_v5(db: OrmSession) -> None:
+    sessions = db.execute(select(Session)).scalars().all()
+    for session in sessions:
+        requests = db.execute(
+            select(Request)
+            .where(Request.session_id == session.id)
+            .order_by(Request.session_seq.asc().nullslast(), Request.timestamp.asc(), Request.id.asc())
+        ).scalars().all()
+        sequences = [request.session_seq for request in requests]
+        needs_repair = any(value is None for value in sequences) or len(set(sequences)) != len(sequences)
+        if needs_repair:
+            # Only damaged captures are renumbered. Valid historical labels,
+            # including gaps, are immutable.
+            for temporary, request in enumerate(requests, start=1):
+                request.session_seq = -temporary
+            db.flush()
+            for sequence, request in enumerate(requests, start=1):
+                request.session_seq = sequence
+            db.flush()
+            sequences = list(range(1, len(requests) + 1))
+        session.next_request_seq = max((value for value in sequences if value is not None), default=0) + 1
+    db.flush()
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_session_seq_unique "
+        "ON requests (session_id, session_seq)"
+    ))
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
+    5: _migrate_to_v5,
 }

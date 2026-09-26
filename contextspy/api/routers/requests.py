@@ -16,6 +16,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from contextspy.db import crud
+from contextspy.analysis.lineage import context_diff_for_requests
 from contextspy.db.database import get_db
 
 router = APIRouter(tags=["requests"])
@@ -68,3 +69,16 @@ def get_request_blocks(request_id: str):
             raise HTTPException(status_code=404, detail="Request not found")
         blocks = crud.get_blocks(db, request_id)
         return {"session_seq": req.session_seq, "blocks": blocks}
+
+
+@router.get("/requests/{request_id}/context-diff")
+def get_request_context_diff(
+    request_id: str,
+    parent_id: str = Query(..., min_length=1),
+):
+    with get_db() as db:
+        snapshots = crud.get_context_diff_snapshots(db, parent_id, request_id)
+        if snapshots is None:
+            raise HTTPException(status_code=404, detail="Parent or child request not found")
+        parent, child = snapshots
+        return context_diff_for_requests(parent, child)

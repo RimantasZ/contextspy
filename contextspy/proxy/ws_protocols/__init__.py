@@ -25,6 +25,7 @@ from __future__ import annotations
 from contextspy.proxy.ws_protocols.base import (
     WS_REGISTRY,
     CompletedExchange,
+    InvocationCaptureContext,
     WsProtocol,
     WsSession,
     get_ws_protocol,
@@ -37,6 +38,7 @@ register_ws_protocol(CodexResponsesProtocol())
 __all__ = [
     "WS_REGISTRY",
     "CompletedExchange",
+    "InvocationCaptureContext",
     "WsProtocol",
     "WsSession",
     "get_ws_protocol",

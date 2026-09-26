@@ -441,13 +441,15 @@ CREATE TABLE sessions (
     name        TEXT NOT NULL,
     started_at  DATETIME NOT NULL,
     ended_at    DATETIME,
-    is_active   INTEGER NOT NULL DEFAULT 1  -- 1 = active, 0 = ended
+    is_active   INTEGER NOT NULL DEFAULT 1, -- 1 = active, 0 = ended
+    next_request_seq INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE requests (
     id                              TEXT PRIMARY KEY,   -- UUID v4
     session_id                      TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-    timestamp                       DATETIME NOT NULL,
+    timestamp                       DATETIME NOT NULL, -- completion/persistence time
+    started_at                      DATETIME,          -- observed invocation start for new rows
     provider                        TEXT NOT NULL,
         -- e.g. 'openai', 'openai_azure', 'anthropic', 'copilot',
         --      'opencode_zen', 'openai_chatgpt', 'ollama'
@@ -510,6 +512,7 @@ CREATE INDEX idx_requests_timestamp ON requests(timestamp);
 CREATE INDEX idx_requests_provider ON requests(provider);
 CREATE INDEX idx_requests_provider_response ON requests(provider, provider_response_id);
 CREATE INDEX idx_requests_predecessor_response ON requests(predecessor_response_id);
+CREATE UNIQUE INDEX idx_requests_session_seq_unique ON requests(session_id, session_seq);
 
 CREATE TABLE tool_stats (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -596,7 +599,7 @@ both of:
    user at `db-upgrade` or `reset-db`) if any data migration is pending — this prevents the app
    from running against a DB with stale/missing derived data.
 
-Currently `SCHEMA_VERSION = 4`; `_migrate_to_v2` backfills `session_seq` (per-session request
+Currently `SCHEMA_VERSION = 5`; `_migrate_to_v2` backfills `session_seq` (per-session request
 ordinal, assigned by `timestamp` order) and reconstructs `blocks`/`block_contents` rows for
 pre-existing requests from their still-present `raw_request_body`/`raw_response_body` (re-running
 the adapter → classify → insert_blocks pipeline). `_migrate_to_v3` copies retained provider JSON
@@ -604,6 +607,9 @@ into explicit canonical columns and reconstructs retained Responses WebSocket ch
 exact provider response IDs, replacing derived blocks/tool stats transactionally when parsing
 succeeds. Missing predecessors remain explicitly partial. `_migrate_to_v4` reanalyzes retained
 requests containing inline base64 media so transport encodings are no longer counted as text.
+`_migrate_to_v5` repairs only captures with duplicate or missing request ordinals, preserves valid
+historical labels (including gaps), initializes each capture's atomic sequence counter, and adds
+the uniqueness index.
 
 ---
 
@@ -620,6 +626,7 @@ requests containing inline base64 media so transport encodings are no longer cou
 | `POST` | `/api/sessions` | Create and start a new session. Body: `{ "name": "string" }`. Returns session object. If another session is active, it is automatically ended first (warning included in response). |
 | `GET` | `/api/sessions` | List all sessions (newest first). |
 | `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session. 404 if missing. |
+| `GET` | `/api/sessions/{id}/lineage` | Complete session lineage graph. Returns exact/inferred continuation edges, diagnostic root-to-leaf paths, conservative conversation groups and membership, uncertainty diagnostics, timing, and per-edge context-delta summaries. Exact parents captured outside the selected session are external nodes. |
 | `PATCH` | `/api/sessions/{id}` | Rename a session. Body: `{ "name": "string" }`. 422 if blank, 404 if missing. |
 | `POST` | `/api/sessions/{id}/end` | End a session. Retained content is unchanged until the next startup retention pass. 404 if missing. |
 | `DELETE` | `/api/sessions/{id}?delete_requests=bool` | Delete session, optionally cascading its request records. 404 if missing. |
@@ -631,12 +638,14 @@ requests containing inline base64 media so transport encodings are no longer cou
 | `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
 | `GET` | `/api/requests/{id}` | Full transport-neutral request detail. `request_body`/`response_body` resolve to the stored canonical documents, with outcome, context fidelity/accounting, usage, and compatibility diagnostics when retained. Block data is fetched from the companion `/blocks` endpoint. 404 if missing. |
 | `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, linked_call_id, linked_definition_id, linked_previous_message_id, first_seen_session_seq`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. `first_seen_session_seq` is `null` for session-less or content-less blocks. 404 if request missing. |
+| `GET` | `/api/requests/{id}/context-diff?parent_id={id}` | Occurrence-aware parent/child block mapping with persisted, parent-output-promoted, added, removed, replaced, and unavailable groups plus token/category/type summaries. |
 
 #### Stats
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/stats/overview` | Aggregated totals across all recorded requests. |
+| `GET` | `/api/stats/dashboard-live` | One consistent read snapshot of the active session: totals, ten session-wide activity points, up to four conservative conversation groups with five recent cards each, diagnostic fragment/conversation counts, and resolved-parent context changes. The flat `request_flow` and top-level `context_change` are compatibility aliases; the latter follows the most recently active group's resolved parent. |
 | `GET` | `/api/stats/session/{id}` | Aggregated breakdown for a specific session. |
 | `GET` | `/api/stats/timeline` | Time-series data. Query params: `session_id` (optional), `bucket` = `minute` \| `hour` \| `day`. |
 | `GET` | `/api/stats/tools` | Per-tool token breakdown (`tool_name`, `definition_tokens`, `result_tokens`). Query params: `session_id`, `request_id` (both optional; live-aggregated from `tool_stats`, not materialized separately). |
@@ -740,6 +749,13 @@ plus navigation drawer on mobile.
 
 - Header-level session controls show the active session or open the **Start session** dialog; an
   active session can be ended in place.
+- The live session panel shows all-session totals, up to four backend-classified request sequences
+  (five recent requests per sequence), a session-wide activity chart, and a selected sequence's
+  context-size comparison. With no confirmed parallel stream it shows one session sequence with
+  explicit lineage gaps, even if the diagnostic graph has many paths. Confirmed forks may share
+  history across sequences. Context changes compare only with the resolved lineage parent, never
+  the preceding session request number. The global Recent requests list remains a chronological
+  audit view.
 - Global summary cards: context tokens, generated tokens (split into visible output and thinking
   when applicable), total requests, and provider count.
 - Responsive token-composition donut with an adjacent exact-value category table.
@@ -793,6 +809,15 @@ plus navigation drawer on mobile.
 
 ##### `/sessions/:id` — Session Detail
 
+- The user-facing term for the recording window is **Session**. A session can contain several
+  independent or forked conversations. A conversation is a supported request stream, not every
+  root-to-leaf lineage path; ambiguous or missing parentage creates a diagnostic fragment, not
+  another conversation. Generic agent labels do not prove independent streams.
+- Summary/Conversations views are URL-backed. Conversations renders a scrollable graph/timeline with stable
+  session request numbers, parallel lanes, roots, forks, exact solid edges, inferred dashed edges,
+  confidence/evidence, duration bars, backend conversation membership and a diagnostic path count,
+  and an accessible table fallback. Selecting an edge exposes
+  its context-change totals; selecting a node links to Request Detail.
 - Session timing (opened/closed, first/last request, elapsed and active request duration), totals,
   token-composition donut/table, selectable minute/hour/day timeline, tool treemap/table, and up
   to 500 requests using the shared sortable request list.
@@ -1235,10 +1260,9 @@ When `contextspy start-local` is called:
 - **Native tokenizer support:** Anthropic provides a token-counting API endpoint; Ollama has `/api/tokenize`. These could be used for exact counts per provider.
 - **Cost estimation:** Add a `models_pricing.json` lookup table (input/output price per 1K tokens per model) to compute estimated cost per request.
 - **Additional export formats:** Session PDF export exists; CSV / JSON export is not yet built.
-- **Prompt diffing:** Visual diff of the context window between consecutive requests in the same
-  session. Groundwork laid: every `Request` has a `session_seq` ordinal and every `Block` a
-  `content_hash`, so unchanged blocks across consecutive requests can already be identified by
-  hash equality — the diffing UI/logic itself is not yet built.
+- **Agent orchestration overlays:** Context lineage and parent-relative prompt diffing are built.
+  Add exact delegation/contribution overlays when a supported transport exposes agent-run or trace
+  identifiers; do not present content similarity alone as proven causality.
 - **opencode User-Agent:** Confirm the User-Agent string once opencode is available for testing.
 - **Re-tokenisation:** Add an API endpoint to re-count tokens for historical requests using a different tokenizer, without re-capturing.
 

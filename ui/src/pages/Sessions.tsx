@@ -137,7 +137,7 @@ export default function Sessions() {
           <div className="py-12 text-center text-sm text-[var(--text-muted)]">Loading\u2026</div>
         ) : sessions.length === 0 ? (
           <div className="py-12 text-center text-sm text-[var(--text-muted)]">
-            No sessions yet. Start one to group your requests.
+            No sessions yet. Start one to group requests recorded during the same period of time.
           </div>
         ) : (
           <table className="w-full text-sm">

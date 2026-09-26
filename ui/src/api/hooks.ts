@@ -40,6 +40,15 @@ export function useSession(id: string) {
   })
 }
 
+export function useSessionLineage(id: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['lineage', id],
+    queryFn: () => sessionsApi.lineage(id),
+    enabled: !!id && enabled,
+    refetchInterval: 5_000,
+  })
+}
+
 export function useCreateSession() {
   const qc = useQueryClient()
   return useMutation({
@@ -106,6 +115,14 @@ export function useRequestBlocks(id: string, enabled: boolean = true) {
     queryKey: ['request', id, 'blocks'],
     queryFn: () => requestsApi.blocks(id),
     enabled: !!id && enabled,
+  })
+}
+
+export function useContextDiff(childId: string, parentId: string | null) {
+  return useQuery({
+    queryKey: ['request', childId, 'context-diff', parentId],
+    queryFn: () => requestsApi.contextDiff(childId, parentId ?? ''),
+    enabled: !!childId && !!parentId,
   })
 }
 

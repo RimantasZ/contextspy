@@ -22,7 +22,8 @@ function bc(block_type: string, delta: number): DashboardBlockChange {
 
 function change(overrides: Partial<DashboardContextChange> = {}): DashboardContextChange {
   return {
-    request_id: 'r18', session_seq: 18, tokens_total_input: 87412, previous_request_id: 'r17', previous_session_seq: 17,
+    request_id: 'r18', session_seq: 18, tokens_total_input: 87412, parent_request_id: 'r17', parent_session_seq: 17,
+    parent_state: 'exact', parent_confidence: null, external_parent: false, first_conversation: false,
     token_delta: 5612, comparison_fidelity: 'complete', block_changes: [], ...overrides,
   }
 }
@@ -62,7 +63,7 @@ describe('ContextChangePanel', () => {
 
   it('handles no changes, partial, unavailable and first-request states', () => {
     const { unmount } = render(<ContextChangePanel change={change({ block_changes: [bc('tool_call', 0)] })} />)
-    expect(screen.getByText('No block-count changes.')).toBeTruthy()
+    expect(screen.getByText(/No block-count changes/)).toBeTruthy()
     unmount()
 
     const partial = render(<ContextChangePanel change={change({ comparison_fidelity: 'partial', block_changes: [bc('tool_call', 1)] })} />)
@@ -74,9 +75,10 @@ describe('ContextChangePanel', () => {
     unavailable.unmount()
 
     render(<ContextChangePanel change={change({
-      previous_request_id: null, previous_session_seq: null, token_delta: null, comparison_fidelity: 'unavailable',
+      parent_request_id: null, parent_session_seq: null, parent_state: 'root',
+      first_conversation: true, token_delta: null, comparison_fidelity: 'unavailable',
     })} />)
-    expect(screen.getByText('First request in session.')).toBeTruthy()
+    expect(screen.getByText('First request in this conversation.')).toBeTruthy()
     expect(screen.queryByText('Block changes')).toBeNull()
   })
 

@@ -11,14 +11,28 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+import { useEffect, useMemo, useState } from 'react'
 import { useDashboardLive } from '../../api/hooks'
 import { ActiveSessionPanel } from './ActiveSessionPanel'
+import { ConversationFlows } from './ConversationFlows'
 import { ContextChangePanel } from './ContextChangePanel'
 import { RequestActivityChart } from './RequestActivityChart'
-import { RequestFlow } from './RequestFlow'
 
 export function LiveSessionSection() {
   const { data, isLoading, isError } = useDashboardLive()
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [selectionNotice, setSelectionNotice] = useState('')
+  const groups = useMemo(() => data?.conversations ?? [], [data])
+  const effectiveKey = selectedKey && groups.some((group) => group.key === selectedKey)
+    ? selectedKey : data?.most_recent_conversation_key ?? groups[0]?.key ?? null
+  const selectedGroup = groups.find((group) => group.key === effectiveKey)
+
+  useEffect(() => {
+    if (selectedKey && groups.length && !groups.some((group) => group.key === selectedKey)) {
+      setSelectedKey(groups[0].key)
+      setSelectionNotice('That conversation is no longer confirmed; showing the primary session sequence.')
+    }
+  }, [groups, selectedKey])
 
   if (isLoading) {
     return (
@@ -42,10 +56,14 @@ export function LiveSessionSection() {
       <ActiveSessionPanel session={data.active_session} />
       {data.active_session && (
         <>
-          <RequestFlow items={data.request_flow} />
+          {selectionNotice && <p role="status" className="text-xs text-[var(--text-muted)]">{selectionNotice}</p>}
+          <ConversationFlows data={data} selectedKey={effectiveKey} onSelect={(key) => { setSelectedKey(key); setSelectionNotice('') }} />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(240px,.4fr)]">
             <RequestActivityChart activity={data.activity} />
-            <ContextChangePanel change={data.context_change} />
+            <ContextChangePanel
+              change={groups.length ? selectedGroup?.context_change ?? data.context_change : null}
+              unavailable={!groups.length && data.request_flow.length > 0}
+            />
           </div>
         </>
       )}

@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useRequest, useRequestToolStats } from '../api/hooks'
+import { useRequest, useRequestToolStats, useSessionLineage } from '../api/hooks'
 import { TokenDonut } from '../components/TokenDonut'
 import { ToolBreakdownSection } from '../components/ToolBreakdown'
 import { CaptureNotice } from '../components/request/CaptureNotice'
@@ -41,6 +41,7 @@ export default function RequestDetail() {
   const navigate = useNavigate()
   const requestQuery = useRequest(id)
   const toolStats = useRequestToolStats(id)
+  const lineage = useSessionLineage(requestQuery.data?.request.session_id ?? '')
   const [activeDirection, setActiveDirection] = useState<WorkbenchDirection>('input')
 
   if (requestQuery.isLoading) return <div className="page-shell text-sm text-[var(--text-muted)]">Loading request…</div>
@@ -49,17 +50,28 @@ export default function RequestDetail() {
   const request = requestQuery.data.request
   const categories = categoryData(request)
   const tools = toolStats.data?.tools ?? []
+  const parentEdge = lineage.data?.edges.find((edge) => edge.target_request_id === request.id && edge.relation_type === 'context_continuation')
+  const childEdges = lineage.data?.edges.filter((edge) => edge.source_request_id === request.id && edge.relation_type === 'context_continuation') ?? []
+  const startedAt = request.started_at
+    ? new Date(request.started_at)
+    : request.duration_ms != null
+      ? new Date(new Date(request.timestamp).getTime() - request.duration_ms)
+      : new Date(request.timestamp)
+  const startedLabel = request.started_at_source === 'observed'
+    ? startedAt.toLocaleString()
+    : `${startedAt.toLocaleString()} (${request.started_at_source === 'estimated' ? 'estimated' : 'completion fallback'})`
   const metadata = [
     ['Provider', request.provider],
     ['Agent', request.agent ?? '—'],
     ['Model', request.model ?? '—'],
     ['Endpoint', request.endpoint],
-    ['Timestamp', new Date(request.timestamp).toLocaleString()],
+    ['Started', startedLabel],
+    ['Completed', new Date(request.completed_at).toLocaleString()],
     ['Status', request.status_code ?? request.invocation_outcome],
     ['Transport', `${request.transport} / ${request.response_transport}`],
     ['Time to first token', request.ttft_ms != null ? `${request.ttft_ms}ms` : '—'],
     ['Tokenizer', request.tokenizer],
-    ['Session sequence', request.session_seq ?? '—'],
+    ['Session request #', request.session_seq ?? '—'],
     ['Provider request ID', request.provider_response_id ?? '—'],
     ['Previous response ID', request.predecessor_response_id ?? '—'],
     ['API context tokens', request.provider_input_tokens?.toLocaleString() ?? '—'],
@@ -74,6 +86,22 @@ export default function RequestDetail() {
     <div className="page-shell">
       <RequestSummaryHeader request={request} onBack={() => navigate(-1)} onDirection={setActiveDirection} />
       <CaptureNotice request={request} />
+      {(parentEdge || childEdges.length > 0) && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-3 text-xs">
+          <span className="font-semibold">Conversations</span>
+          {parentEdge && (
+            <button type="button" className="app-button min-h-8 py-1" onClick={() => navigate(`/requests/${parentEdge.source_request_id}`)}>
+              ← Parent {parentEdge.certainty === 'inferred' ? `(${Math.round((parentEdge.confidence ?? 0) * 100)}% inferred)` : '(exact)'}
+            </button>
+          )}
+          {childEdges.map((edge, index) => (
+            <button key={edge.target_request_id} type="button" className="app-button min-h-8 py-1" onClick={() => navigate(`/requests/${edge.target_request_id}`)}>
+              Child {index + 1} →
+            </button>
+          ))}
+          {request.session_id && <button type="button" className="app-button-ghost ml-auto min-h-8 py-1" onClick={() => navigate(`/sessions/${request.session_id}?view=lineage`)}>Open session conversations</button>}
+        </div>
+      )}
       <RequestWorkbench request={request} activeDirection={activeDirection} onDirectionChange={setActiveDirection} />
 
       <Disclosure title="Analytics">

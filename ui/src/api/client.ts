@@ -40,6 +40,9 @@ export interface Request {
   id: string
   session_id: string | null
   timestamp: string
+  started_at: string | null
+  completed_at: string
+  started_at_source: 'observed' | 'estimated' | 'completion_fallback'
   provider: string
   model: string | null
   agent: string | null
@@ -218,6 +221,121 @@ export interface RequestBlock {
   first_seen_session_seq: number | null
 }
 
+interface LineageDeltaBucket {
+  blocks: number
+  tokens: number
+  by_category: Record<string, { blocks: number; tokens: number }>
+  by_block_type: Record<string, { blocks: number; tokens: number }>
+}
+
+interface LineageDeltaSummary {
+  persisted: LineageDeltaBucket
+  promoted: LineageDeltaBucket
+  added: LineageDeltaBucket
+  removed: LineageDeltaBucket
+  replaced: {
+    blocks: number
+    tokens_before: number
+    tokens_after: number
+  }
+}
+
+export interface LineageNode {
+  request_id: string
+  session_id: string | null
+  session_seq: number | null
+  started_at: string
+  started_at_source: 'observed' | 'estimated' | 'completion_fallback'
+  completed_at: string
+  duration_ms: number | null
+  provider: string
+  agent: string | null
+  model: string | null
+  endpoint: string
+  context_fidelity: 'complete' | 'partial' | 'opaque'
+  tokens_total_input: number
+  tokens_total_output: number
+  provider_response_id: string | null
+  predecessor_response_id: string | null
+  external: boolean
+  parent_state: 'exact' | 'inferred' | 'ambiguous' | 'root' | 'unresolved_exact' | 'unavailable' | 'external'
+  lineage_key: string
+  lineage_number: number
+  depth: number
+  branch: number
+  is_fork: boolean
+  parent_request_id: string | null
+  conversation_membership: Array<{ key: string; state: 'confirmed' | 'unassigned' }>
+}
+
+export interface LineageEdge {
+  source_request_id: string
+  target_request_id: string
+  relation_type: 'context_continuation' | 'delegation' | 'contribution'
+  certainty: 'exact' | 'inferred' | 'suggested'
+  confidence: number | null
+  evidence_source: 'provider' | 'agent' | 'tool' | 'context_diff'
+  evidence: {
+    reason_codes?: string[]
+    predecessor_response_id?: string
+    candidate_margin?: number
+    retained_weight?: number
+    promoted_weight?: number
+    child_coverage?: number
+  }
+  delta: { summary: LineageDeltaSummary } | null
+  external_source: boolean
+}
+
+export interface LineageGraph {
+  capture: Session
+  analysis_version: string
+  nodes: LineageNode[]
+  edges: LineageEdge[]
+  conversation_count: number
+  confirmed_parallel_streams: number
+  lineage_fragment_count: number
+  lineage_paths: Array<{ request_ids: string[]; leaf_request_id: string }>
+  conversations: Array<{
+    key: string
+    label: string
+    evidence: 'default' | 'fork' | 'parallel_chains'
+    fork_parent_request_id: string | null
+    request_ids: string[]
+    confirmed_request_ids: string[]
+  }>
+  unresolved_predecessors: Array<{
+    request_id: string
+    provider: string
+    predecessor_response_id: string
+    reason?: string
+  }>
+  ambiguous_candidates: Array<{
+    request_id: string
+    reason?: string
+    candidates: Array<{
+      request_id: string
+      confidence: number
+      evidence: LineageEdge['evidence']
+    }>
+  }>
+}
+
+export interface ContextDiffResponse {
+  parent_request_id: string
+  child_request_id: string
+  delta: {
+    summary: LineageDeltaSummary
+    persisted: Array<{ parent_block_id: number; child_block_id: number }>
+    promoted: Array<{ parent_block_id: number; child_block_id: number }>
+    added: number[]
+    removed: number[]
+    replaced: Array<{ parent_block_id: number; child_block_id: number; slot: string }>
+    unavailable_parent_blocks: number[]
+    unavailable_child_blocks: number[]
+  }
+}
+
 export interface ProxyStatus {
   running: boolean
   port: number
@@ -243,6 +361,7 @@ export const sessionsApi = {
     }),
   delete: (id: string, deleteRequests = false) =>
     apiFetch<{ deleted: string }>(`/sessions/${id}?delete_requests=${deleteRequests}`, { method: 'DELETE' }),
+  lineage: (id: string) => apiFetch<LineageGraph>(`/sessions/${id}/lineage`),
 }
 
 // ---- Requests API ---------------------------------------------------------
@@ -265,6 +384,8 @@ export const requestsApi = {
   get: (id: string) => apiFetch<{ request: Request }>(`/requests/${id}`),
   blocks: (id: string) =>
     apiFetch<{ session_seq: number | null; blocks: RequestBlock[] }>(`/requests/${id}/blocks`),
+  contextDiff: (id: string, parentId: string) =>
+    apiFetch<ContextDiffResponse>(`/requests/${id}/context-diff?parent_id=${encodeURIComponent(parentId)}`),
 }
 
 // ---- Stats API ------------------------------------------------------------
@@ -309,11 +430,41 @@ export interface DashboardContextChange {
   request_id: string
   session_seq: number | null
   tokens_total_input: number
-  previous_request_id: string | null
-  previous_session_seq: number | null
+  parent_request_id: string | null
+  parent_session_seq: number | null
+  parent_state: LineageNode['parent_state']
+  parent_confidence: number | null
+  external_parent: boolean
+  first_conversation: boolean
   token_delta: number | null
   comparison_fidelity: 'complete' | 'partial' | 'unavailable'
   block_changes: DashboardBlockChange[]
+}
+
+export interface DashboardConversation {
+  key: string
+  label: string
+  evidence: 'default' | 'fork' | 'parallel_chains'
+  fork_parent_request_id: string | null
+  latest_request_id: string
+  latest_session_seq: number | null
+  latest_parent_state: LineageNode['parent_state']
+  request_count: number
+  unlinked_segment_count: number
+  recent_segments: Array<{
+    key: string
+    gap_reason: LineageNode['parent_state'] | 'fork_branch' | null
+    request_flow: Array<DashboardRequestFlowItem & {
+      parent_request_id: string | null
+      parent_state: LineageNode['parent_state']
+      certainty: LineageEdge['certainty'] | null
+      confidence: number | null
+      membership_state: 'confirmed' | 'unassigned'
+      shared_history: boolean
+    }>
+  }>
+  has_older_requests: boolean
+  context_change: DashboardContextChange
 }
 
 export interface DashboardLiveData {
@@ -321,6 +472,12 @@ export interface DashboardLiveData {
   request_flow: DashboardRequestFlowItem[]
   activity: DashboardActivityPoint[]
   context_change: DashboardContextChange | null
+  conversations: DashboardConversation[]
+  conversation_count: number
+  confirmed_parallel_streams: number
+  lineage_fragment_count: number
+  has_more_conversations: boolean
+  most_recent_conversation_key: string | null
 }
 
 export const statsApi = {

@@ -43,6 +43,8 @@ def init_db(db_path: Path) -> None:
 def _migrate(engine) -> None:
     """Apply additive schema migrations for existing databases."""
     new_columns = [
+        ("sessions", "next_request_seq", "INTEGER NOT NULL DEFAULT 1"),
+        ("requests", "started_at", "DATETIME"),
         ("requests", "cache_read_tokens", "INTEGER"),
         ("requests", "cache_creation_tokens", "INTEGER"),
         ("requests", "ttft_ms", "INTEGER"),
@@ -81,6 +83,16 @@ def _migrate(engine) -> None:
             "CREATE INDEX IF NOT EXISTS idx_requests_predecessor_response "
             "ON requests (predecessor_response_id)"
         ))
+        # Kept out of SQLAlchemy metadata so an old database containing legacy
+        # duplicate ordinals can still start and run its explicit v5 repair.
+        # NULL session/sequence values remain allowed by SQLite.
+        try:
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_session_seq_unique "
+                "ON requests (session_id, session_seq)"
+            ))
+        except Exception:
+            pass
         conn.commit()
 
 

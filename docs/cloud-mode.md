@@ -228,4 +228,5 @@ Open http://127.0.0.1:5173. Requests appear in real-time as your agent makes LLM
 - **Overview** — token totals, category/tool composition, sessions, models, latency/errors, and
   recent requests
 - **All Requests** — searchable/filterable request list with token counts and category bars
-- **Sessions** — group requests by task; click **Start session** and give it a name
+- **Sessions** — group requests by time window; click **Start session**, then use Conversations to
+  distinguish continuing context, forks, parallel work, and unrelated roots

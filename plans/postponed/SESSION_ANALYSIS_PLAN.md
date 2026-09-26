@@ -17,6 +17,12 @@ The session-analysis work may be clarified after the JSON reconstruction refacto
 scope below focuses on input/context blocks and request JSON, because the requested tree describes
 blocks sent from the agent to the LLM.
 
+The linear first-seen semantics in this document are superseded for lineage work by
+`REQUEST_LINEAGE_PLAN.md`. A session can contain unrelated conversations and forked paths, so a new
+analysis screen must group changes relative to each invocation's resolved parent (and ancestor
+path), not merely the previous session request number. `first_seen_session_seq` remains compatibility
+metadata for the existing request inspector.
+
 ## User outcome
 
 Add a dedicated session-analysis screen with:
@@ -46,8 +52,10 @@ Request #3
   User message
 ```
 
-This uses the existing `first_seen_session_seq` concept and prevents repeated context from
-appearing under every request. Requests with no newly introduced blocks remain visible.
+For a graph-aware implementation, this uses `introduced_relative_to_parent` and
+`first_seen_on_ancestor_path`. The existing capture-global `first_seen_session_seq` can still be
+shown as compatibility metadata, but it must not decide where a block appears when branches exist.
+Requests with no newly introduced blocks remain visible.
 
 A later optional toggle may offer:
 
@@ -503,4 +511,3 @@ The session-analysis feature is complete when:
 - No frontend code reimplements block analysis or first-seen logic.
 - Active-session updates, retention, legacy, and failure states behave predictably.
 - Backend tests pass and the production UI builds successfully.
-
