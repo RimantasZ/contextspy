@@ -24,6 +24,14 @@ export function useSessions() {
   })
 }
 
+export function useDashboardLive() {
+  return useQuery({
+    queryKey: ['stats', 'dashboard-live'],
+    queryFn: () => statsApi.dashboardLive(),
+    refetchInterval: 5_000,
+  })
+}
+
 export function useSession(id: string) {
   return useQuery({
     queryKey: ['session', id],
@@ -45,7 +53,10 @@ export function useCreateSession() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (name: string) => sessionsApi.create(name),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['stats'] })
+    },
   })
 }
 
@@ -67,6 +78,7 @@ export function useRenameSession() {
     onSuccess: (_data, { id }) => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['session', id] })
+      qc.invalidateQueries({ queryKey: ['stats', 'dashboard-live'] })
     },
   })
 }

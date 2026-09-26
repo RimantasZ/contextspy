@@ -38,7 +38,7 @@ describe('RequestWorkbench', () => {
     const contentViewer = screen.getByRole('region', { name: /User content/i })
     expect(screen.getByRole('searchbox', { name: /Search user content/i })).toBeTruthy()
     const primaryPane = contentViewer.closest('[data-workbench-primary-pane]')
-    expect(primaryPane?.contains(screen.getByRole('group', { name: /Compact block map/i }))).toBe(true)
+    expect(primaryPane?.contains(screen.getByRole('group', { name: /block map/i }))).toBe(true)
     expect(primaryPane?.contains(screen.getByRole('complementary', { name: /Block inspector/i }))).toBe(false)
     await userEvent.click(screen.getByRole('button', { name: /Response/i }))
     expect(await screen.findByRole('button', { name: /Assistant.*5 tokens/i })).toBeTruthy()
@@ -71,6 +71,8 @@ describe('RequestWorkbench', () => {
   it('changes block size with the size selector', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks }), { status: 200 }))
     renderWorkbench()
+    await screen.findByRole('button', { name: /User.*position 2/i })
+    await userEvent.click(screen.getByRole('button', { name: 'Compact' }))
 
     const map = await screen.findByRole('group', { name: 'Compact block map' })
     const size = screen.getByRole('combobox', { name: 'Size' }) as HTMLSelectElement
@@ -99,6 +101,8 @@ describe('RequestWorkbench', () => {
     const differentlySizedBlocks = blocks.map((block) => block.id === 2 ? { ...block, token_count: 30 } : block)
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks: differentlySizedBlocks }), { status: 200 }))
     renderWorkbench()
+    await screen.findByRole('button', { name: /User.*position 2/i })
+    await userEvent.click(screen.getByRole('button', { name: 'Compact' }))
 
     const map = await screen.findByRole('group', { name: 'Compact block map' })
     const arrangement = screen.getByRole('combobox', { name: 'Arrange' }) as HTMLSelectElement

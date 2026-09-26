@@ -390,6 +390,34 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
     output_text = sum(r.tokens_output_text for r in rows)
     output_thinking = sum(r.tokens_output_thinking for r in rows)
 
+    # Provider-reported cache usage (cache_read_tokens/cache_creation_tokens are
+    # None for requests whose provider doesn't report cache usage at all — those
+    # are excluded rather than treated as 0%, since 0% is itself a meaningful
+    # value for a provider that does report but had no cache hit). Two views are
+    # kept because they answer different questions: avg_pct treats every request
+    # equally (a 10k-token request at 50% cached counts the same as a 100k-token
+    # request at 95%), while overall_pct is token-weighted, so a session
+    # dominated by one huge highly-cached request isn't diluted by many small
+    # uncached ones.
+    cache_rows = [
+        r for r in rows
+        if r.provider_input_tokens and (r.cache_read_tokens is not None or r.cache_creation_tokens is not None)
+    ]
+    if cache_rows:
+        cache_pct_values = [
+            ((r.cache_read_tokens or 0) + (r.cache_creation_tokens or 0)) / r.provider_input_tokens * 100
+            for r in cache_rows
+        ]
+        total_cache_tokens = sum((r.cache_read_tokens or 0) + (r.cache_creation_tokens or 0) for r in cache_rows)
+        total_cache_input = sum(r.provider_input_tokens for r in cache_rows)
+        cache = {
+            "avg_pct": round(sum(cache_pct_values) / len(cache_pct_values), 1),
+            "overall_pct": round(total_cache_tokens / total_cache_input * 100, 1) if total_cache_input else None,
+            "reporting_request_count": len(cache_rows),
+        }
+    else:
+        cache = {"avg_pct": None, "overall_pct": None, "reporting_request_count": 0}
+
     by_category: dict[str, dict] = {}
     for col in _CATEGORY_COLS:
         cat_key = col[len("tokens_"):]
@@ -459,6 +487,7 @@ def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
         "tokens_total_output": total_output,
         "tokens_output_text": output_text,
         "tokens_output_thinking": output_thinking,
+        "cache": cache,
         "by_category": by_category,
         "by_provider": by_provider,
         "by_agent": by_agent,
@@ -480,6 +509,7 @@ def _empty_stats() -> dict:
         "tokens_total_output": 0,
         "tokens_output_text": 0,
         "tokens_output_thinking": 0,
+        "cache": {"avg_pct": None, "overall_pct": None, "reporting_request_count": 0},
         "by_category": {
             col[len("tokens_"):]: {"tokens": 0, "pct": 0.0}
             for col in _CATEGORY_COLS
@@ -843,3 +873,145 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
 
     entries.sort(key=lambda e: e["started_at"], reverse=True)
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Live dashboard (active session)
+# ---------------------------------------------------------------------------
+
+_LIVE_FLOW_LIMIT = 5
+_LIVE_ACTIVITY_LIMIT = 10
+
+
+def _block_counts(db: OrmSession, request_ids: list[str]) -> dict[str, dict[str, int]]:
+    rows = db.execute(
+        select(
+            BlockRecord.request_id,
+            BlockRecord.block_type,
+            func.count().label("block_count"),
+        )
+        .where(
+            BlockRecord.request_id.in_(request_ids),
+            BlockRecord.direction == Direction.INPUT,
+        )
+        .group_by(BlockRecord.request_id, BlockRecord.block_type)
+    ).all()
+    counts: dict[str, dict[str, int]] = {rid: {} for rid in request_ids}
+    for row in rows:
+        counts[row.request_id][row.block_type] = row.block_count
+    return counts
+
+
+def _comparison_fidelity(latest: Request, previous: Request) -> str:
+    pair = {latest.context_fidelity, previous.context_fidelity}
+    if "opaque" in pair:
+        return "unavailable"
+    if "partial" in pair:
+        return "partial"
+    return "complete"
+
+
+def _context_change(db: OrmSession, latest: Request, previous: Request | None) -> dict:
+    change: dict[str, Any] = {
+        "request_id": latest.id,
+        "session_seq": latest.session_seq,
+        "tokens_total_input": latest.tokens_total_input,
+        "previous_request_id": None,
+        "previous_session_seq": None,
+        "token_delta": None,
+        "comparison_fidelity": "unavailable",
+        "block_changes": [],
+    }
+    if previous is None:
+        return change
+
+    change["previous_request_id"] = previous.id
+    change["previous_session_seq"] = previous.session_seq
+    change["token_delta"] = latest.tokens_total_input - previous.tokens_total_input
+    fidelity = _comparison_fidelity(latest, previous)
+    change["comparison_fidelity"] = fidelity
+    if fidelity == "unavailable":
+        return change
+
+    counts = _block_counts(db, [latest.id, previous.id])
+    current, prior = counts[latest.id], counts[previous.id]
+    change["block_changes"] = [
+        {
+            "block_type": block_type,
+            "current_count": current.get(block_type, 0),
+            "previous_count": prior.get(block_type, 0),
+            "delta": current.get(block_type, 0) - prior.get(block_type, 0),
+        }
+        for block_type in sorted(set(current) | set(prior))
+    ]
+    return change
+
+
+def get_dashboard_live(db: OrmSession) -> dict:
+    """Active-session snapshot for the Overview page: totals, recent requests, context change."""
+    session = get_active_session(db)
+    if session is None:
+        return {"active_session": None, "request_flow": [], "activity": [], "context_change": None}
+
+    totals = db.execute(
+        select(
+            func.count().label("n"),
+            func.coalesce(func.sum(Request.tokens_total_input), 0).label("tok_in"),
+            func.coalesce(func.sum(Request.tokens_total_output), 0).label("tok_out"),
+        ).where(Request.session_id == session.id)
+    ).one()
+
+    active_session = {
+        "id": session.id,
+        "name": session.name,
+        "started_at": session.started_at.isoformat(),
+        "request_count": totals.n,
+        "tokens_total_input": totals.tok_in,
+        "tokens_total_output": totals.tok_out,
+    }
+
+    # Newest first. SQLite sorts NULL lowest, so null-seq rows fall after sequenced ones.
+    recent = list(
+        db.execute(
+            select(Request)
+            .where(Request.session_id == session.id)
+            .order_by(Request.session_seq.desc(), Request.timestamp.desc(), Request.id.desc())
+            .limit(_LIVE_ACTIVITY_LIMIT)
+        ).scalars().all()
+    )
+
+    request_flow = [
+        {
+            "id": r.id,
+            "session_seq": r.session_seq,
+            "timestamp": r.timestamp.isoformat(),
+            "model": r.model,
+            "duration_ms": r.duration_ms,
+            "status_code": r.status_code,
+            "invocation_outcome": r.invocation_outcome,
+            "tokens_total_input": r.tokens_total_input,
+            "tokens_total_output": r.tokens_total_output,
+        }
+        for r in recent[:_LIVE_FLOW_LIMIT]
+    ]
+    activity = [
+        {
+            "id": r.id,
+            "session_seq": r.session_seq,
+            "timestamp": r.timestamp.isoformat(),
+            "tokens_total_input": r.tokens_total_input,
+            "tokens_total_output": r.tokens_total_output,
+        }
+        for r in reversed(recent)
+    ]
+
+    context_change = None
+    if recent:
+        context_change = _context_change(db, recent[0], recent[1] if len(recent) > 1 else None)
+
+    return {
+        "active_session": active_session,
+        "request_flow": request_flow,
+        "activity": activity,
+        "context_change": context_change,
+    }
