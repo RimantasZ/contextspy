@@ -30,14 +30,13 @@ export function RequestFlow({ items }: { items: DashboardRequestFlowItem[] }) {
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <h2 id="request-flow-title" className="section-title">Request flow</h2>
         <span className="text-xs text-[var(--text-muted)]">Newest first</span>
-        <span id="request-flow-order-hint" className="sr-only">Most recent requests in this session, ordered newest first</span>
       </div>
       {items.length === 0 ? (
         <p className="py-4 text-center text-sm text-[var(--text-muted)]">No requests captured in this session yet.</p>
       ) : (
         <ol
           aria-labelledby="request-flow-title"
-          aria-describedby="request-flow-order-hint"
+          aria-description="Most recent requests in this session, ordered newest first"
           className="flex gap-3 overflow-x-auto pb-1"
         >
           {items.map((item) => {

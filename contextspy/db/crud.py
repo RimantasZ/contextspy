@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, TYPE_CHECKING
 
-from sqlalchemy import case, func, or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session as OrmSession
 
@@ -970,17 +970,12 @@ def get_dashboard_live(db: OrmSession) -> dict:
         "tokens_total_output": totals.tok_out,
     }
 
-    # Newest first, with explicit null-last fallback across databases.
+    # Newest first. SQLite sorts NULL lowest, so null-seq rows fall after sequenced ones.
     recent = list(
         db.execute(
             select(Request)
             .where(Request.session_id == session.id)
-            .order_by(
-                case((Request.session_seq.is_(None), 1), else_=0),
-                Request.session_seq.desc(),
-                Request.timestamp.desc(),
-                Request.id.desc(),
-            )
+            .order_by(Request.session_seq.desc(), Request.timestamp.desc(), Request.id.desc())
             .limit(_LIVE_ACTIVITY_LIMIT)
         ).scalars().all()
     )

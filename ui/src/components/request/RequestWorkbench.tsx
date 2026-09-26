@@ -137,7 +137,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
           value={view}
           onChange={setView}
           options={[
-            { value: 'proportional', label: 'Proportional' },
+            { value: 'proportional', label: 'Default' },
             { value: 'compact', label: 'Compact' },
             { value: 'raw', label: 'Raw' },
           ]}
