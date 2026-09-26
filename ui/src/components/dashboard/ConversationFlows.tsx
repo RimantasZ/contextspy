@@ -2,14 +2,15 @@ import { Link } from 'react-router-dom'
 import type { DashboardConversation, DashboardLiveData } from '../../api/client'
 import { RequestFlow } from './RequestFlow'
 
-function evidenceLabel(group: DashboardConversation): string {
+export function evidenceLabel(group: DashboardConversation): string {
   if (group.evidence === 'fork') return `Confirmed fork from ${group.fork_parent_request_id?.slice(0, 8) ?? 'request'}`
   if (group.evidence === 'parallel_chains') return 'Confirmed parallel independent chains'
   return 'Session activity; separate streams not confirmed'
 }
 
-function gapLabel(reason: string | null): string | null {
+export function gapLabel(reason: string | null): string | null {
   if (reason === 'fork_branch') return 'Fork branch · parent shown in shared history'
+  if (reason === 'graph_branch_unconfirmed') return 'Graph branch · separate conversation not confirmed'
   if (reason === 'ambiguous') return 'Lineage gap · ambiguous parent'
   if (reason === 'unresolved_exact') return 'Lineage gap · provider parent missing'
   if (reason === 'unavailable') return 'Lineage gap · context unavailable'

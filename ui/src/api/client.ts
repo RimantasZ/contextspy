@@ -264,6 +264,7 @@ export interface LineageNode {
   depth: number
   branch: number
   is_fork: boolean
+  conversation_fork_status: 'none' | 'confirmed' | 'unconfirmed_graph_branch'
   parent_request_id: string | null
   conversation_membership: Array<{ key: string; state: 'confirmed' | 'unassigned' }>
 }
@@ -295,7 +296,17 @@ export interface LineageGraph {
   conversation_count: number
   confirmed_parallel_streams: number
   lineage_fragment_count: number
-  lineage_paths: Array<{ request_ids: string[]; leaf_request_id: string }>
+  lineage_paths: Array<{
+    key: string
+    request_ids: string[]
+    leaf_request_id: string
+    root_request_id: string
+    root_session_seq: number | null
+    leaf_session_seq: number | null
+    request_count: number
+    last_activity: string
+    start_parent_state: LineageNode['parent_state']
+  }>
   conversations: Array<{
     key: string
     label: string
@@ -362,6 +373,17 @@ export const sessionsApi = {
   delete: (id: string, deleteRequests = false) =>
     apiFetch<{ deleted: string }>(`/sessions/${id}?delete_requests=${deleteRequests}`, { method: 'DELETE' }),
   lineage: (id: string) => apiFetch<LineageGraph>(`/sessions/${id}/lineage`),
+  conversations: (id: string, groupOffset = 0, revision?: string, groupKey?: string) => {
+    const q = new URLSearchParams({ group_offset: String(groupOffset) })
+    if (revision) q.set('revision', revision)
+    if (groupKey) q.set('group_key', groupKey)
+    return apiFetch<SessionConversationsData>(`/sessions/${id}/conversations?${q}`)
+  },
+  conversationRequests: (id: string, groupKey: string, revision: string, cursor?: string | null) => {
+    const q = new URLSearchParams({ group_key: groupKey, revision })
+    if (cursor) q.set('cursor', cursor)
+    return apiFetch<SessionConversationPage>(`/sessions/${id}/conversations/requests?${q}`)
+  },
 }
 
 // ---- Requests API ---------------------------------------------------------
@@ -451,9 +473,16 @@ export interface DashboardConversation {
   latest_parent_state: LineageNode['parent_state']
   request_count: number
   unlinked_segment_count: number
+  segment_count?: number
   recent_segments: Array<{
     key: string
-    gap_reason: LineageNode['parent_state'] | 'fork_branch' | null
+    gap_reason: LineageNode['parent_state'] | 'fork_branch' | 'graph_branch_unconfirmed' | null
+    first_request_id?: string
+    first_session_seq?: number | null
+    latest_session_seq?: number | null
+    newest_request_id?: string
+    request_count?: number
+    segment_start_visible?: boolean
     request_flow: Array<DashboardRequestFlowItem & {
       parent_request_id: string | null
       parent_state: LineageNode['parent_state']
@@ -461,10 +490,48 @@ export interface DashboardConversation {
       confidence: number | null
       membership_state: 'confirmed' | 'unassigned'
       shared_history: boolean
+      fork_status: LineageNode['conversation_fork_status']
     }>
   }>
   has_older_requests: boolean
   context_change: DashboardContextChange
+}
+
+export interface SessionConversation extends DashboardConversation {
+  latest_activity: string
+  unassigned_request_count: number
+  segment_count: number
+  next_request_cursor: string | null
+  segment_index: Array<{
+    key: string
+    gap_reason: DashboardConversation['recent_segments'][number]['gap_reason'] | 'graph_branch_unconfirmed'
+    first_request_id: string
+    first_session_seq: number | null
+    latest_session_seq: number | null
+    newest_request_id: string
+    request_count: number
+    cursor_before: string | null
+  }>
+}
+
+export interface SessionConversationsData {
+  session_id: string
+  revision: string
+  conversation_count: number
+  confirmed_parallel_streams: number
+  lineage_fragment_count: number
+  primary_key: string | null
+  conversations: SessionConversation[]
+  next_group_offset: number | null
+}
+
+export interface SessionConversationPage {
+  session_id: string
+  revision: string
+  group_key: string
+  segments: SessionConversation['recent_segments']
+  next_cursor: string | null
+  continues_earlier: boolean
 }
 
 export interface DashboardLiveData {

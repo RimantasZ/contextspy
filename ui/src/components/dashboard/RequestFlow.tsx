@@ -52,7 +52,7 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
               <li key={item.id} className="min-w-[9.5rem] flex-1">
                 <Link
                   to={`/requests/${item.id}`}
-                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${status ? `, ${status.text}` : ''}`}
+                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
                   className="block h-full rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-3 transition-colors hover:bg-[var(--surface-hover)]"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -77,6 +77,7 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
                         ? `${item.certainty === 'inferred' ? `Inferred ${Math.round((item.confidence ?? 0) * 100)}%` : 'Exact'} parent · ${item.parent_request_id.slice(0, 8)}`
                         : item.parent_state === 'root' ? 'No parent established' : `Parent ${item.parent_state.replace('_', ' ')}`}
                       {item.shared_history ? ' · Shared history' : ''}
+                      {item.membership_state === 'unassigned' ? ' · Stream uncertain' : ''}
                     </p>
                   )}
                 </Link>

@@ -17,7 +17,7 @@ function card(id: string, seq: number, parent: string | null = null): DashboardC
     model: 'gpt-test', duration_ms: 500, status_code: 200, invocation_outcome: 'completed',
     tokens_total_input: 100 + seq, tokens_total_output: 10,
     parent_request_id: parent, parent_state: parent ? 'exact' : 'ambiguous',
-    certainty: parent ? 'exact' : null, confidence: null, membership_state: 'unassigned', shared_history: false,
+    certainty: parent ? 'exact' : null, confidence: null, membership_state: 'unassigned', shared_history: false, fork_status: 'none',
   }
 }
 

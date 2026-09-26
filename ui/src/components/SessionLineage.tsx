@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import type { LineageEdge, LineageGraph, LineageNode } from '../api/client'
 import { useContextDiff } from '../api/hooks'
 import { formatRequestDuration } from '../lib/format'
+import { parseServerTimestamp } from './dashboard/dashboardFormat'
 
 const NODE_W = 168
 const NODE_H = 92
@@ -57,6 +58,7 @@ function layoutNodes(nodes: LineageNode[]): { nodes: PositionedNode[]; width: nu
   const minTime = Math.min(...starts)
   const maxTime = Math.max(...ends, minTime + 1)
   const timelineWidth = Math.max(760, nodes.length * 120)
+  const minDepth = Math.min(...nodes.map((node) => node.depth))
   const lastXByLane = new Map<number, number>()
 
   const positioned = [...nodes]
@@ -65,7 +67,7 @@ function layoutNodes(nodes: LineageNode[]): { nodes: PositionedNode[]; width: nu
       const lane = laneByKey.get(`${node.lineage_number}:${node.branch}`) ?? 0
       const timeRatio = (new Date(node.started_at).getTime() - minTime) / (maxTime - minTime)
       const timeX = LEFT + timeRatio * timelineWidth
-      const depthX = LEFT + node.depth * (NODE_W + 34)
+      const depthX = LEFT + (node.depth - minDepth) * (NODE_W + 34)
       const previousX = lastXByLane.get(lane) ?? -Infinity
       const x = Math.max(timeX, depthX, previousX + NODE_W + 24)
       lastXByLane.set(lane, x)
@@ -106,8 +108,31 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
   const navigate = useNavigate()
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeKey, setSelectedEdgeKey] = useState<string | null>(null)
-  const layout = useMemo(() => layoutNodes(graph.nodes), [graph.nodes])
+  const [selectedPathKey, setSelectedPathKey] = useState<string | null>(null)
+  const [selectedPathRoot, setSelectedPathRoot] = useState<string | null>(null)
+  const [pathSearch, setPathSearch] = useState('')
+  const [windowOffset, setWindowOffset] = useState(0)
+  const [pathNotice, setPathNotice] = useState('')
+  const paths = useMemo(() => [...graph.lineage_paths].sort((a, b) => b.last_activity.localeCompare(a.last_activity) || b.key.localeCompare(a.key)), [graph.lineage_paths])
+  const matchingPaths = paths.filter((path) => `${path.root_session_seq ?? ''} ${path.leaf_session_seq ?? ''} ${path.root_request_id} ${path.leaf_request_id}`.toLowerCase().includes(pathSearch.toLowerCase()))
+  const selectedPath = paths.find((path) => path.key === selectedPathKey)
+    ?? paths.find((path) => selectedNodeId && path.request_ids.includes(selectedNodeId))
+    ?? paths.find((path) => path.root_request_id === selectedPathRoot)
+    ?? paths[0]
+  const selectedPathIndex = paths.findIndex((path) => path.key === selectedPath?.key)
+  const pathLength = selectedPath?.request_ids.length ?? 0
+  const windowEnd = Math.max(0, pathLength - Math.min(windowOffset, Math.max(0, pathLength - 1)))
+  const windowStart = Math.max(0, windowEnd - 25)
+  const visiblePathIds = selectedPath?.request_ids.slice(windowStart, windowEnd) ?? []
+  const visibleIds = new Set(visiblePathIds)
+  const firstId = visiblePathIds[0]
+  const externalEdge = graph.edges.find((edge) => edge.target_request_id === firstId && edge.external_source)
+  if (externalEdge) visibleIds.add(externalEdge.source_request_id)
+  const visibleNodes = graph.nodes.filter((node) => visibleIds.has(node.request_id))
+  const visibleEdges = graph.edges.filter((edge) => visibleIds.has(edge.source_request_id) && visibleIds.has(edge.target_request_id))
+  const layout = useMemo(() => layoutNodes(visibleNodes), [graph.nodes, selectedPath?.key, windowOffset])
   const byId = useMemo(() => new Map(layout.nodes.map((node) => [node.request_id, node])), [layout.nodes])
+  const allNodesById = useMemo(() => new Map(graph.nodes.map((node) => [node.request_id, node])), [graph.nodes])
   const parentByChild = useMemo(() => new Map(graph.edges
     .filter((edge) => edge.relation_type === 'context_continuation')
     .map((edge) => [edge.target_request_id, edge.source_request_id])), [graph.edges])
@@ -120,13 +145,21 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
     ? graph.ambiguous_candidates.find((item) => item.request_id === selectedNode.request_id) ?? null
     : null
   const selectedEdge = selectedEdgeKey
-    ? graph.edges.find((edge) => `${edge.source_request_id}:${edge.target_request_id}:${edge.relation_type}` === selectedEdgeKey) ?? null
+    ? visibleEdges.find((edge) => `${edge.source_request_id}:${edge.target_request_id}:${edge.relation_type}` === selectedEdgeKey) ?? null
     : null
   const detailedDiff = useContextDiff(
     selectedEdge?.target_request_id ?? '',
     selectedEdge?.source_request_id ?? null,
   )
-  const maxDuration = Math.max(1, ...graph.nodes.map((node) => node.duration_ms ?? 0))
+  const maxDuration = Math.max(1, ...visibleNodes.map((node) => node.duration_ms ?? 0))
+
+  useEffect(() => {
+    if (selectedPathKey && selectedPath?.key !== selectedPathKey) {
+      setSelectedPathKey(selectedPath?.key ?? null)
+      setWindowOffset(0)
+      setPathNotice('Selected path changed during capture. Showing the nearest surviving path.')
+    }
+  }, [selectedPathKey, selectedPath?.key])
 
   useEffect(() => {
     if (selectedNodeId && !byId.has(selectedNodeId)) setSelectedNodeId(null)
@@ -148,13 +181,13 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="section-title">Request lineage</p>
+          <p className="section-title">Lineage diagnostics</p>
           <p className="mt-1 text-xs text-[var(--text-muted)]">{graph.conversation_count} supported conversation{graph.conversation_count === 1 ? '' : 's'} · {graph.lineage_fragment_count} diagnostic lineage path{graph.lineage_fragment_count === 1 ? '' : 's'}. Unlinked paths are not automatically separate conversations. Request numbers show recording order.</p>
         </div>
-        <div className="flex flex-wrap gap-3 text-xs text-[var(--text-muted)]" aria-label="Conversation legend">
+        <div className="flex flex-wrap gap-3 text-xs text-[var(--text-muted)]" aria-label="Lineage graph legend">
           <span><span className="mr-1 inline-block w-5 border-t-2 border-[var(--success)]" />Exact</span>
           <span><span className="mr-1 inline-block w-5 border-t-2 border-dashed border-[var(--accent)]" />Inferred</span>
           <span>+ / − added / removed blocks</span>
@@ -162,10 +195,37 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
         </div>
       </div>
 
-      <div className="overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface-inset)]">
+      <div className="grid gap-3 md:grid-cols-[15rem_minmax(0,1fr)]">
+        <div className="min-w-0">
+          <label htmlFor="lineage-path-search" className="text-xs font-medium">Search diagnostic paths</label>
+          <input id="lineage-path-search" className="app-field mt-1 w-full" value={pathSearch} onChange={(event) => setPathSearch(event.target.value)} placeholder="Root or leaf request" />
+          <p role="status" aria-live="polite" className="mt-1 text-xs text-[var(--text-muted)]">{pathNotice}</p>
+          <div className="mt-2 max-h-48 space-y-1 overflow-y-auto" aria-label="Diagnostic path index">
+            {matchingPaths.slice(0, 50).map((path) => (
+              <button key={path.key} type="button" aria-pressed={selectedPath?.key === path.key} className="app-button w-full text-left text-xs" onClick={() => { setSelectedPathKey(path.key); setSelectedPathRoot(path.root_request_id); setWindowOffset(0); setPathNotice('') }}>
+                #{path.root_session_seq ?? '—'} → #{path.leaf_session_seq ?? '—'} · {path.request_count} requests<br />
+                <span className="text-[var(--text-muted)]">{new Date(parseServerTimestamp(path.last_activity)).toLocaleString()} · starts: {stateLabel(path.start_parent_state)}</span>
+              </button>
+            ))}
+            {matchingPaths.length === 0 && <p className="text-xs text-[var(--text-muted)]">No matching paths.</p>}
+            {matchingPaths.length > 50 && <p className="text-xs text-[var(--text-muted)]">Showing 50 of {matchingPaths.length} matching paths. Search by root or leaf to narrow the list.</p>}
+          </div>
+        </div>
+        <div className="min-w-0 text-xs text-[var(--text-muted)]">
+          <p>{selectedPath ? `Showing path #${selectedPath.root_session_seq ?? '—'} → #${selectedPath.leaf_session_seq ?? '—'} · requests ${windowStart + 1}–${windowEnd} of ${selectedPath.request_count}` : 'No diagnostic path selected.'}</p>
+          <div className="mt-2 flex gap-2">
+            <button type="button" className="app-button" disabled={selectedPathIndex <= 0} onClick={() => { const path = paths[selectedPathIndex - 1]; setSelectedPathKey(path.key); setSelectedPathRoot(path.root_request_id); setWindowOffset(0) }}>Newer path</button>
+            <button type="button" className="app-button" disabled={selectedPathIndex < 0 || selectedPathIndex >= paths.length - 1} onClick={() => { const path = paths[selectedPathIndex + 1]; setSelectedPathKey(path.key); setSelectedPathRoot(path.root_request_id); setWindowOffset(0) }}>Older path</button>
+          </div>
+          {windowStart > 0 && <button type="button" className="app-button mt-2" onClick={() => setWindowOffset((offset) => offset + 25)}>Earlier nodes</button>}
+          {windowOffset > 0 && <button type="button" className="app-button mt-2 ml-2" onClick={() => setWindowOffset((offset) => Math.max(0, offset - 25))}>Newer nodes</button>}
+        </div>
+      </div>
+
+      <div className="max-w-full overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface-inset)]">
         <div className="relative" style={{ width: layout.width, height: layout.height }}>
-          <svg className="absolute inset-0" width={layout.width} height={layout.height} aria-label="Conversation graph">
-            {graph.edges.map((edge) => {
+          <svg className="absolute inset-0" width={layout.width} height={layout.height} aria-label="Lineage graph">
+            {visibleEdges.map((edge) => {
               const source = byId.get(edge.source_request_id)
               const target = byId.get(edge.target_request_id)
               if (!source || !target) return null
@@ -221,7 +281,7 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
             >
               <span className="flex items-center justify-between gap-2">
                 <strong className="text-xs">{requestLabel(node)}</strong>
-                {node.is_fork && <span className="app-badge px-1.5 py-0 text-[10px]">Fork</span>}
+                {node.is_fork && <span className="app-badge px-1.5 py-0 text-[10px]" title={node.conversation_fork_status === 'confirmed' ? 'Confirmed conversation fork' : 'Graph branch · conversation split unconfirmed'}>{node.conversation_fork_status === 'confirmed' ? 'Confirmed fork' : 'Graph branch'}</span>}
               </span>
               <span className="mt-1 block truncate text-[11px] text-[var(--text-muted)]">{node.model ?? node.provider}</span>
               <span className="mt-1 flex justify-between text-[10px] text-[var(--text-muted)]">
@@ -244,6 +304,7 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
               <div>
                 <p className="section-title">{requestLabel(selectedNode)}</p>
                 <p className="mt-1 text-sm text-[var(--text-muted)]">{membershipLabel(selectedNode) || 'External parent'} · request depth {selectedNode.depth}</p>
+                {selectedNode.is_fork && <p className="mt-1 text-xs text-[var(--warning)]">{selectedNode.conversation_fork_status === 'confirmed' ? 'Confirmed conversation fork' : 'Graph branch · conversation split unconfirmed'}</p>}
                 <p className="mt-2 text-xs text-[var(--text-muted)]">
                   Started {new Date(selectedNode.started_at).toLocaleString()}
                   {selectedNode.started_at_source !== 'observed' && ` (${selectedNode.started_at_source.replace('_', ' ')})`}
@@ -297,13 +358,13 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
         <div className="overflow-x-auto border-t border-[var(--border)]">
           <table className="w-full text-left text-xs">
             <thead><tr className="text-[var(--text-muted)]"><th className="p-2">Request</th><th className="p-2">Parent</th><th className="p-2">Relationship</th><th className="p-2">Conversation</th><th className="p-2">Context</th></tr></thead>
-            <tbody>{graph.nodes.filter((node) => !node.external).map((node) => {
+            <tbody>{visibleNodes.filter((node) => !node.external).map((node) => {
               const parent = parentByChild.get(node.request_id)
               const edge = parent ? graph.edges.find((item) => item.source_request_id === parent && item.target_request_id === node.request_id) : null
               return (
                 <tr key={node.request_id} className="border-t border-[var(--border)]">
                   <td className="p-2"><button type="button" className="font-medium text-[var(--accent-soft-text)]" onClick={() => navigate(`/requests/${node.request_id}`)}>{requestLabel(node)}</button></td>
-                  <td className="p-2">{parent ? requestLabel(byId.get(parent) ?? node) : '—'}</td>
+                  <td className="p-2">{parent ? (allNodesById.get(parent)?.session_seq != null ? `Request #${allNodesById.get(parent)?.session_seq}` : `External ${parent.slice(0, 8)}`) : '—'}</td>
                   <td className="p-2">{edge ? relationLabel(edge) : stateLabel(node.parent_state)}</td>
                   <td className="p-2">{membershipLabel(node) || '—'} · depth {node.depth}</td>
                   <td className="p-2 tabular-nums">{node.tokens_total_input.toLocaleString()} tokens</td>

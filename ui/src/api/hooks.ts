@@ -49,6 +49,15 @@ export function useSessionLineage(id: string, enabled: boolean = true) {
   })
 }
 
+export function useSessionConversations(id: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['session-conversations', id],
+    queryFn: () => sessionsApi.conversations(id),
+    enabled: !!id && enabled,
+    refetchInterval: 5_000,
+  })
+}
+
 export function useCreateSession() {
   const qc = useQueryClient()
   return useMutation({
@@ -56,6 +65,7 @@ export function useCreateSession() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['stats'] })
+      qc.invalidateQueries({ queryKey: ['session-conversations'] })
     },
   })
 }
@@ -67,6 +77,7 @@ export function useEndSession() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['stats'] })
+      qc.invalidateQueries({ queryKey: ['session-conversations'] })
     },
   })
 }
@@ -79,6 +90,7 @@ export function useRenameSession() {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['session', id] })
       qc.invalidateQueries({ queryKey: ['stats', 'dashboard-live'] })
+      qc.invalidateQueries({ queryKey: ['session-conversations', id] })
     },
   })
 }
@@ -88,7 +100,10 @@ export function useDeleteSession() {
   return useMutation({
     mutationFn: ({ id, deleteRequests = false }: { id: string; deleteRequests?: boolean }) =>
       sessionsApi.delete(id, deleteRequests),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['session-conversations'] })
+    },
   })
 }
 
