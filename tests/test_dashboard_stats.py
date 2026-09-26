@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session as OrmSession
 
-from contextspy.api.routers import stats as stats_router
+from contextspy.api.routers import stats as stats_router, sessions as sessions_router
 from contextspy.db import crud, database
 from contextspy.db.models import Base, BlockRecord, Request, Session
 
@@ -339,6 +339,145 @@ def test_dashboard_reuses_analysis_until_request_revision_changes(db, monkeypatc
     assert calls == 2
 
 
+def test_session_conversations_page_all_requests_and_reject_stale_cursor(db):
+    _session(db, active=False)
+    for seq in range(1, 72):
+        _req(db, f"r{seq}", seq=seq, parent=f"r{seq - 1}" if seq > 1 else None)
+    first = crud.get_session_conversations(db, "s1")
+    dashboard = crud.get_dashboard_live(db)
+    assert dashboard["conversations"] == []  # Ended sessions are not dashboard-live.
+    assert first["conversation_count"] == 1
+    assert first["conversations"][0]["request_count"] == 71
+    assert len(first["conversations"][0]["recent_segments"][0]["request_flow"]) == 5
+    group = first["conversations"][0]
+    page = crud.get_session_conversation_requests(
+        db, "s1", group["key"], revision=first["revision"],
+        cursor=group["next_request_cursor"],
+    )
+    ids = [card["id"] for segment in page["segments"] for card in segment["request_flow"]]
+    assert ids == [f"r{seq}" for seq in range(66, 16, -1)]
+    assert page["continues_earlier"] is True
+    tail = crud.get_session_conversation_requests(
+        db, "s1", group["key"], revision=first["revision"], cursor=page["next_cursor"],
+    )
+    assert [card["id"] for segment in tail["segments"] for card in segment["request_flow"]] == [
+        f"r{seq}" for seq in range(16, 0, -1)
+    ]
+    assert tail["next_cursor"] is None
+    _req(db, "r72", seq=72, parent="r71")
+    with pytest.raises(ValueError, match="revision changed"):
+        crud.get_session_conversation_requests(db, "s1", group["key"], revision=first["revision"])
+
+
+def test_session_projection_matches_dashboard_and_marks_unconfirmed_branch(db):
+    _session(db)
+    _req(db, "root", seq=1)
+    _req(db, "a", seq=2, parent="root")
+    _req(db, "b", seq=3, parent="root")
+    dashboard = crud.get_dashboard_live(db)
+    session = crud.get_session_conversations(db, "s1")
+    assert session["conversation_count"] == 1
+    assert session["conversations"] == dashboard["conversations"]
+    assert session["conversations"][0]["unlinked_segment_count"] == 0
+    assert session["conversations"][0]["segment_count"] == 2
+    assert any(segment["gap_reason"] == "graph_branch_unconfirmed"
+               for segment in session["conversations"][0]["recent_segments"])
+    graph, _ = crud._session_lineage_graph(db, "s1", 3)
+    assert next(node for node in graph["nodes"] if node["request_id"] == "root")["conversation_fork_status"] == "unconfirmed_graph_branch"
+
+
+def test_session_projection_confirmed_fork_shared_history_and_external_parent(db):
+    _session(db)
+    _session(db, "old", active=False)
+    _req(db, "external", sid="old", seq=1, tin=20)
+    _req(db, "root", seq=1, tin=100, parent="external")
+    _req(db, "a", seq=2, parent="root")
+    _req(db, "b", seq=3, parent="root")
+    _req(db, "aa", seq=4, parent="a")
+    _req(db, "bb", seq=5, parent="b")
+    result = crud.get_session_conversations(db, "s1")
+    assert result["conversation_count"] == 2
+    assert {group["key"] for group in result["conversations"]} == {
+        group["key"] for group in crud.get_dashboard_live(db)["conversations"]
+    }
+    assert all(any(card["id"] == "root" and card["shared_history"]
+                   for segment in group["recent_segments"] for card in segment["request_flow"])
+               for group in result["conversations"])
+    graph, _ = crud._session_lineage_graph(db, "s1", 5)
+    assert next(node for node in graph["nodes"] if node["request_id"] == "root")["conversation_fork_status"] == "confirmed"
+    assert all(card["id"] != "external" for group in result["conversations"]
+               for segment in group["recent_segments"] for card in segment["request_flow"])
+
+
+def test_session_conversations_null_sequence_cursor(db):
+    _session(db)
+    for index in range(8):
+        _req(db, f"n{index}", seq=None, minutes=index)
+    result = crud.get_session_conversations(db, "s1")
+    group = result["conversations"][0]
+    page = crud.get_session_conversation_requests(
+        db, "s1", group["key"], revision=result["revision"],
+        cursor=group["next_request_cursor"], limit=2,
+    )
+    assert [card["id"] for segment in page["segments"] for card in segment["request_flow"]] == ["n2", "n1"]
+
+
+def test_session_conversation_group_pagination_and_cursor_validation(db):
+    _session(db)
+    _req(db, "root", seq=1)
+    for branch in range(5):
+        child = f"child-{branch}"
+        _req(db, child, seq=branch + 2, parent="root")
+        _req(db, f"grandchild-{branch}", seq=branch + 7, parent=child)
+    first = crud.get_session_conversations(db, "s1")
+    assert first["conversation_count"] == 5
+    assert len(first["conversations"]) == 4
+    assert first["next_group_offset"] == 4
+    second = crud.get_session_conversations(db, "s1", group_offset=4, revision=first["revision"])
+    assert len(second["conversations"]) == 1
+    assert second["next_group_offset"] is None
+    assert len({group["key"] for group in first["conversations"] + second["conversations"]}) == 5
+    pinned = crud.get_session_conversations(
+        db, "s1", revision=first["revision"], group_key=second["conversations"][0]["key"],
+    )
+    assert [group["key"] for group in pinned["conversations"]] == [second["conversations"][0]["key"]]
+    with pytest.raises(KeyError, match="group not found"):
+        crud.get_session_conversation_requests(db, "s1", "not-a-group", revision=first["revision"])
+    with pytest.raises(ValueError, match="cursor does not belong"):
+        crud.get_session_conversation_requests(
+            db, "s1", first["conversations"][0]["key"], revision=first["revision"],
+            cursor=crud._cursor_encode((9999, "2026-01-01", "other")),
+        )
+
+
+@pytest.mark.parametrize("size", [500, 2000])
+def test_large_session_conversations_are_bounded_and_paged(db, size):
+    _session(db, active=False)
+    db.add_all(Request(
+        id=f"large-{index}", session_id="s1", session_seq=index,
+        timestamp=T0 + timedelta(seconds=index), provider="anthropic",
+        endpoint="/v1/messages", tokens_total_input=10, tokens_total_output=1,
+        context_fidelity="opaque",
+    ) for index in range(1, size + 1))
+    db.flush()
+    statements = []
+    def record(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        result = crud.get_session_conversations(db, "s1")
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert result["conversation_count"] == 1
+    assert result["lineage_fragment_count"] == size
+    assert result["conversations"][0]["request_count"] == size
+    assert sum(len(segment["request_flow"])
+               for segment in result["conversations"][0]["recent_segments"]) == 5
+    assert len(statements) <= 9
+
+
 def test_route_exposes_crud_contract(tmp_path):
     database.init_db(tmp_path / "t.db")
     try:
@@ -357,3 +496,66 @@ def test_route_exposes_crud_contract(tmp_path):
         assert body["context_change"]["request_id"] == "r1"
     finally:
         database.dispose_engine()
+
+
+def test_session_conversation_routes_return_revision_and_refresh_condition(tmp_path):
+    database.init_db(tmp_path / "conversations.db")
+    try:
+        app = FastAPI()
+        app.include_router(sessions_router.router, prefix="/api")
+        client = TestClient(app)
+        with database.get_db() as session:
+            _session(session, active=False)
+            for seq in range(1, 8):
+                _req(session, f"r{seq}", seq=seq, parent=f"r{seq - 1}" if seq > 1 else None)
+        response = client.get("/api/sessions/s1/conversations")
+        assert response.status_code == 200
+        body = response.json()
+        group = body["conversations"][0]
+        page = client.get("/api/sessions/s1/conversations/requests", params={
+            "group_key": group["key"], "revision": body["revision"],
+            "cursor": group["next_request_cursor"],
+        })
+        assert page.status_code == 200
+        assert [card["id"] for segment in page.json()["segments"]
+                for card in segment["request_flow"]] == ["r2", "r1"]
+        with database.get_db() as session:
+            _req(session, "r8", seq=8, parent="r7")
+        stale = client.get("/api/sessions/s1/conversations/requests", params={
+            "group_key": group["key"], "revision": body["revision"],
+        })
+        assert stale.status_code == 409
+        assert client.get("/api/sessions/missing/conversations").status_code == 404
+    finally:
+        database.dispose_engine()
+
+
+def test_session_conversations_pin_one_read_snapshot_during_append(tmp_path, monkeypatch):
+    from sqlalchemy import text
+    engine = create_engine(f"sqlite:///{tmp_path / 'session-snapshot.db'}")
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text("PRAGMA journal_mode=WAL"))
+    with OrmSession(engine) as writer:
+        _session(writer, active=False)
+        _req(writer, "before", seq=1)
+        writer.commit()
+    original = crud.get_session_lineage_snapshots
+    inserted = False
+    def append_between_reads(reader, session_id):
+        nonlocal inserted
+        if not inserted:
+            inserted = True
+            with OrmSession(engine) as writer:
+                _req(writer, "after", seq=2)
+                writer.commit()
+        return original(reader, session_id)
+    monkeypatch.setattr(crud, "get_session_lineage_snapshots", append_between_reads)
+    with OrmSession(engine) as reader:
+        first = crud.get_session_conversations(reader, "s1")
+    assert first["conversations"][0]["latest_request_id"] == "before"
+    assert first["conversations"][0]["request_count"] == 1
+    with OrmSession(engine) as reader:
+        second = crud.get_session_conversations(reader, "s1")
+    assert second["conversations"][0]["latest_request_id"] == "after"
+    assert second["revision"] != first["revision"]

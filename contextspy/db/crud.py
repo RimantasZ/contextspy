@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import json
+import base64
+import binascii
 import uuid
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -888,7 +890,7 @@ _live_graph_cache: OrderedDict[tuple, dict] = OrderedDict()
 _live_graph_cache_lock = Lock()
 
 
-def _live_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> dict:
+def _session_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> tuple[dict, str]:
     """Cache immutable capture analysis until the request set changes.
 
     Request/block analysis metadata is committed atomically and is append-only
@@ -900,13 +902,14 @@ def _live_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> 
     global_count, last_rowid = db.execute(
         text("SELECT count(*), max(rowid) FROM requests")
     ).one()
-    key = (db.get_bind(), ANALYSIS_VERSION, session_id, session_count,
+    revision = f"{ANALYSIS_VERSION}:{session_count}:{global_count}:{last_rowid or 0}"
+    key = (db.get_bind(), session_id, revision,
            global_count, last_rowid)
     with _live_graph_cache_lock:
         cached = _live_graph_cache.get(key)
         if cached is not None:
             _live_graph_cache.move_to_end(key)
-            return cached
+            return cached, revision
     snapshots, external = get_session_lineage_snapshots(db, session_id)
     graph = build_lineage_graph(snapshots, external_requests=external)
     with _live_graph_cache_lock:
@@ -914,7 +917,12 @@ def _live_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> 
         _live_graph_cache.move_to_end(key)
         while len(_live_graph_cache) > _LIVE_GRAPH_CACHE_LIMIT:
             _live_graph_cache.popitem(last=False)
-    return graph
+    return graph, revision
+
+
+def _live_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> dict:
+    """Compatibility wrapper for the dashboard's shared session graph."""
+    return _session_lineage_graph(db, session_id, session_count)[0]
 
 
 def _block_counts(db: OrmSession, request_ids: list[str]) -> dict[str, dict[str, int]]:
@@ -987,6 +995,242 @@ def _context_change(
     return change
 
 
+def _flow_item(r: Request) -> dict:
+    return {
+        "id": r.id, "session_seq": r.session_seq, "timestamp": r.timestamp.isoformat(),
+        "model": r.model, "duration_ms": r.duration_ms,
+        "status_code": r.status_code, "invocation_outcome": r.invocation_outcome,
+        "tokens_total_input": r.tokens_total_input,
+        "tokens_total_output": r.tokens_total_output,
+    }
+
+
+def _conversation_order(graph: dict) -> list[dict]:
+    nodes = {node["request_id"]: node for node in graph["nodes"]}
+    def order(rid: str) -> tuple:
+        node = nodes[rid]
+        return (node["session_seq"] if node["session_seq"] is not None else -1,
+                node["completed_at"], rid)
+    groups = graph["conversations"]
+    return groups[:1] + sorted(groups[1:], key=lambda group: (
+        max(map(order, group["request_ids"])), group["key"]), reverse=True)
+
+
+def _cursor_encode(order: tuple) -> str:
+    return base64.urlsafe_b64encode(json.dumps(order, separators=(",", ":")).encode()).decode().rstrip("=")
+
+
+def _cursor_decode(cursor: str) -> tuple:
+    try:
+        values = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        if (not isinstance(values, list) or len(values) != 3 or
+                not isinstance(values[0], int) or not isinstance(values[1], str) or
+                not isinstance(values[2], str)):
+            raise ValueError
+        return tuple(values)
+    except (ValueError, TypeError, UnicodeDecodeError, binascii.Error) as exc:
+        raise ValueError("Invalid request cursor") from exc
+
+
+def _conversation_projection_view(
+    db: OrmSession, graph: dict, groups: list[dict], *, preview_limit: int = 5,
+    only_group: str | None = None, cursor: str | None = None,
+    request_limit: int | None = None,
+) -> tuple[list[dict], dict | None]:
+    """Shared dashboard/session presentation facts from one lineage result.
+
+    All segment and membership decisions are made here, never in React. Rows and
+    block counts are hydrated in batches after graph-wide classification.
+    """
+    nodes = {node["request_id"]: node for node in graph["nodes"]}
+    parent_edges = {edge["target_request_id"]: edge for edge in graph["edges"]
+                    if edge["relation_type"] == "context_continuation"}
+    def order(rid: str) -> tuple:
+        node = nodes[rid]
+        return (node["session_seq"] if node["session_seq"] is not None else -1,
+                node["completed_at"], rid)
+
+    prepared = []
+    visible_ids: set[str] = set()
+    latest_ids: set[str] = set()
+    for group in groups:
+        all_ids = group["request_ids"]
+        group_ids = set(all_ids)
+        ordered = sorted(all_ids, key=order, reverse=True)
+        segment_by_id: dict[str, str] = {}
+        starts: dict[str, dict] = {}
+        # Depth order guarantees an accepted parent has an assigned segment.
+        for rid in sorted(all_ids, key=lambda item: (nodes[item]["depth"], order(item))):
+            node = nodes[rid]
+            edge = parent_edges.get(rid)
+            parent_id = edge["source_request_id"] if edge else None
+            parent_node = nodes.get(parent_id) if parent_id in group_ids else None
+            if parent_node and parent_node["branch"] == node["branch"]:
+                segment_by_id[rid] = segment_by_id[parent_id]
+            else:
+                segment_by_id[rid] = rid
+                if parent_node:
+                    gap = ("fork_branch" if parent_node["conversation_fork_status"] == "confirmed"
+                           else "graph_branch_unconfirmed")
+                elif edge and edge["external_source"]:
+                    gap = "external"
+                else:
+                    gap = None if node["parent_state"] in ("exact", "inferred") else node["parent_state"]
+                starts[rid] = {"key": rid, "gap_reason": gap, "first_request_id": rid,
+                               "first_session_seq": node["session_seq"],
+                               "latest_session_seq": node["session_seq"], "request_count": 0}
+        for rid in ordered:
+            segment = starts[segment_by_id[rid]]
+            segment["request_count"] += 1
+            if "newest_request_id" not in segment:
+                segment["newest_request_id"] = rid
+                segment["latest_session_seq"] = nodes[rid]["session_seq"]
+
+        if request_limit is not None:
+            after = _cursor_decode(cursor) if cursor else None
+            if after is not None and after not in {order(rid) for rid in ordered}:
+                raise ValueError("Request cursor does not belong to this conversation")
+            eligible = [rid for rid in ordered if after is None or order(rid) < after]
+            selected = eligible[:request_limit]
+            has_more = len(eligible) > request_limit
+        else:
+            selected = ordered[:preview_limit]
+            has_more = len(ordered) > preview_limit
+        visible_ids.update(selected)
+        latest_ids.add(ordered[0])
+        prepared.append((group, ordered, selected, has_more, segment_by_id, starts))
+
+    comparison_ids = set(visible_ids) | latest_ids
+    for rid in latest_ids:
+        edge = parent_edges.get(rid)
+        if edge:
+            comparison_ids.add(edge["source_request_id"])
+    rows = list(db.execute(select(Request).where(Request.id.in_(comparison_ids))).scalars().all()) if comparison_ids else []
+    row_by_id = {row.id: row for row in rows}
+    block_counts = _block_counts(db, list(comparison_ids)) if comparison_ids else {}
+    views = []
+    page = None
+    for group, ordered, selected, has_more, segment_by_id, starts in prepared:
+        confirmed = set(group["confirmed_request_ids"])
+        segment_slices: list[dict] = []
+        for rid in selected:
+            segment_key = segment_by_id[rid]
+            if not segment_slices or segment_slices[-1]["key"] != segment_key:
+                segment_slices.append({**starts[segment_key], "request_flow": []})
+            edge = parent_edges.get(rid)
+            node = nodes[rid]
+            segment_slices[-1]["request_flow"].append({
+                **_flow_item(row_by_id[rid]),
+                "parent_request_id": edge["source_request_id"] if edge else None,
+                "parent_state": node["parent_state"],
+                "certainty": edge["certainty"] if edge else None,
+                "confidence": edge["confidence"] if edge else None,
+                "membership_state": "confirmed" if rid in confirmed else "unassigned",
+                "shared_history": len(node["conversation_membership"]) > 1,
+                "fork_status": node["conversation_fork_status"],
+            })
+        for segment in segment_slices:
+            segment["segment_start_visible"] = any(
+                card["id"] == segment["first_request_id"] for card in segment["request_flow"]
+            )
+            if not segment["segment_start_visible"]:
+                segment["gap_reason"] = None
+        latest_id = ordered[0]
+        edge = parent_edges.get(latest_id)
+        parent_id = edge["source_request_id"] if edge else None
+        change = _context_change(
+            row_by_id[latest_id], row_by_id.get(parent_id),
+            parent_state=nodes[latest_id]["parent_state"],
+            confidence=edge["confidence"] if edge else None,
+            block_counts=block_counts,
+            first_conversation=group["evidence"] == "parallel_chains" and edge is None,
+        )
+        next_cursor = _cursor_encode(order(selected[-1])) if has_more and selected else None
+        index = sorted(starts.values(), key=lambda entry: order(entry["newest_request_id"]), reverse=True)
+        position_by_id = {rid: position for position, rid in enumerate(ordered)}
+        for entry in index:
+            position = position_by_id[entry["newest_request_id"]]
+            entry["cursor_before"] = _cursor_encode(order(ordered[position - 1])) if position else None
+        group_ids = set(ordered)
+        roots = [rid for rid in ordered if not (rid in parent_edges and
+                 parent_edges[rid]["source_request_id"] in group_ids)]
+        views.append({
+            "key": group["key"], "label": group["label"], "evidence": group["evidence"],
+            "fork_parent_request_id": group["fork_parent_request_id"],
+            "latest_request_id": latest_id, "latest_session_seq": nodes[latest_id]["session_seq"],
+            "latest_activity": nodes[latest_id]["completed_at"],
+            "latest_parent_state": nodes[latest_id]["parent_state"],
+            "request_count": len(ordered),
+            "unassigned_request_count": len(set(ordered) - confirmed),
+            "unlinked_segment_count": max(0, len(roots) - 1),
+            "segment_count": len(starts),
+            "segment_index": index,
+            "recent_segments": segment_slices,
+            "has_older_requests": has_more,
+            "next_request_cursor": next_cursor,
+            "context_change": change,
+        })
+        if group["key"] == only_group:
+            next_id = ordered[ordered.index(selected[-1]) + 1] if selected and has_more else None
+            page = {"segments": segment_slices, "next_cursor": next_cursor,
+                    "continues_earlier": bool(next_id and segment_by_id[next_id] == segment_by_id[selected[-1]])}
+    return views, page
+
+
+def get_session_conversations(
+    db: OrmSession, session_id: str, *, group_offset: int = 0,
+    group_limit: int = 4, revision: str | None = None,
+    group_key: str | None = None,
+) -> dict:
+    with db.begin_nested():
+        if not get_session(db, session_id):
+            raise KeyError("Session not found")
+        count = db.scalar(select(func.count()).where(Request.session_id == session_id)) or 0
+        graph, current_revision = _session_lineage_graph(db, session_id, count)
+        if revision is not None and revision != current_revision:
+            raise ValueError("Conversation revision changed; refresh and try again")
+        ordered = _conversation_order(graph)
+        if group_key is not None:
+            selected = next((group for group in ordered if group["key"] == group_key), None)
+            if selected is None:
+                raise KeyError("Conversation group not found")
+            groups = [selected]
+        else:
+            groups = ordered[group_offset:group_offset + group_limit]
+        views, _ = _conversation_projection_view(db, graph, groups) if groups else ([], None)
+        next_offset = (group_offset + len(groups)
+                       if group_key is None and group_offset + len(groups) < len(ordered) else None)
+        return {
+            "session_id": session_id, "revision": current_revision,
+            "conversation_count": graph["conversation_count"],
+            "confirmed_parallel_streams": graph["confirmed_parallel_streams"],
+            "lineage_fragment_count": graph["lineage_fragment_count"],
+            "primary_key": ordered[0]["key"] if ordered else None,
+            "conversations": views, "next_group_offset": next_offset,
+        }
+
+
+def get_session_conversation_requests(
+    db: OrmSession, session_id: str, group_key: str, *, revision: str,
+    cursor: str | None = None, limit: int = 50,
+) -> dict:
+    with db.begin_nested():
+        if not get_session(db, session_id):
+            raise KeyError("Session not found")
+        count = db.scalar(select(func.count()).where(Request.session_id == session_id)) or 0
+        graph, current_revision = _session_lineage_graph(db, session_id, count)
+        if revision != current_revision:
+            raise ValueError("Conversation revision changed; refresh and try again")
+        group = next((item for item in graph["conversations"] if item["key"] == group_key), None)
+        if group is None:
+            raise KeyError("Conversation group not found")
+        _, page = _conversation_projection_view(
+            db, graph, [group], only_group=group_key, cursor=cursor, request_limit=limit,
+        )
+        return {"session_id": session_id, "revision": current_revision,
+                "group_key": group_key, **page}
+
+
 def get_dashboard_live(db: OrmSession) -> dict:
     """One SQLite read snapshot for the active session and all displayed groups."""
     # SQLite's legacy SELECT transaction handling does not pin a snapshot for
@@ -1033,20 +1277,7 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
         ).scalars().all()
     )
 
-    def flow_item(r: Request) -> dict:
-        return {
-            "id": r.id,
-            "session_seq": r.session_seq,
-            "timestamp": r.timestamp.isoformat(),
-            "model": r.model,
-            "duration_ms": r.duration_ms,
-            "status_code": r.status_code,
-            "invocation_outcome": r.invocation_outcome,
-            "tokens_total_input": r.tokens_total_input,
-            "tokens_total_output": r.tokens_total_output,
-        }
-
-    request_flow = [flow_item(r) for r in recent[:_LIVE_FLOW_LIMIT]]
+    request_flow = [_flow_item(r) for r in recent[:_LIVE_FLOW_LIMIT]]
     activity = [
         {
             "id": r.id,
@@ -1060,94 +1291,8 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
 
     graph = _live_lineage_graph(db, session.id, totals.n)
     nodes = {node["request_id"]: node for node in graph["nodes"]}
-    parent_edges = {edge["target_request_id"]: edge for edge in graph["edges"]
-                    if edge["relation_type"] == "context_continuation"}
-    groups = [graph["conversations"][0]] if graph["conversations"] else []
-    groups += sorted(graph["conversations"][1:], key=lambda group: (
-        max((nodes[rid]["session_seq"] or -1, nodes[rid]["completed_at"], rid)
-            for rid in group["request_ids"]), group["key"]), reverse=True)[:3]
-    displayed_ids = {
-        rid for group in groups for rid in sorted(group["request_ids"], key=lambda rid: (
-            nodes[rid]["session_seq"] or -1, nodes[rid]["completed_at"], rid),
-            reverse=True)[:_LIVE_FLOW_LIMIT]
-    }
-    latest_ids = {
-        max(group["request_ids"], key=lambda rid: (
-            nodes[rid]["session_seq"] or -1, nodes[rid]["completed_at"], rid))
-        for group in groups if group["request_ids"]
-    }
-    comparison_ids = set(displayed_ids)
-    for rid in latest_ids:
-        edge = parent_edges.get(rid)
-        if edge:
-            comparison_ids.add(edge["source_request_id"])
-    rows = list(db.execute(select(Request).where(Request.id.in_(comparison_ids))).scalars().all()) if comparison_ids else []
-    row_by_id = {row.id: row for row in rows}
-    block_counts = _block_counts(db, list(comparison_ids)) if comparison_ids else {}
-    conversations = []
-    for group in groups:
-        all_ids = group["request_ids"]
-        ordered = sorted(all_ids, key=lambda rid: (
-            nodes[rid]["session_seq"] or -1, nodes[rid]["completed_at"], rid), reverse=True)
-        visible = ordered[:_LIVE_FLOW_LIMIT]
-        confirmed = set(group["confirmed_request_ids"])
-        group_ids = set(all_ids)
-        roots = [rid for rid in all_ids if not (rid in parent_edges and
-                 parent_edges[rid]["source_request_id"] in group_ids)]
-        segments: dict[str, list[dict]] = {}
-        for rid in visible:
-            node = nodes[rid]
-            segment_key = f"{node['lineage_key']}:{node['branch']}"
-            if segment_key not in segments:
-                segments[segment_key] = []
-            edge = parent_edges.get(rid)
-            segments[segment_key].append({
-                **flow_item(row_by_id[rid]),
-                "parent_request_id": edge["source_request_id"] if edge else None,
-                "parent_state": node["parent_state"],
-                "certainty": edge["certainty"] if edge else None,
-                "confidence": edge["confidence"] if edge else None,
-                "membership_state": "confirmed" if rid in confirmed else "unassigned",
-                "shared_history": len(node["conversation_membership"]) > 1,
-            })
-        recent_segments = []
-        for segment_key, cards in segments.items():
-            branch_ids = [rid for rid in all_ids
-                          if f"{nodes[rid]['lineage_key']}:{nodes[rid]['branch']}" == segment_key]
-            first_id = min(branch_ids, key=lambda rid: (
-                nodes[rid]["depth"], nodes[rid]["completed_at"], rid))
-            first_node = nodes[first_id]
-            state = first_node["parent_state"]
-            recent_segments.append({
-                "key": segment_key,
-                "gap_reason": "fork_branch" if first_node["branch"] and state in ("exact", "inferred")
-                              else None if state in ("exact", "inferred") else state,
-                "request_flow": cards,
-            })
-        latest_id = ordered[0]
-        edge = parent_edges.get(latest_id)
-        parent_id = edge["source_request_id"] if edge else None
-        first_conversation = group["evidence"] == "parallel_chains" and edge is None
-        change = _context_change(
-            row_by_id[latest_id], row_by_id.get(parent_id),
-            parent_state=nodes[latest_id]["parent_state"],
-            confidence=edge["confidence"] if edge else None,
-            block_counts=block_counts,
-            first_conversation=first_conversation,
-        )
-        conversations.append({
-            "key": group["key"], "label": group["label"],
-            "evidence": group["evidence"],
-            "fork_parent_request_id": group["fork_parent_request_id"],
-            "latest_request_id": latest_id,
-            "latest_session_seq": nodes[latest_id]["session_seq"],
-            "latest_parent_state": nodes[latest_id]["parent_state"],
-            "request_count": len(all_ids),
-            "unlinked_segment_count": max(0, len(roots) - 1),
-            "recent_segments": recent_segments,
-            "has_older_requests": len(all_ids) > _LIVE_FLOW_LIMIT,
-            "context_change": change,
-        })
+    groups = _conversation_order(graph)[:4]
+    conversations, _ = _conversation_projection_view(db, graph, groups, preview_limit=_LIVE_FLOW_LIMIT) if groups else ([], None)
 
     most_recent = max(conversations, key=lambda group: (
         group["latest_session_seq"] or -1,

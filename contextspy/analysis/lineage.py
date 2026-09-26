@@ -635,6 +635,10 @@ def build_lineage_graph(
     graph_requests.sort(key=_request_order)
     topology = _assign_topology(graph_requests, edges)
     projection = _conversation_projection(internal, edges, parent_states, ambiguous)
+    confirmed_fork_parents = {
+        group["fork_parent_request_id"] for group in projection["conversations"][1:]
+        if group["evidence"] == "fork" and group["fork_parent_request_id"]
+    }
     nodes = []
     for request in graph_requests:
         node = {
@@ -669,7 +673,24 @@ def build_lineage_graph(
                 "is_fork": False,
             }),
         }
+        node["conversation_fork_status"] = (
+            "confirmed" if request.id in confirmed_fork_parents else
+            "unconfirmed_graph_branch" if node["is_fork"] else "none"
+        )
         nodes.append(node)
+
+    for path in projection["lineage_paths"]:
+        root = internal_by_id[path["request_ids"][0]]
+        leaf = internal_by_id[path["leaf_request_id"]]
+        path.update({
+            "key": path["leaf_request_id"],
+            "root_request_id": root.id,
+            "root_session_seq": root.session_seq,
+            "leaf_session_seq": leaf.session_seq,
+            "request_count": len(path["request_ids"]),
+            "last_activity": leaf.timestamp.isoformat(),
+            "start_parent_state": parent_states[root.id],
+        })
 
     edges.sort(key=lambda edge: (
         _request_order(request_by_id[edge.target_request_id]),
