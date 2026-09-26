@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { Link } from 'react-router-dom'
-import type { DashboardRequestFlowItem } from '../../api/client'
+import type { DashboardRequestFlowItem, DashboardConversation } from '../../api/client'
 import { formatRequestDuration } from '../../lib/format'
 import { parseServerTimestamp, requestLabel } from './dashboardFormat'
 
@@ -24,18 +24,20 @@ function statusOf(item: DashboardRequestFlowItem): { text: string; className: st
   return null
 }
 
-export function RequestFlow({ items }: { items: DashboardRequestFlowItem[] }) {
+type FlowItem = DashboardRequestFlowItem & Partial<DashboardConversation['recent_segments'][number]['request_flow'][number]>
+
+export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?: boolean }) {
   return (
-    <div className="panel">
-      <div className="mb-3 flex items-baseline justify-between gap-2">
+    <div className={bare ? '' : 'panel'}>
+      {!bare && <div className="mb-3 flex items-baseline justify-between gap-2">
         <h2 id="request-flow-title" className="section-title">Request flow</h2>
         <span className="text-xs text-[var(--text-muted)]">Newest first</span>
-      </div>
+      </div>}
       {items.length === 0 ? (
         <p className="py-4 text-center text-sm text-[var(--text-muted)]">No requests captured in this session yet.</p>
       ) : (
         <ol
-          aria-labelledby="request-flow-title"
+          aria-labelledby={bare ? undefined : 'request-flow-title'}
           aria-description="Most recent requests in this session, ordered newest first"
           className="flex gap-3 overflow-x-auto pb-1"
         >
@@ -69,6 +71,14 @@ export function RequestFlow({ items }: { items: DashboardRequestFlowItem[] }) {
                   <p className="text-xs tabular-nums text-[var(--text)]">
                     <span aria-hidden="true">↑ </span>{item.tokens_total_output.toLocaleString()} out
                   </p>
+                  {item.parent_state && (
+                    <p className="mt-2 text-[11px] text-[var(--text-muted)]">
+                      {item.parent_request_id
+                        ? `${item.certainty === 'inferred' ? `Inferred ${Math.round((item.confidence ?? 0) * 100)}%` : 'Exact'} parent · ${item.parent_request_id.slice(0, 8)}`
+                        : item.parent_state === 'root' ? 'No parent established' : `Parent ${item.parent_state.replace('_', ' ')}`}
+                      {item.shared_history ? ' · Shared history' : ''}
+                    </p>
+                  )}
                 </Link>
               </li>
             )

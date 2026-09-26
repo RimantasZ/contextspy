@@ -20,27 +20,37 @@ function tokenGlyph(delta: number): string {
   return '•'
 }
 
-export function ContextChangePanel({ change }: { change: DashboardContextChange | null }) {
+export function ContextChangePanel({ change, unavailable = false }: { change: DashboardContextChange | null; unavailable?: boolean }) {
   if (!change) {
     return (
       <div className="panel">
         <h2 className="section-title">Context size</h2>
-        <p className="py-6 text-center text-sm text-[var(--text-muted)]">No requests captured in this session yet.</p>
+        <p className="py-6 text-center text-sm text-[var(--text-muted)]">
+          {unavailable ? 'Parent comparisons unavailable for the ungrouped session requests.' : 'No requests captured in this session yet.'}
+        </p>
       </div>
     )
   }
 
-  const hasPrevious = change.previous_request_id !== null
+  const hasParent = change.parent_request_id !== null
   const { rows, hiddenCount } = selectBlockChangeRows(change.block_changes)
-  const previousLabel = hasPrevious
-    ? requestLabel(change.previous_session_seq, change.previous_request_id as string)
+  const parentLabel = hasParent
+    ? requestLabel(change.parent_session_seq, change.parent_request_id as string)
     : null
+  const noParentText = change.first_conversation
+    ? 'First request in this conversation.'
+    : change.parent_state === 'ambiguous' ? 'Parent uncertain: multiple plausible requests.'
+    : change.parent_state === 'unresolved_exact' ? 'Provider parent was not captured.'
+    : change.parent_state === 'unavailable' ? 'Parent unavailable from captured context.'
+    : 'No parent established.'
 
   return (
     <div className="panel">
       <h2 className="section-title">Context size</h2>
       <p className="mb-3 text-xs text-[var(--text-muted)]">
-        {hasPrevious ? `Latest request · compared with ${previousLabel}` : 'First request in session.'}
+        {hasParent
+          ? `Latest request · compared with ${parentLabel}${change.external_parent ? ' (another session)' : ''}${change.parent_state === 'inferred' ? ` · inferred ${Math.round((change.parent_confidence ?? 0) * 100)}%` : ''}`
+          : noParentText}
       </p>
       <p className="text-2xl font-semibold tabular-nums text-[var(--text)]">
         {change.tokens_total_input.toLocaleString()}{' '}
@@ -53,7 +63,7 @@ export function ContextChangePanel({ change }: { change: DashboardContextChange 
         </p>
       )}
 
-      {hasPrevious && (
+      {hasParent && (
         <div className="mt-4 border-t border-[var(--border)] pt-3">
           <h3 className="eyebrow mb-2">Block changes</h3>
           {change.comparison_fidelity === 'unavailable' ? (
@@ -61,7 +71,7 @@ export function ContextChangePanel({ change }: { change: DashboardContextChange 
           ) : (
             <>
               {rows.length === 0 ? (
-                <p className="text-xs text-[var(--text-muted)]">No block-count changes.</p>
+                <p className="text-xs text-[var(--text-muted)]">No block-count changes. Content may still have changed.</p>
               ) : (
                 <ul className="space-y-1 text-sm">
                   {rows.map((row) => (

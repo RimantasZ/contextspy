@@ -111,28 +111,11 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
   const parentByChild = useMemo(() => new Map(graph.edges
     .filter((edge) => edge.relation_type === 'context_continuation')
     .map((edge) => [edge.target_request_id, edge.source_request_id])), [graph.edges])
-  const conversationsByRequest = useMemo(() => {
-    const parents = new Set(parentByChild.values())
-    const memberships = new Map<string, Set<string>>()
-    for (const leaf of graph.nodes) {
-      if (leaf.external || parents.has(leaf.request_id)) continue
-      const conversation = `${leaf.lineage_number}.${leaf.branch + 1}`
-      const visited = new Set<string>()
-      let requestId: string | undefined = leaf.request_id
-      while (requestId && !visited.has(requestId)) {
-        visited.add(requestId)
-        if (!memberships.has(requestId)) memberships.set(requestId, new Set())
-        memberships.get(requestId)?.add(conversation)
-        requestId = parentByChild.get(requestId)
-      }
-    }
-    return new Map([...memberships].map(([requestId, labels]) => [
-      requestId,
-      [...labels].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    ]))
-  }, [graph.nodes, parentByChild])
+  const groupLabels = useMemo(() => new Map(graph.conversations.map((group) => [group.key, group.label])), [graph.conversations])
+  const membershipLabel = (node: LineageNode) => node.conversation_membership
+    .map((item) => `${groupLabels.get(item.key) ?? item.key}${item.state === 'unassigned' ? ' (uncertain)' : ''}`)
+    .join(', ')
   const selectedNode = selectedNodeId ? byId.get(selectedNodeId) ?? null : null
-  const selectedConversations = selectedNode ? conversationsByRequest.get(selectedNode.request_id) ?? [] : []
   const selectedAmbiguity = selectedNode
     ? graph.ambiguous_candidates.find((item) => item.request_id === selectedNode.request_id) ?? null
     : null
@@ -168,8 +151,8 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="section-title">Conversations</p>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">A linked path is shown as a conversation. Forks share earlier requests; unlinked requests may have missing parents. Request numbers show recording order within this session.</p>
+          <p className="section-title">Request lineage</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">{graph.conversation_count} supported conversation{graph.conversation_count === 1 ? '' : 's'} · {graph.lineage_fragment_count} diagnostic lineage path{graph.lineage_fragment_count === 1 ? '' : 's'}. Unlinked paths are not automatically separate conversations. Request numbers show recording order.</p>
         </div>
         <div className="flex flex-wrap gap-3 text-xs text-[var(--text-muted)]" aria-label="Conversation legend">
           <span><span className="mr-1 inline-block w-5 border-t-2 border-[var(--success)]" />Exact</span>
@@ -260,7 +243,7 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="section-title">{requestLabel(selectedNode)}</p>
-                <p className="mt-1 text-sm text-[var(--text-muted)]">{selectedConversations.length === 1 ? 'Conversation' : 'Conversations'} {selectedConversations.join(', ')} · request depth {selectedNode.depth}</p>
+                <p className="mt-1 text-sm text-[var(--text-muted)]">{membershipLabel(selectedNode) || 'External parent'} · request depth {selectedNode.depth}</p>
                 <p className="mt-2 text-xs text-[var(--text-muted)]">
                   Started {new Date(selectedNode.started_at).toLocaleString()}
                   {selectedNode.started_at_source !== 'observed' && ` (${selectedNode.started_at_source.replace('_', ' ')})`}
@@ -310,7 +293,7 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
       )}
 
       <details className="rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)]">
-        <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Conversation request list</summary>
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Lineage request list</summary>
         <div className="overflow-x-auto border-t border-[var(--border)]">
           <table className="w-full text-left text-xs">
             <thead><tr className="text-[var(--text-muted)]"><th className="p-2">Request</th><th className="p-2">Parent</th><th className="p-2">Relationship</th><th className="p-2">Conversation</th><th className="p-2">Context</th></tr></thead>
@@ -322,7 +305,7 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
                   <td className="p-2"><button type="button" className="font-medium text-[var(--accent-soft-text)]" onClick={() => navigate(`/requests/${node.request_id}`)}>{requestLabel(node)}</button></td>
                   <td className="p-2">{parent ? requestLabel(byId.get(parent) ?? node) : '—'}</td>
                   <td className="p-2">{edge ? relationLabel(edge) : stateLabel(node.parent_state)}</td>
-                  <td className="p-2">{conversationsByRequest.get(node.request_id)?.join(', ') ?? '—'} · depth {node.depth}</td>
+                  <td className="p-2">{membershipLabel(node) || '—'} · depth {node.depth}</td>
                   <td className="p-2 tabular-nums">{node.tokens_total_input.toLocaleString()} tokens</td>
                 </tr>
               )

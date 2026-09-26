@@ -112,6 +112,16 @@ traffic, an explicit `previous_response_id` is resolved to a persisted predecess
 input is expanded as predecessor input + predecessor output + current input. This applies to REST
 as well as WebSocket traffic. Only explicit provider IDs establish lineage.
 
+The session lineage API also computes conservative display conversations. Its raw root-to-leaf
+paths are diagnostic fragments: absent or ambiguous parent IDs do not split a session into chats.
+Separate rows need evidence of a sustained fork with exact diverging predecessor edges, an
+overlapping fork with distinct meaningful context, or two disjoint, observed, interleaved chains
+with distinct meaningful context. The persisted `agent` field identifies a product (for example,
+`codex`), not a task or subagent; captured requests currently have no reliable dedicated task or
+thread identifier. No extra schema field is inferred from opaque payloads. The live dashboard
+reads totals, lineage, cards, and parent comparisons from one SQLite snapshot, reusing a bounded
+analysis cache until the request set changes.
+
 `canonical_request_body` and `canonical_response_body` store the exact JSON documents passed to
 the provider adapter. Blocks and category/token columns are derived indexes over those documents;
 they intentionally duplicate data. A retained canonical pair is sufficient to rerun analysis

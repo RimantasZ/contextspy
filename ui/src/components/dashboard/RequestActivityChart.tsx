@@ -25,7 +25,7 @@ export function RequestActivityChart({ activity }: { activity: DashboardActivity
   return (
     <div className="panel">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 className="section-title">Request activity</h2>
+        <h2 className="section-title">Session activity</h2>
         <ul className="flex gap-4 text-xs text-[var(--text-muted)]">
           <li className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[var(--chart-input)]" aria-hidden="true" />

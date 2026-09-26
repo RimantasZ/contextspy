@@ -2,13 +2,22 @@
 
 ## Status and ownership
 
-**Revised plan; not implemented on this branch.** The earlier implementation and its status note
-belonged to the discarded `merge_attempt_dashbort_and_branches` branch. The clean integration
-branch is `merge_sequence_refactor_with_new_dash_2` at `621c206`: it contains
-`refactor-request-sequence-tracking` and the current `main` tip (`9be0610`). Before this revision,
-the baseline passed: 210 backend tests, 82 frontend tests, UI lint/typecheck, and production build.
-The working tree was clean. `main` remains the source of truth for the live dashboard;
-`plans/archive/new-dashboard.md` records its original single-sequence design.
+**Implemented on `merge_sequence_refactor_with_new_dash_2`; not merged to `main`.** The earlier
+implementation on `merge_attempt_dashbort_and_branches` was discarded. This version adds a
+conservative Python conversation projection, parent-relative live dashboard comparisons, a
+consistent SQLite read snapshot, grouped Overview UI, and backend-owned membership/counts in
+Session Detail. A bounded read-time graph cache is keyed by session, analysis version, and the
+global request-set revision, and invalidates on new captures. The schema remains v5 because no
+reliable task/subagent ID is persisted. The
+non-overlapping sustained-fork rule is deliberately stricter than the original text below: both
+diverging parent edges must be exact. An overlapping fork also needs distinct meaningful context,
+so a one-off replay does not split a chat. This adjustment was driven by a read-only check of the
+ongoing `codex 0925` capture, which now shows one display group despite 27 diagnostic paths.
+Verification: 222 backend tests, 84 frontend tests, UI typecheck/lint/unused checks, production
+build, and a concurrent-append snapshot regression pass. No branch merge was performed. A visual
+browser inspection against a live capture remains a useful follow-up; synthetic grouped UI cases
+are covered by component tests. `plans/archive/new-dashboard.md` records the original
+single-sequence dashboard design.
 
 Goal: preserve the live active-session dashboard while showing separate recent sequences **only
 when there is positive evidence of distinct parallel request streams** (independent agents/tasks
@@ -81,8 +90,9 @@ generic `agent` label (`codex`), or elapsed time alone.
    a conversation.
 2. Build conversation/display groups from *positive* evidence, in this order:
    - **Confirmed fork:** one request has two or more accepted primary continuation children, and
-     their observed invocations overlap or both children lead to sustained, distinct descendant
-     chains. A lone retry/replay sibling is not enough. Distinct descendant branches are separate
+     their observed invocations overlap with distinct meaningful context, or both children have
+     exact provider predecessor edges and lead to sustained, distinct descendant chains. A lone
+     retry/replay sibling or non-overlapping inferred sibling is not enough. Distinct descendant branches are separate
      streams; shared ancestors belong to both.
    - **Explicit independent stream:** a provider/agent supplies a documented stable task,
      thread, or subagent identifier; different identifiers and overlapping/interleaved activity

@@ -15,7 +15,7 @@ from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.analysis.context_diff import ContextBlock, ContextDelta, diff_contexts, semantic_key
 
 
-ANALYSIS_VERSION = "lineage-v1"
+ANALYSIS_VERSION = "lineage-v2"
 INFERENCE_THRESHOLD = 0.80
 AMBIGUOUS_THRESHOLD = 0.45
 INFERENCE_MARGIN = 0.15
@@ -307,6 +307,185 @@ def _assign_topology(
     return topology
 
 
+def _conversation_projection(
+    internal: list[RequestSnapshot], edges: list[LineageEdge],
+    parent_states: Mapping[str, str], ambiguous: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Keep diagnostic paths separate from positively evidenced display streams.
+
+    A missing/ambiguous parent is a fragment, not evidence of another conversation.
+    No provider currently persists a documented task/thread ID, so that optional
+    source of stream identity is intentionally unavailable here.
+    """
+    if not internal:
+        return {"lineage_paths": [], "lineage_fragment_count": 0,
+                "conversation_count": 0, "confirmed_parallel_streams": 0,
+                "conversations": [], "membership": {}}
+
+    by_id = {request.id: request for request in internal}
+    parent_edge = {edge.target_request_id: edge for edge in edges
+                   if edge.relation_type == "context_continuation"}
+    children: dict[str, list[str]] = defaultdict(list)
+    fork_children: dict[str, list[str]] = defaultdict(list)
+    for child_id, edge in parent_edge.items():
+        fork_children[edge.source_request_id].append(child_id)
+        if edge.source_request_id in by_id:
+            children[edge.source_request_id].append(child_id)
+    for values in children.values():
+        values.sort(key=lambda rid: _request_order(by_id[rid]))
+
+    paths: list[list[str]] = []
+    for request in internal:
+        if children.get(request.id):
+            continue
+        path = [request.id]
+        current = request.id
+        while current in parent_edge and parent_edge[current].source_request_id in by_id:
+            current = parent_edge[current].source_request_id
+            path.append(current)
+        paths.append(list(reversed(path)))
+    paths.sort(key=lambda path: (_request_order(by_id[path[-1]]), path[-1]))
+    path_sets = [set(path) for path in paths]
+    evidence: dict[int, dict[str, Any]] = {}
+    fingerprints = {
+        request.id: {
+            key for block in request.blocks
+            if not block.is_configuration
+            if (key := semantic_key(block)) is not None
+        }
+        for request in internal
+    }
+
+    # A fork needs two genuinely active branches: overlapping observed calls,
+    # or accepted continuation after *both* immediate children.
+    for parent_id, child_ids in fork_children.items():
+        if len(child_ids) < 2:
+            continue
+        for left_index, left_id in enumerate(child_ids):
+            for right_id in child_ids[left_index + 1:]:
+                left, right = by_id[left_id], by_id[right_id]
+                observed_overlap = (
+                    left.started_at is not None and right.started_at is not None
+                    and left.started_at < right.timestamp
+                    and right.started_at < left.timestamp
+                )
+                left_keys, right_keys = fingerprints[left_id], fingerprints[right_id]
+                distinct_context = bool(left_keys and right_keys and left_keys != right_keys)
+                sustained = bool(children.get(left_id)) and bool(children.get(right_id))
+                # A non-overlapping inferred sibling can be a misplaced
+                # continuation after compaction. Do not promote it to a new
+                # stream solely because both later acquired descendants.
+                exact_sustained = (
+                    sustained and parent_edge[left_id].certainty == "exact"
+                    and parent_edge[right_id].certainty == "exact"
+                )
+                if not (exact_sustained or (observed_overlap and distinct_context)):
+                    continue
+                for child_id in (left_id, right_id):
+                    for index, path in enumerate(paths):
+                        if child_id in path:
+                            evidence.setdefault(index, {
+                                "evidence": "fork", "fork_parent_request_id": parent_id,
+                                "anchor_request_id": child_id,
+                            })
+
+    # Without a task ID, require sustained interleaving of *observed* starts.
+    # No matching non-configuration fingerprints is deliberately stricter than
+    # the ambiguous-candidate threshold, and avoids claiming opaque fragments.
+    ambiguous_pairs = {
+        (item["request_id"], candidate["request_id"])
+        for item in ambiguous for candidate in item.get("candidates", [])
+    }
+    for left_index, left_path in enumerate(paths):
+        if len(left_path) < 3 or not all(by_id[rid].started_at for rid in left_path):
+            continue
+        left_keys = set().union(*(fingerprints[rid] for rid in left_path))
+        if not left_keys:
+            continue
+        for right_index in range(left_index + 1, len(paths)):
+            right_path = paths[right_index]
+            if len(right_path) < 3 or path_sets[left_index] & path_sets[right_index]:
+                continue
+            # Paths rooted in the same captured external predecessor are fork
+            # candidates, never independent roots merely because the external
+            # node is excluded from in-session paths.
+            left_parent = parent_edge.get(left_path[0])
+            right_parent = parent_edge.get(right_path[0])
+            if (left_parent and right_parent
+                    and left_parent.source_request_id == right_parent.source_request_id):
+                continue
+            if not all(by_id[rid].started_at for rid in right_path):
+                continue
+            right_keys = set().union(*(fingerprints[rid] for rid in right_path))
+            if not right_keys or left_keys & right_keys:
+                continue
+            if any((a, b) in ambiguous_pairs or (b, a) in ambiguous_pairs
+                   for a in left_path for b in right_path):
+                continue
+            starts = sorted(
+                [(by_id[rid].started_at, "A") for rid in left_path]
+                + [(by_id[rid].started_at, "B") for rid in right_path]
+            )
+            labels = [label for _, label in starts]
+            if not any(labels[i:i + 4] in (["A", "B", "A", "B"], ["B", "A", "B", "A"])
+                       for i in range(len(labels) - 3)):
+                continue
+            for index in (left_index, right_index):
+                evidence.setdefault(index, {
+                    "evidence": "parallel_chains",
+                    "anchor_request_id": paths[index][0],
+                })
+
+    def rank(index: int) -> tuple[int, int, datetime, str]:
+        path = paths[index]
+        last = by_id[path[-1]]
+        return (len(path), last.session_seq or -1, last.timestamp, last.id)
+
+    primary_index = max(evidence or range(len(paths)), key=rank)
+    primary_path = paths[primary_index]
+    confirmed = sorted((index for index in evidence if index != primary_index),
+                       key=rank, reverse=True)
+    secondary_ids = set().union(*(path_sets[index] - path_sets[primary_index]
+                                  for index in confirmed)) if confirmed else set()
+    primary_ids = set(by_id) - secondary_ids
+    session_id = internal[0].session_id or "unassigned"
+    groups = [{
+        "key": f"session:{session_id}:primary",
+        "label": "Session request sequence" if not confirmed else "Primary conversation",
+        "evidence": evidence.get(primary_index, {}).get("evidence", "default"),
+        "fork_parent_request_id": evidence.get(primary_index, {}).get("fork_parent_request_id"),
+        "request_ids": sorted(primary_ids, key=lambda rid: _request_order(by_id[rid])),
+        "confirmed_request_ids": primary_path if len(primary_path) > 1 else [],
+    }]
+    for index in confirmed:
+        proof = evidence[index]
+        groups.append({
+            "key": f"session:{session_id}:{proof['evidence']}:{proof['anchor_request_id']}",
+            "label": f"Conversation {len(groups) + 1}",
+            "evidence": proof["evidence"],
+            "fork_parent_request_id": proof.get("fork_parent_request_id"),
+            "request_ids": paths[index],
+            "confirmed_request_ids": paths[index],
+        })
+    membership: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for group in groups:
+        confirmed_ids = set(group["confirmed_request_ids"])
+        for rid in group["request_ids"]:
+            membership[rid].append({
+                "key": group["key"],
+                "state": "confirmed" if rid in confirmed_ids else "unassigned",
+            })
+    return {
+        "lineage_paths": [{"request_ids": path, "leaf_request_id": path[-1]}
+                          for path in paths],
+        "lineage_fragment_count": len(paths),
+        "conversation_count": len(groups),
+        "confirmed_parallel_streams": len(groups) - 1,
+        "conversations": groups,
+        "membership": dict(membership),
+    }
+
+
 def build_lineage_graph(
     requests: Iterable[RequestSnapshot],
     *,
@@ -455,6 +634,7 @@ def build_lineage_graph(
     ]
     graph_requests.sort(key=_request_order)
     topology = _assign_topology(graph_requests, edges)
+    projection = _conversation_projection(internal, edges, parent_states, ambiguous)
     nodes = []
     for request in graph_requests:
         node = {
@@ -479,6 +659,8 @@ def build_lineage_graph(
             "predecessor_response_id": request.predecessor_response_id,
             "external": request.external,
             "parent_state": parent_states.get(request.id, "external" if request.external else "root"),
+            "conversation_membership": projection["membership"].get(request.id, []),
+            "parent_request_id": parents.get(request.id),
             **topology.get(request.id, {
                 "lineage_key": request.id,
                 "lineage_number": 0,
@@ -500,6 +682,7 @@ def build_lineage_graph(
         "edges": [edge.to_dict() for edge in edges],
         "unresolved_predecessors": unresolved,
         "ambiguous_candidates": ambiguous,
+        **{key: value for key, value in projection.items() if key != "membership"},
     }
 
 

@@ -264,6 +264,8 @@ export interface LineageNode {
   depth: number
   branch: number
   is_fork: boolean
+  parent_request_id: string | null
+  conversation_membership: Array<{ key: string; state: 'confirmed' | 'unassigned' }>
 }
 
 export interface LineageEdge {
@@ -290,6 +292,18 @@ export interface LineageGraph {
   analysis_version: string
   nodes: LineageNode[]
   edges: LineageEdge[]
+  conversation_count: number
+  confirmed_parallel_streams: number
+  lineage_fragment_count: number
+  lineage_paths: Array<{ request_ids: string[]; leaf_request_id: string }>
+  conversations: Array<{
+    key: string
+    label: string
+    evidence: 'default' | 'fork' | 'parallel_chains'
+    fork_parent_request_id: string | null
+    request_ids: string[]
+    confirmed_request_ids: string[]
+  }>
   unresolved_predecessors: Array<{
     request_id: string
     provider: string
@@ -416,11 +430,41 @@ export interface DashboardContextChange {
   request_id: string
   session_seq: number | null
   tokens_total_input: number
-  previous_request_id: string | null
-  previous_session_seq: number | null
+  parent_request_id: string | null
+  parent_session_seq: number | null
+  parent_state: LineageNode['parent_state']
+  parent_confidence: number | null
+  external_parent: boolean
+  first_conversation: boolean
   token_delta: number | null
   comparison_fidelity: 'complete' | 'partial' | 'unavailable'
   block_changes: DashboardBlockChange[]
+}
+
+export interface DashboardConversation {
+  key: string
+  label: string
+  evidence: 'default' | 'fork' | 'parallel_chains'
+  fork_parent_request_id: string | null
+  latest_request_id: string
+  latest_session_seq: number | null
+  latest_parent_state: LineageNode['parent_state']
+  request_count: number
+  unlinked_segment_count: number
+  recent_segments: Array<{
+    key: string
+    gap_reason: LineageNode['parent_state'] | 'fork_branch' | null
+    request_flow: Array<DashboardRequestFlowItem & {
+      parent_request_id: string | null
+      parent_state: LineageNode['parent_state']
+      certainty: LineageEdge['certainty'] | null
+      confidence: number | null
+      membership_state: 'confirmed' | 'unassigned'
+      shared_history: boolean
+    }>
+  }>
+  has_older_requests: boolean
+  context_change: DashboardContextChange
 }
 
 export interface DashboardLiveData {
@@ -428,6 +472,12 @@ export interface DashboardLiveData {
   request_flow: DashboardRequestFlowItem[]
   activity: DashboardActivityPoint[]
   context_change: DashboardContextChange | null
+  conversations: DashboardConversation[]
+  conversation_count: number
+  confirmed_parallel_streams: number
+  lineage_fragment_count: number
+  has_more_conversations: boolean
+  most_recent_conversation_key: string | null
 }
 
 export const statsApi = {

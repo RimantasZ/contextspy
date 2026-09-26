@@ -34,6 +34,8 @@ function node(overrides: Partial<LineageNode>): LineageNode {
     depth: 0,
     branch: 0,
     is_fork: true,
+    parent_request_id: null,
+    conversation_membership: [{ key: 'session:capture-1:primary', state: 'confirmed' }, { key: 'session:capture-1:fork:inferred-child', state: 'confirmed' }],
     ...overrides,
   }
 }
@@ -54,7 +56,15 @@ const graph: LineageGraph = {
     ended_at: null,
     is_active: true,
   },
-  analysis_version: 'lineage-v1',
+  analysis_version: 'lineage-v2',
+  conversation_count: 2,
+  confirmed_parallel_streams: 1,
+  lineage_fragment_count: 2,
+  lineage_paths: [{ request_ids: ['root', 'exact-child'], leaf_request_id: 'exact-child' }, { request_ids: ['root', 'inferred-child'], leaf_request_id: 'inferred-child' }],
+  conversations: [
+    { key: 'session:capture-1:primary', label: 'Primary conversation', evidence: 'fork', fork_parent_request_id: 'root', request_ids: ['root', 'exact-child'], confirmed_request_ids: ['root', 'exact-child'] },
+    { key: 'session:capture-1:fork:inferred-child', label: 'Conversation 2', evidence: 'fork', fork_parent_request_id: 'root', request_ids: ['root', 'inferred-child'], confirmed_request_ids: ['root', 'inferred-child'] },
+  ],
   nodes: [
     node({}),
     node({
@@ -116,7 +126,7 @@ describe('SessionLineage', () => {
     expect(screen.getByRole('button', { name: /Inferred 91% from Request #1 to Request #3/ })).toBeTruthy()
 
     await userEvent.click(screen.getByRole('button', { name: 'Request #1, No known parent' }))
-    expect(screen.getByText('Conversations 1.1, 1.2 · request depth 0')).toBeTruthy()
+    expect(screen.getByText('Primary conversation, Conversation 2 · request depth 0')).toBeTruthy()
 
     await userEvent.click(screen.getByRole('button', { name: /Exact continuation from Request #1 to Request #2/ }))
     expect(screen.getAllByText('Exact continuation').length).toBeGreaterThan(0)

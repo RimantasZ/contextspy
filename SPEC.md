@@ -626,7 +626,7 @@ the uniqueness index.
 | `POST` | `/api/sessions` | Create and start a new session. Body: `{ "name": "string" }`. Returns session object. If another session is active, it is automatically ended first (warning included in response). |
 | `GET` | `/api/sessions` | List all sessions (newest first). |
 | `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session. 404 if missing. |
-| `GET` | `/api/sessions/{id}/lineage` | Complete capture lineage graph. Returns exact/inferred continuation edges, derived roots/forks/branches, uncertainty diagnostics, timing, and per-edge context-delta summaries. Exact parents captured outside the selected capture are returned as external nodes. |
+| `GET` | `/api/sessions/{id}/lineage` | Complete session lineage graph. Returns exact/inferred continuation edges, diagnostic root-to-leaf paths, conservative conversation groups and membership, uncertainty diagnostics, timing, and per-edge context-delta summaries. Exact parents captured outside the selected session are external nodes. |
 | `PATCH` | `/api/sessions/{id}` | Rename a session. Body: `{ "name": "string" }`. 422 if blank, 404 if missing. |
 | `POST` | `/api/sessions/{id}/end` | End a session. Retained content is unchanged until the next startup retention pass. 404 if missing. |
 | `DELETE` | `/api/sessions/{id}?delete_requests=bool` | Delete session, optionally cascading its request records. 404 if missing. |
@@ -645,6 +645,7 @@ the uniqueness index.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/stats/overview` | Aggregated totals across all recorded requests. |
+| `GET` | `/api/stats/dashboard-live` | One consistent read snapshot of the active session: totals, ten session-wide activity points, up to four conservative conversation groups with five recent cards each, diagnostic fragment/conversation counts, and resolved-parent context changes. The flat `request_flow` and top-level `context_change` are compatibility aliases; the latter follows the most recently active group's resolved parent. |
 | `GET` | `/api/stats/session/{id}` | Aggregated breakdown for a specific session. |
 | `GET` | `/api/stats/timeline` | Time-series data. Query params: `session_id` (optional), `bucket` = `minute` \| `hour` \| `day`. |
 | `GET` | `/api/stats/tools` | Per-tool token breakdown (`tool_name`, `definition_tokens`, `result_tokens`). Query params: `session_id`, `request_id` (both optional; live-aggregated from `tool_stats`, not materialized separately). |
@@ -748,6 +749,13 @@ plus navigation drawer on mobile.
 
 - Header-level session controls show the active session or open the **Start session** dialog; an
   active session can be ended in place.
+- The live session panel shows all-session totals, up to four backend-classified request sequences
+  (five recent requests per sequence), a session-wide activity chart, and a selected sequence's
+  context-size comparison. With no confirmed parallel stream it shows one session sequence with
+  explicit lineage gaps, even if the diagnostic graph has many paths. Confirmed forks may share
+  history across sequences. Context changes compare only with the resolved lineage parent, never
+  the preceding session request number. The global Recent requests list remains a chronological
+  audit view.
 - Global summary cards: context tokens, generated tokens (split into visible output and thinking
   when applicable), total requests, and provider count.
 - Responsive token-composition donut with an adjacent exact-value category table.
@@ -801,11 +809,14 @@ plus navigation drawer on mobile.
 
 ##### `/sessions/:id` — Session Detail
 
-- The user-facing term for the recording window is **Session**. A session may contain independent
-  or forked conversations; a conversation is one path through linked requests.
+- The user-facing term for the recording window is **Session**. A session can contain several
+  independent or forked conversations. A conversation is a supported request stream, not every
+  root-to-leaf lineage path; ambiguous or missing parentage creates a diagnostic fragment, not
+  another conversation. Generic agent labels do not prove independent streams.
 - Summary/Conversations views are URL-backed. Conversations renders a scrollable graph/timeline with stable
   session request numbers, parallel lanes, roots, forks, exact solid edges, inferred dashed edges,
-  confidence/evidence, duration bars, and an accessible table fallback. Selecting an edge exposes
+  confidence/evidence, duration bars, backend conversation membership and a diagnostic path count,
+  and an accessible table fallback. Selecting an edge exposes
   its context-change totals; selecting a node links to Request Detail.
 - Session timing (opened/closed, first/last request, elapsed and active request duration), totals,
   token-composition donut/table, selectable minute/hour/day timeline, tool treemap/table, and up

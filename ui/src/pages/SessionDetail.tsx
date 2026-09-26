@@ -69,9 +69,7 @@ export default function SessionDetail() {
 
   const session = useSession(id ?? '');
   const lineage = useSessionLineage(id ?? '', view === 'lineage');
-  const conversationCount = lineage.data
-    ? new Set(lineage.data.nodes.filter((node) => !node.external).map((node) => `${node.lineage_number}:${node.branch}`)).size
-    : undefined;
+  const conversationCount = lineage.data?.conversation_count;
   const stats = useStatsSession(id ?? '');
   const timeline = useTimeline(id, bucket);
   const requests = useRequests({ session_id: id, sort_by: reqSortKey ?? undefined, sort_dir: reqSortKey ? reqSortDir : undefined, limit: 500 });

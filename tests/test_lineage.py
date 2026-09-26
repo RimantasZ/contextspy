@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.analysis.context_diff import ContextBlock, diff_contexts
-from contextspy.analysis.lineage import RequestSnapshot, build_lineage_graph
+from contextspy.analysis.lineage import LineageEdge, RequestSnapshot, _conversation_projection, build_lineage_graph
 
 
 BASE_TIME = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
@@ -136,6 +136,108 @@ def test_exact_predecessors_form_a_fork_without_using_capture_adjacency():
     root_node = next(node for node in graph["nodes"] if node["request_id"] == "root")
     assert root_node["is_fork"] is True
     assert next(node for node in graph["nodes"] if node["request_id"] == "unrelated")["parent_state"] == "unavailable"
+    # Two one-off siblings are a diagnostic fork, not yet two conversations.
+    assert graph["conversation_count"] == 1
+    assert graph["lineage_fragment_count"] == 3
+
+
+def test_many_unlinked_codex_requests_are_one_display_group():
+    requests = [_snapshot(f"r{i}", i, []) for i in range(1, 16)]
+    graph = build_lineage_graph(requests)
+    assert graph["lineage_fragment_count"] == 15
+    assert graph["conversation_count"] == 1
+    assert graph["confirmed_parallel_streams"] == 0
+    assert len(graph["conversations"][0]["request_ids"]) == 15
+    assert all(node["conversation_membership"][0]["state"] == "unassigned"
+               for node in graph["nodes"])
+
+
+def test_sustained_fork_shares_only_proven_ancestry():
+    requests = [
+        _snapshot("root", 1, [], response_id="root"),
+        _snapshot("a", 2, [], response_id="a", predecessor_id="root"),
+        _snapshot("b", 3, [], response_id="b", predecessor_id="root"),
+        _snapshot("aa", 4, [], response_id="aa", predecessor_id="a"),
+        _snapshot("bb", 5, [], response_id="bb", predecessor_id="b"),
+        _snapshot("unknown", 6, []),
+    ]
+    graph = build_lineage_graph(requests)
+    assert graph["conversation_count"] == 2
+    groups = graph["conversations"]
+    assert all(group["evidence"] == "fork" for group in groups)
+    assert all("root" in group["request_ids"] for group in groups)
+    assert sum("unknown" in group["request_ids"] for group in groups) == 1
+    assert graph["lineage_fragment_count"] == 3
+
+
+def test_overlapping_retry_siblings_do_not_become_two_conversations():
+    from dataclasses import replace
+    root = _snapshot("root", 1, [], response_id="root")
+    shared = _block("a", 10, Direction.INPUT, BlockType.USER_MESSAGE, "same prompt", position=0)
+    a = _snapshot("a", 2, [shared], response_id="a", predecessor_id="root")
+    b = _snapshot("b", 3, [replace(shared, id=11, request_id="b")],
+                  response_id="b", predecessor_id="root")
+    b = replace(b, started_at=a.started_at + timedelta(milliseconds=100))
+    assert build_lineage_graph([root, a, b])["conversation_count"] == 1
+
+    different = _block("b", 11, Direction.INPUT, BlockType.USER_MESSAGE, "other prompt", position=0)
+    b = replace(b, blocks=(different,))
+    assert build_lineage_graph([root, a, b])["conversation_count"] == 2
+
+
+def test_external_fork_parent_is_evidence_but_not_a_session_card():
+    from dataclasses import replace
+    external = replace(_snapshot("outside", 1, [], response_id="outside"),
+                       session_id="older", external=True)
+    requests = [
+        _snapshot("a", 2, [], response_id="a", predecessor_id="outside"),
+        _snapshot("b", 3, [], response_id="b", predecessor_id="outside"),
+        _snapshot("aa", 4, [], response_id="aa", predecessor_id="a"),
+        _snapshot("bb", 5, [], response_id="bb", predecessor_id="b"),
+    ]
+    graph = build_lineage_graph(requests, external_requests=[external])
+    assert graph["conversation_count"] == 2
+    assert all(group["fork_parent_request_id"] == "outside" for group in graph["conversations"])
+    assert all("outside" not in group["request_ids"] for group in graph["conversations"])
+
+
+def test_nonoverlapping_inferred_sibling_is_not_a_confirmed_fork():
+    requests = [_snapshot(rid, seq, []) for seq, rid in enumerate(
+        ("root", "exact-child", "exact-grandchild", "inferred-child", "inferred-grandchild"), 1)]
+    edges = [
+        LineageEdge("root", "exact-child"),
+        LineageEdge("exact-child", "exact-grandchild"),
+        LineageEdge("root", "inferred-child", certainty="inferred", confidence=0.82),
+        LineageEdge("inferred-child", "inferred-grandchild"),
+    ]
+    projection = _conversation_projection(requests, edges, {}, [])
+    assert projection["lineage_fragment_count"] == 2
+    assert projection["conversation_count"] == 1
+
+
+def test_sustained_interleaved_disjoint_chains_need_observed_and_separate_context():
+    def chain(prefix, sequences, context):
+        return [
+            _snapshot(
+                f"{prefix}{i}", sequence,
+                [_block(f"{prefix}{i}", sequence, Direction.INPUT,
+                        BlockType.USER_MESSAGE, context, position=0)],
+                response_id=f"{prefix}{i}",
+                predecessor_id=f"{prefix}{i-1}" if i else f"missing-{prefix}",
+            )
+            for i, sequence in enumerate(sequences)
+        ]
+    requests = chain("a", [1, 3, 5], "alpha") + chain("b", [2, 4, 6], "beta")
+    graph = build_lineage_graph(requests)
+    assert graph["conversation_count"] == 2
+    assert {group["evidence"] for group in graph["conversations"]} == {"parallel_chains"}
+
+    from dataclasses import replace
+    without_observed_starts = [replace(request, started_at=None) for request in requests]
+    assert build_lineage_graph(without_observed_starts)["conversation_count"] == 1
+
+    shared_context = chain("a", [1, 3, 5], "same") + chain("b", [2, 4, 6], "same")
+    assert build_lineage_graph(shared_context)["conversation_count"] == 1
 
 
 def test_inference_follows_context_not_interleaved_unrelated_request():
@@ -202,6 +304,8 @@ def test_near_equal_context_candidates_remain_ambiguous():
     assert child_node["parent_state"] == "ambiguous"
     diagnostic = next(item for item in graph["ambiguous_candidates"] if item["request_id"] == "child")
     assert {candidate["request_id"] for candidate in diagnostic["candidates"]} == {"first", "second"}
+    assert graph["conversation_count"] == 1
+    assert graph["lineage_fragment_count"] >= 2
 
 
 def test_exact_parent_can_be_returned_as_an_external_capture_stub():
@@ -285,6 +389,9 @@ def test_capture_lineage_api_uses_persisted_requests_and_blocks(tmp_path):
     child_node = next(node for node in graph["nodes"] if node["request_id"] == "api-child")
     assert child_node["started_at_source"] == "observed"
     assert child_node["session_seq"] == 2
+    assert graph["conversation_count"] == 1
+    assert graph["lineage_fragment_count"] == 1
+    assert child_node["conversation_membership"][0]["state"] == "confirmed"
 
     detail = get_request_context_diff("api-child", parent_id="api-root")
     assert detail["delta"]["promoted"][0]["parent_block_id"]
