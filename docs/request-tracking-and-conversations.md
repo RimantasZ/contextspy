@@ -21,7 +21,8 @@ should be compared as parent and child.
 | **Lineage** | The graph of accepted direct parent-to-child continuation links. An **exact** link comes from a provider-issued predecessor response ID; an **inferred** link is ContextSpy's conservative conclusion from captured context. |
 | **Lineage segment** | A run of requests joined by accepted lineage links. A gap between segments means direct continuity was not established. |
 | **Diagnostic path** | One root-to-leaf route through the lineage graph. Paths can share ancestors, and several paths or disconnected segments can belong to one displayed conversation. A path count is not a chat or agent count. |
-| **Conversation** or **request stream** | A backend display group. A nonempty session has one fallback row; additional rows require evidence of a confirmed fork, independent parallel activity, or corroborated stream affinity. A row can contain more than one lineage segment and does **not** prove one unbroken chat. |
+| **Conversation** or **request stream** | A supported backend display group. Separate rows require evidence of a fork, independent activity, or corroborated stream affinity. A row can contain more than one lineage segment and does **not** prove one unbroken chat. |
+| **Auxiliary requests** | An unnumbered holding block for unclassified or one-off requests. It may contain unrelated calls and is **not** itself one conversation or proof of a subagent. Its requests may later join or establish a conversation as evidence grows. |
 | **Fork** | Two or more children of the same parent. A structural branch in the graph is not automatically a confirmed split into separate conversations. |
 | **Capture** | The act of observing and storing provider traffic. It is not another grouping level above or below session; older API or diagnostic wording may use “capture” for the recorded session. |
 
@@ -61,13 +62,27 @@ parents or conversation membership itself.
    A fingerprint includes the block type, content hash, and relevant tool name/call ID. Ordered
    matches distinguish input retained from a candidate parent's context and parent output that
    appears in the child's input. Repeated configuration such as system prompts and tool
-   definitions carries little weight; transcript and tool-call evidence matter more.
+   definitions carries little weight; transcript and tool-call evidence matter more. A known
+   change of agent raises the evidence required for an **inferred** edge: copied context alone
+   does not establish a direct handoff. Exact provider links can still cross agent labels.
 3. **Accept only a clear winner.** The heuristic measures how much of the candidate parent's
    input was retained, how much of the child's input it explains, and—when available—how much
    parent output was carried forward. Its score must be at least **0.80** and exceed the next
-   candidate by at least **0.15** to become an **inferred** direct edge. Candidates scoring at
-   least **0.45** but lacking a clear winner leave the parent **ambiguous**. The displayed
-   inferred percentage is this heuristic score, **not** a calibrated probability of correctness.
+   candidate by at least **0.15** to become an **inferred** direct edge. When an accepted lineage
+   path establishes that one candidate is an older ancestor of another, ContextSpy also checks
+   the *turn frontier*: does the newer candidate contribute distinctive output that occurs later
+   in the child's ordered input? If so, it discounts the older ancestor **for the comparison**.
+   Sibling candidates are not discounted, so a real fork remains possible. Candidates scoring
+   at least **0.45** but lacking a clear winner leave the parent **ambiguous**. A sole weak
+   candidate does not bypass the 0.80 floor. The displayed inferred percentage is the raw
+   heuristic score, **not** a calibrated probability of correctness.
+
+An accepted exact successor can later help reassess an earlier close heuristic boundary, within
+a small bounded look-ahead. It confirms that the successor continues its named parent; it does
+**not** by itself prove who preceded that parent. Revising an earlier inferred edge still needs
+ordered, distinctive context evidence. The analyzer recomputes this projection when the captured
+request set changes, so an inferred link or display grouping can change retrospectively; an
+explicit provider predecessor is never overridden by a guessed one.
 
 For transparency, the current score weights retained input / child coverage / promoted output
 at 35% / 45% / 20% when parent output is available, or 45% / 55% for the first two signals
@@ -91,10 +106,19 @@ conversation IDs; new requests or newly available evidence can change a grouping
 
 The projection follows these rules:
 
-- A nonempty session has at least one display row. With no positive evidence for a separate
-  stream, this is a **session activity** fallback containing requests and visibly marked gaps;
-  it does not claim that all of them share one direct lineage. A gap, time delay, model change,
-  or generic agent label alone does not create another row.
+- A parentless or otherwise unclassified request starts in **Auxiliary requests**. An accepted
+  link between two such requests grows a provisional cluster, but does not automatically turn
+  it into a numbered conversation. Several unrelated one-offs may be displayed in the same
+  auxiliary block, with explicit lineage gaps. A session can have zero confirmed conversations
+  and still show this block.
+- A coherent chain of at least three accepted linked requests can become a confirmed
+  conversation. To make it a **separate** conversation from an established stream, ContextSpy
+  also needs substantial observed context that is disjoint from the streams' recent and anchor
+  context, plus an independent distinction such as a known different agent, a corroborated
+  stream hint, or a long sustained independent chain. Sparse or opaque captures with too few
+  usable fingerprints cannot turn apparent non-overlap into proof. A provider or model change
+  alone is not a split. An unlinked cluster can instead rejoin an existing row through strong
+  retained context; that display bridge preserves the unknown direct-parent boundary.
 - A graph branch becomes a **confirmed conversation fork** only when both child branches have
   sustained accepted continuation with exact diverging edges, or when their observed calls
   overlap and carry distinct meaningful context. A one-off replay or an uncertain structural
@@ -119,9 +143,14 @@ The current affinity check requires at least three shared meaningful fingerprint
 70% overlap by both distinct fingerprints and block-token weight relative to the smaller
 context, and at least 128 shared block-token weight. This strict check deliberately excludes
 shared boilerplate. A display-only affinity bridge **never** becomes a parent edge or a
-parent-relative token comparison. Requests that cannot be assigned confidently remain marked as
-uncertain within the primary/default row; they do not automatically create another
-conversation.
+parent-relative token comparison. Requests that cannot be assigned confidently remain in
+Auxiliary requests; they do not automatically create another conversation. A previously
+auxiliary cluster can be promoted or rejoined as later requests supply corroboration. This can
+change its row on refresh while the original direct-parent state remains visible. Cards in the
+auxiliary block say **provisional stream** separately from their direct-parent marker: an exact
+edge between two provisional cards confirms that edge, but does not by itself confirm a new
+conversation. ContextSpy currently does not label a request as "auxiliary to" a specific
+conversation without positive task evidence.
 
 For example, if `#404` ends one exact chain, `#407–#410` continue with strong affinity to it
 but no recorded direct parent for `#407`, and `#405–#406` form a separate supported stream, the
@@ -142,14 +171,17 @@ calculate session totals.
 ## Reading the screens
 
 - **Overview → Active session:** shows only the currently active session, up to four recently
-  active conversation rows, and up to 15 recent request cards per row. Each row has its own
-  “More” link to Session Detail. The session activity chart shows recent traffic for the
+  active confirmed conversation rows, plus Auxiliary requests when nonempty, and up to 15
+  recent request cards per row. Each row has its own “More” link to Session Detail. The
+  confirmed-conversation count excludes the auxiliary block. The session activity chart shows recent traffic for the
   *whole session*, not one conversation. The separate global **Recent requests** table is a
   chronological audit list and is not grouped by conversation.
 - **Session Detail → Conversations → Conversation sequences:** uses the same backend grouping
-  for active or ended sessions. It initially shows the most recent rows and cards, then lets
-  you load more conversations or older cards. The “More (N total)” count is the represented
-  request count for that row. The segment index helps find lineage breaks in a long row.
+  for active or ended sessions. Confirmed rows are ordered by latest activity, with Auxiliary
+  requests last; it remains visible even when there are no confirmed rows. You can load more
+  conversations or older cards, including older auxiliary cards. The “More (N total)” count is
+  the represented request count for that row. The segment index helps find lineage breaks in a
+  long row. The separate auxiliary-request count is not a conversation count.
 - **Session Detail → Conversations → Lineage diagnostics:** shows the accepted exact and
   inferred parent edges, uncertain candidates, missing/external parents, structural branches,
   and root-to-leaf diagnostic paths. This is the place to inspect *why* a row has gaps. A
@@ -190,9 +222,13 @@ tooltip rather than interpreting the shape alone.
 
 ## What not to conclude
 
+The corner icon reports the **direct-parent or same-stream evidence for that card**, not the
+status of the entire row. A `○`, `?`, or `!` card can appear in Auxiliary requests or alongside
+linked cards in a confirmed conversation; row membership alone never upgrades its parent.
+
 Conversation rows express **supported streams, not verified agent identities**. ContextSpy
-currently does not persist a reliable Codex task or subagent ID. One fallback row may hide
-several unproven independent activities; multiple diagnostic paths may still be one ongoing
+currently does not persist a reliable Codex task or subagent ID. The Auxiliary requests block
+may hide several unproven independent activities; multiple diagnostic paths may still be one ongoing
 conversation. It also does not currently establish delegation or contribution links between
 agent tasks. An inferred score is evidence strength, not certainty. Missing or opaque context,
 purged raw request bodies, and older captures without a recoverable cache hint can make grouping

@@ -6,6 +6,10 @@ export function evidenceLabel(group: DashboardConversation): string {
   if (group.evidence === 'fork') return `Confirmed fork from ${group.fork_parent_request_id?.slice(0, 8) ?? 'request'}`
   if (group.evidence === 'parallel_chains') return 'Confirmed parallel independent chains'
   if (group.evidence === 'stream_affinity') return 'Supported separate stream · corroborated by context'
+  if (group.evidence === 'independent_agent_stream') return 'Separate agent stream · sustained chain and distinct context'
+  if (group.evidence === 'distinct_stream_hint') return 'Distinct stream hint · sustained chain and distinct context'
+  if (group.evidence === 'sustained_chain') return 'Sustained chain · continuity to other streams not established'
+  if (group.evidence === 'auxiliary') return 'Unclassified or one-off requests; these may move into a conversation as more evidence arrives.'
   return 'Session activity; separate streams not confirmed'
 }
 
@@ -26,7 +30,7 @@ export function ConversationFlows({ data, selectedKey, onSelect }: {
   selectedKey: string | null
   onSelect: (key: string) => void
 }) {
-  const groups = data.conversations ?? []
+  const groups = [...(data.conversations ?? []), ...(data.auxiliary ? [data.auxiliary] : [])]
   if (groups.length === 0) {
     return <div className="space-y-2">
       {data.request_flow.length > 0 && <p className="text-xs text-[var(--warning)]">Grouping unavailable; showing ungrouped session requests. Parent comparisons are unavailable.</p>}

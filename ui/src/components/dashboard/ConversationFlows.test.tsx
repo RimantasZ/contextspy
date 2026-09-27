@@ -37,11 +37,12 @@ function group(key: string, seq: number, cards: ReturnType<typeof card>[], evide
   }
 }
 
-function show(groups: DashboardConversation[], hidden = false) {
+function show(groups: DashboardConversation[], hidden = false, auxiliary: DashboardConversation | null = null) {
   live = {
     active_session: { id: 's1', name: 'Work', started_at: '2026-09-18T08:00:00', request_count: 4, tokens_total_input: 420, tokens_total_output: 40 },
-    request_flow: [], activity: [], context_change: groups[0]?.context_change ?? null,
+    request_flow: [], activity: [], context_change: groups[0]?.context_change ?? auxiliary?.context_change ?? null,
     conversations: groups, conversation_count: groups.length + Number(hidden),
+    auxiliary, auxiliary_request_count: auxiliary?.request_count ?? 0,
     confirmed_parallel_streams: Math.max(0, groups.length - 1), lineage_fragment_count: 4,
     has_more_conversations: hidden, most_recent_conversation_key: groups[groups.length - 1]?.key ?? null,
   }
@@ -67,13 +68,24 @@ describe('conversation-aware live session', () => {
     expect(within(regions[0]).getAllByRole('list')).toHaveLength(1)
   })
 
-  it('keeps uncertain fragments in one request row with card-level markers', () => {
-    show([group('Session request sequence', 5, [5, 4, 3, 2, 1].map((seq) => card(`r${seq}`, seq)))])
-    const region = screen.getByRole('region', { name: 'Session request sequence' })
+  it('shows unclassified requests in an unnumbered block with card-level markers', () => {
+    show([], false, group('Auxiliary requests', 5, [5, 4, 3, 2, 1].map((seq) => ({
+      ...card(`r${seq}`, seq), membership_state: 'provisional_unassigned',
+    })), 'auxiliary'))
+    const region = screen.getByRole('region', { name: 'Auxiliary requests' })
     expect(within(region).getAllByRole('list')).toHaveLength(1)
+    expect(within(region).getByText(/Unclassified or one-off requests/)).toBeTruthy()
+    expect(within(region).getAllByRole('link').every((link) => link.getAttribute('aria-label')?.includes('provisional stream membership'))).toBe(true)
     expect(within(region).getAllByRole('link').every((link) => link.getAttribute('aria-label')?.includes('Direct predecessor ambiguous'))).toBe(true)
     expect(within(region).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/requests/r5', '/requests/r4', '/requests/r3', '/requests/r2', '/requests/r1'])
     expect(screen.queryByText(/Conversation 2/)).toBeNull()
+  })
+
+  it('places the auxiliary block after confirmed conversations and excludes it from the count', () => {
+    show([group('Conversation 1', 9, [card('r9', 9)], 'default')], false,
+      group('Auxiliary requests', 10, [card('r10', 10)], 'auxiliary'))
+    expect(screen.getAllByRole('region').filter((node) => node.getAttribute('aria-label')?.includes('request') || node.getAttribute('aria-label')?.includes('Conversation')).map((node) => node.getAttribute('aria-label'))).toEqual(['Conversation 1', 'Auxiliary requests'])
+    expect(screen.queryByRole('link', { name: /View all/ })).toBeNull()
   })
 
   it('shows confirmed streams separately and changes the selected context', async () => {

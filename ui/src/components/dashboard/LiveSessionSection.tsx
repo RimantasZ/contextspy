@@ -22,7 +22,10 @@ export function LiveSessionSection() {
   const { data, isLoading, isError } = useDashboardLive()
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [selectionNotice, setSelectionNotice] = useState('')
-  const groups = useMemo(() => data?.conversations ?? [], [data])
+  const groups = useMemo(() => [
+    ...(data?.conversations ?? []),
+    ...(data?.auxiliary ? [data.auxiliary] : []),
+  ], [data])
   const effectiveKey = selectedKey && groups.some((group) => group.key === selectedKey)
     ? selectedKey : data?.most_recent_conversation_key ?? groups[0]?.key ?? null
   const selectedGroup = groups.find((group) => group.key === effectiveKey)

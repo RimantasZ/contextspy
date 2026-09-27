@@ -136,9 +136,12 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
   const parentByChild = useMemo(() => new Map(graph.edges
     .filter((edge) => edge.relation_type === 'context_continuation')
     .map((edge) => [edge.target_request_id, edge.source_request_id])), [graph.edges])
-  const groupLabels = useMemo(() => new Map(graph.conversations.map((group) => [group.key, group.label])), [graph.conversations])
+  const groupLabels = useMemo(() => new Map([
+    ...graph.conversations.map((group) => [group.key, group.label] as const),
+    ...(graph.auxiliary ? [[graph.auxiliary.key, graph.auxiliary.label] as const] : []),
+  ]), [graph.conversations, graph.auxiliary])
   const membershipLabel = (node: LineageNode) => node.conversation_membership
-    .map((item) => `${groupLabels.get(item.key) ?? item.key}${item.state === 'unassigned' ? ' (uncertain)' : ''}`)
+    .map((item) => `${groupLabels.get(item.key) ?? item.key}${item.state === 'provisional_unassigned' ? ' (provisional)' : item.state === 'unassigned' ? ' (uncertain)' : ''}`)
     .join(', ')
   const selectedNode = selectedNodeId ? byId.get(selectedNodeId) ?? null : null
   const selectedAmbiguity = selectedNode
@@ -185,7 +188,7 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="section-title">Lineage diagnostics</p>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">{graph.conversation_count} supported conversation{graph.conversation_count === 1 ? '' : 's'} · {graph.lineage_fragment_count} diagnostic lineage path{graph.lineage_fragment_count === 1 ? '' : 's'}. Unlinked paths are not automatically separate conversations. Request numbers show recording order.</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">{graph.conversation_count} supported conversation{graph.conversation_count === 1 ? '' : 's'} · {graph.auxiliary_request_count ?? 0} auxiliary request{(graph.auxiliary_request_count ?? 0) === 1 ? '' : 's'} · {graph.lineage_fragment_count} diagnostic lineage path{graph.lineage_fragment_count === 1 ? '' : 's'}. Unlinked paths are not automatically separate conversations. Request numbers show recording order.</p>
         </div>
         <div className="flex flex-wrap gap-3 text-xs text-[var(--text-muted)]" aria-label="Lineage graph legend">
           <span><span className="mr-1 inline-block w-5 border-t-2 border-[var(--success)]" />Exact</span>

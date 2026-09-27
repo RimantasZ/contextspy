@@ -37,7 +37,8 @@ export function SessionConversationSequences({ data, initialGroupKey }: { data: 
       setIndexLimit({})
       setLoadedRevision(data.revision)
       setNotice('Capture changed. Conversation pages were refreshed.')
-      if (selectedKey && !data.conversations.some((group) => group.key === selectedKey)) {
+      if (selectedKey && selectedKey !== data.auxiliary?.key &&
+          !data.conversations.some((group) => group.key === selectedKey)) {
         const revision = data.revision
         sessionsApi.conversations(data.session_id, 0, revision, selectedKey).then((page) => {
           if (currentRevision.current === revision) setExtraGroups(page.conversations)
@@ -54,7 +55,10 @@ export function SessionConversationSequences({ data, initialGroupKey }: { data: 
     }
   }, [data.revision, data.next_group_offset, loadedRevision, selectedKey])
 
-  const groups = loadedRevision === data.revision ? [...data.conversations, ...extraGroups] : data.conversations
+  const groups = [
+    ...(loadedRevision === data.revision ? [...data.conversations, ...extraGroups] : data.conversations),
+    ...(data.auxiliary ? [data.auxiliary] : []),
+  ]
   const selected = groups.find((group) => group.key === selectedKey) ?? groups[0] ?? null
 
   function loadFailed(error: unknown, message: string) {
@@ -118,7 +122,7 @@ export function SessionConversationSequences({ data, initialGroupKey }: { data: 
     }
   }
 
-  if (data.conversation_count === 0) {
+  if (data.conversation_count === 0 && !data.auxiliary) {
     return <div className="py-12 text-center text-sm text-[var(--text-muted)]">No invocations captured yet.</div>
   }
 
@@ -127,7 +131,7 @@ export function SessionConversationSequences({ data, initialGroupKey }: { data: 
       <div>
         <h2 className="section-title">Conversation sequences</h2>
         <p className="mt-1 text-sm text-[var(--text)]">
-          {data.conversation_count} conversation sequence{data.conversation_count === 1 ? '' : 's'} · {data.lineage_fragment_count} diagnostic path{data.lineage_fragment_count === 1 ? '' : 's'}
+          {data.conversation_count} confirmed conversation{data.conversation_count === 1 ? '' : 's'} · {data.auxiliary_request_count ?? 0} auxiliary request{(data.auxiliary_request_count ?? 0) === 1 ? '' : 's'} · {data.lineage_fragment_count} diagnostic path{data.lineage_fragment_count === 1 ? '' : 's'}
         </p>
         <p className="mt-1 text-xs text-[var(--text-muted)]">Diagnostic paths are lineage evidence, not additional conversations. Session totals count each stored request once; shared history may appear in more than one sequence.</p>
       </div>

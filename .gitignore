@@ -88,3 +88,4 @@ desktop.ini
 
 # claude
 .claude/settings.local.json
+local_kb

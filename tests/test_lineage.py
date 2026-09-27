@@ -142,14 +142,16 @@ def test_exact_predecessors_form_a_fork_without_using_capture_adjacency():
     assert graph["lineage_fragment_count"] == 3
 
 
-def test_many_unlinked_codex_requests_are_one_display_group():
+def test_many_unlinked_codex_requests_stay_in_auxiliary_block():
     requests = [_snapshot(f"r{i}", i, []) for i in range(1, 16)]
     graph = build_lineage_graph(requests)
     assert graph["lineage_fragment_count"] == 15
-    assert graph["conversation_count"] == 1
+    assert graph["conversation_count"] == 0
     assert graph["confirmed_parallel_streams"] == 0
-    assert len(graph["conversations"][0]["request_ids"]) == 15
-    assert all(node["conversation_membership"][0]["state"] == "unassigned"
+    assert graph["auxiliary_request_count"] == 15
+    assert graph["auxiliary"]["label"] == "Auxiliary requests"
+    assert len(graph["auxiliary"]["request_ids"]) == 15
+    assert all(node["conversation_membership"][0]["state"] == "provisional_unassigned"
                for node in graph["nodes"])
 
 
@@ -246,7 +248,8 @@ def test_sustained_fork_shares_only_proven_ancestry():
     groups = graph["conversations"]
     assert all(group["evidence"] == "fork" for group in groups)
     assert all("root" in group["request_ids"] for group in groups)
-    assert sum("unknown" in group["request_ids"] for group in groups) == 1
+    assert all("unknown" not in group["request_ids"] for group in groups)
+    assert "unknown" in graph["auxiliary"]["request_ids"]
     assert graph["lineage_fragment_count"] == 3
 
 
@@ -384,8 +387,225 @@ def test_near_equal_context_candidates_remain_ambiguous():
     assert child_node["parent_state"] == "ambiguous"
     diagnostic = next(item for item in graph["ambiguous_candidates"] if item["request_id"] == "child")
     assert {candidate["request_id"] for candidate in diagnostic["candidates"]} == {"first", "second"}
-    assert graph["conversation_count"] == 1
+    assert graph["conversation_count"] == 0
+    assert set(graph["auxiliary"]["request_ids"]) == {"first", "second", "child"}
     assert graph["lineage_fragment_count"] >= 2
+
+
+def test_a_sole_weak_context_candidate_does_not_become_a_parent():
+    parent = _snapshot("parent", 1, [
+        _block("parent", 1, Direction.INPUT, BlockType.USER_MESSAGE,
+               "shared transcript", position=0),
+    ])
+    child = _snapshot("child", 2, [
+        _block("child", 2, Direction.INPUT, BlockType.USER_MESSAGE,
+               "shared transcript", position=0),
+        _block("child", 3, Direction.INPUT, BlockType.USER_MESSAGE,
+               "new unrelated material", position=1),
+    ])
+    graph = build_lineage_graph([parent, child])
+    assert not graph["edges"]
+    assert next(node for node in graph["nodes"] if node["request_id"] == "child")["parent_state"] == "ambiguous"
+    assert graph["ambiguous_candidates"][0]["candidates"][0]["confidence"] < 0.80
+
+
+def test_an_exact_successor_does_not_invent_its_ambiguous_roots_parent():
+    first = _snapshot("first", 1, [
+        _block("first", 1, Direction.INPUT, BlockType.USER_MESSAGE,
+               "same transcript", position=0),
+    ])
+    rival = _snapshot("rival", 2, [
+        _block("rival", 2, Direction.INPUT, BlockType.USER_MESSAGE,
+               "same transcript", position=0),
+    ])
+    root = _snapshot("root", 3, [
+        _block("root", 3, Direction.INPUT, BlockType.USER_MESSAGE,
+               "same transcript", position=0),
+    ], response_id="root-response")
+    successors = [
+        _snapshot("successor", 4, [], response_id="successor-response",
+                  predecessor_id="root-response"),
+        _snapshot("later", 5, [], predecessor_id="successor-response"),
+    ]
+    graph = build_lineage_graph([first, rival, root, *successors])
+    assert next(node for node in graph["nodes"] if node["request_id"] == "root")["parent_state"] == "ambiguous"
+    assert all(edge["target_request_id"] != "root" for edge in graph["edges"])
+    assert [(edge["source_request_id"], edge["target_request_id"]) for edge in graph["edges"]
+            if edge["certainty"] == "exact"] == [
+        ("root", "successor"), ("successor", "later"),
+    ]
+
+
+def test_provider_change_with_retained_context_does_not_split_a_conversation():
+    requests = []
+    for prefix, provider, agent, offset in (
+        ("a", "openai", "codex", 0),
+        ("b", "anthropic", "claude_code", 3),
+    ):
+        for index in range(3):
+            rid = f"{prefix}{index}"
+            blocks = [
+                _block(rid, offset * 100 + index * 10 + position,
+                       Direction.INPUT, BlockType.TOOL_RESULT,
+                       f"retained-{position} " * 50, position=position)
+                for position in range(3)
+            ]
+            request = _snapshot(rid, offset + index + 1, blocks,
+                                response_id=rid,
+                                predecessor_id=f"{prefix}{index - 1}" if index else None)
+            requests.append(replace(request, provider=provider, agent=agent))
+    graph = build_lineage_graph(requests)
+    # Two internally linked runs with copied substantive context are not proven
+    # separate merely by changing provider/agent labels.
+    assert graph["conversation_count"] == 1
+    assert graph["auxiliary_request_count"] == 3
+    assert not any(edge["target_request_id"] == "b0" for edge in graph["edges"])
+
+
+def test_short_opaque_context_does_not_prove_independent_agent_streams():
+    requests = []
+    for prefix, agent, offset in (("a", "codex", 0), ("b", "claude_code", 3)):
+        for index in range(3):
+            rid = f"{prefix}{index}"
+            request = _snapshot(rid, offset + index + 1, [
+                _block(rid, offset * 10 + index + 1, Direction.INPUT,
+                       BlockType.USER_MESSAGE, f"{prefix} task", position=0),
+            ], response_id=rid, predecessor_id=f"{prefix}{index - 1}" if index else None)
+            requests.append(replace(request, agent=agent, context_fidelity="opaque"))
+    graph = build_lineage_graph(requests)
+    assert graph["conversation_count"] == 1
+    assert graph["auxiliary_request_count"] == 3
+
+
+def test_latest_promoted_turn_resolves_nested_claude_ancestors():
+    """The preceding turn wins even though every older context is retained."""
+    requests = []
+    history: list[tuple[str, str]] = [
+        (BlockType.USER_MESSAGE, "initial Claude request"),
+        (BlockType.TOOL_RESULT, "initial context " * 40),
+        (BlockType.USER_MESSAGE, "repository question"),
+    ]
+    block_id = 1
+    for seq in range(272, 277):
+        rid = f"r{seq}"
+        blocks = []
+        for position, (kind, content) in enumerate(history):
+            blocks.append(_block(rid, block_id, Direction.INPUT, kind, content,
+                                 position=position))
+            block_id += 1
+        for position, (kind, content) in enumerate((
+            (BlockType.THINKING, f"reasoning-{seq}"),
+            (BlockType.TOOL_CALL, f"tool-call-{seq}"),
+        )):
+            blocks.append(_block(rid, block_id, Direction.OUTPUT, kind, content,
+                                 position=position))
+            block_id += 1
+        requests.append(replace(
+            _snapshot(rid, seq, blocks), provider="anthropic",
+            agent="claude_code", model="claude-sonnet-5", endpoint="/v1/messages",
+        ))
+        history.extend([
+            (BlockType.THINKING, f"reasoning-{seq}"),
+            (BlockType.TOOL_CALL, f"tool-call-{seq}"),
+            (BlockType.TOOL_RESULT, f"tool-result-{seq}"),
+            (BlockType.USER_MESSAGE, f"follow-up-{seq}"),
+        ])
+
+    graph = build_lineage_graph(requests)
+    parent = {edge["target_request_id"]: edge for edge in graph["edges"]}
+    assert [(parent[f"r{seq}"]["source_request_id"], parent[f"r{seq}"]["certainty"])
+            for seq in range(273, 277)] == [
+                (f"r{seq - 1}", "inferred") for seq in range(273, 277)
+            ]
+    assert "latest_turn_promoted" in parent["r274"]["evidence"]["reason_codes"]
+    assert graph["conversation_count"] == 1
+    assert graph["auxiliary"] is None
+
+
+def test_older_ancestor_remains_a_possible_fork_when_newer_output_is_absent():
+    root = _snapshot("root", 1, [
+        _block("root", 1, Direction.INPUT, BlockType.USER_MESSAGE,
+               "shared task", position=0),
+        _block("root", 2, Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE,
+               "root answer", position=0),
+    ], response_id="root-response")
+    newer = _snapshot("newer", 2, [
+        _block("newer", 3, Direction.INPUT, BlockType.USER_MESSAGE,
+               "shared task", position=0),
+        _block("newer", 4, Direction.INPUT, BlockType.ASSISTANT_MESSAGE,
+               "root answer", position=1),
+        _block("newer", 5, Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE,
+               "newer answer", position=0),
+    ], predecessor_id="root-response")
+    fork = _snapshot("fork", 3, [
+        _block("fork", 6, Direction.INPUT, BlockType.USER_MESSAGE,
+               "shared task", position=0),
+        _block("fork", 7, Direction.INPUT, BlockType.ASSISTANT_MESSAGE,
+               "root answer", position=1),
+        _block("fork", 8, Direction.INPUT, BlockType.USER_MESSAGE,
+               "alternate continuation", position=2),
+    ])
+    graph = build_lineage_graph([root, newer, fork])
+    fork_edge = next(edge for edge in graph["edges"] if edge["target_request_id"] == "fork")
+    assert fork_edge["source_request_id"] == "root"
+    assert fork_edge["certainty"] == "inferred"
+    assert "ancestor_output_older" not in fork_edge["evidence"]["reason_codes"]
+
+
+def test_parentless_chain_is_promoted_after_three_requests_and_haiku_stays_auxiliary():
+    def rich(rid: str, seq: int, family: str, agent: str, predecessor: str | None):
+        blocks = [
+            _block(rid, seq * 10 + index, Direction.INPUT, BlockType.TOOL_RESULT,
+                   f"{family}-{index} " * 50, position=index)
+            for index in range(3)
+        ]
+        return replace(
+            _snapshot(rid, seq, blocks, response_id=rid, predecessor_id=predecessor),
+            provider="anthropic" if agent == "claude_code" else "openai",
+            agent=agent,
+        )
+
+    codex = [rich(f"a{seq}", seq, "codex", "codex",
+                  f"a{seq - 1}" if seq > 1 else None) for seq in range(1, 4)]
+    haiku = [replace(_snapshot(f"h{seq}", seq, [
+        _block(f"h{seq}", seq * 10, Direction.INPUT, BlockType.USER_MESSAGE,
+               f"tiny-haiku-{seq}", position=0),
+    ]), provider="anthropic", agent="claude_code") for seq in (4, 5)]
+    claude = [rich(f"c{seq}", seq, "claude", "claude_code",
+                   f"c{seq - 1}" if seq > 6 else None) for seq in range(6, 9)]
+
+    for size in (1, 2):
+        graph = build_lineage_graph(codex + haiku + claude[:size])
+        assert graph["conversation_count"] == 1
+        assert set(graph["auxiliary"]["request_ids"]) == {
+            "h4", "h5", *(f"c{seq}" for seq in range(6, 6 + size)),
+        }
+
+    graph = build_lineage_graph(codex + haiku + claude)
+    assert graph["conversation_count"] == 2
+    assert {"c6", "c7", "c8"} == set(next(
+        group["request_ids"] for group in graph["conversations"]
+        if "c8" in group["request_ids"]
+    ))
+    assert set(graph["auxiliary"]["request_ids"]) == {"h4", "h5"}
+    assert not any(edge["target_request_id"] in {"h4", "h5"} for edge in graph["edges"])
+
+
+def test_strong_context_rejoins_unlinked_component_without_parent_edge():
+    root = _stream_snapshot("root", 1, "A", "alpha")
+    chain = [_stream_snapshot("a2", 2, "A", "alpha", "root"),
+             _stream_snapshot("a3", 3, "A", "alpha", "a2")]
+    one_off = replace(_stream_snapshot("one-off", 4, "A", "beta"),
+                      stream_hint_source=None, stream_hint_digest=None)
+    before = build_lineage_graph([root, *chain, one_off])
+    assert "one-off" in before["auxiliary"]["request_ids"]
+    resumed = replace(_stream_snapshot("resumed", 5, "A", "alpha", "one-off"),
+                      stream_hint_source=None, stream_hint_digest=None)
+    after = build_lineage_graph([root, *chain, one_off, resumed])
+    assert after["auxiliary"] is None
+    assert {"one-off", "resumed"} <= set(after["conversations"][0]["request_ids"])
+    assert not any(edge["target_request_id"] == "one-off" for edge in after["edges"])
+    assert after["stream_bridges"]["resumed"]["parent_edge"] is False
 
 
 def test_exact_parent_can_be_returned_as_an_external_capture_stub():
@@ -469,9 +689,10 @@ def test_capture_lineage_api_uses_persisted_requests_and_blocks(tmp_path):
     child_node = next(node for node in graph["nodes"] if node["request_id"] == "api-child")
     assert child_node["started_at_source"] == "observed"
     assert child_node["session_seq"] == 2
-    assert graph["conversation_count"] == 1
+    assert graph["conversation_count"] == 0
+    assert set(graph["auxiliary"]["request_ids"]) == {"api-root", "api-child"}
     assert graph["lineage_fragment_count"] == 1
-    assert child_node["conversation_membership"][0]["state"] == "confirmed"
+    assert child_node["conversation_membership"][0]["state"] == "provisional_unassigned"
 
     detail = get_request_context_diff("api-child", parent_id="api-root")
     assert detail["delta"]["promoted"][0]["parent_block_id"]

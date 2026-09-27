@@ -1147,7 +1147,10 @@ def _conversation_projection_view(
                     "external" if edge and edge["external_source"] else
                     edge["certainty"] if edge else node["parent_state"]
                 ),
-                "membership_state": "confirmed" if rid in confirmed else "unassigned",
+                "membership_state": (
+                    "provisional_unassigned" if group["evidence"] == "auxiliary"
+                    else "confirmed" if rid in confirmed else "unassigned"
+                ),
                 "shared_history": len(node["conversation_membership"]) > 1,
                 "fork_status": node["conversation_fork_status"],
             })
@@ -1212,14 +1215,18 @@ def get_session_conversations(
         if revision is not None and revision != current_revision:
             raise ValueError("Conversation revision changed; refresh and try again")
         ordered = _conversation_order(graph)
+        auxiliary_group = graph.get("auxiliary")
         if group_key is not None:
             selected = next((group for group in ordered if group["key"] == group_key), None)
-            if selected is None:
+            if selected is None and (auxiliary_group is None or
+                                     auxiliary_group["key"] != group_key):
                 raise KeyError("Conversation group not found")
-            groups = [selected]
+            groups = [selected] if selected is not None else []
+            auxiliary_group = auxiliary_group if selected is None else None
         else:
             groups = ordered[group_offset:group_offset + group_limit]
-        views, _ = _conversation_projection_view(db, graph, groups) if groups else ([], None)
+        display_groups = groups + ([auxiliary_group] if auxiliary_group else [])
+        views, _ = _conversation_projection_view(db, graph, display_groups) if display_groups else ([], None)
         next_offset = (group_offset + len(groups)
                        if group_key is None and group_offset + len(groups) < len(ordered) else None)
         return {
@@ -1228,7 +1235,10 @@ def get_session_conversations(
             "confirmed_parallel_streams": graph["confirmed_parallel_streams"],
             "lineage_fragment_count": graph["lineage_fragment_count"],
             "primary_key": graph["conversations"][0]["key"] if ordered else None,
-            "conversations": views, "next_group_offset": next_offset,
+            "conversations": views[:len(groups)],
+            "auxiliary": views[-1] if auxiliary_group else None,
+            "auxiliary_request_count": graph["auxiliary_request_count"],
+            "next_group_offset": next_offset,
         }
 
 
@@ -1244,6 +1254,9 @@ def get_session_conversation_requests(
         if revision != current_revision:
             raise ValueError("Conversation revision changed; refresh and try again")
         group = next((item for item in graph["conversations"] if item["key"] == group_key), None)
+        auxiliary_group = graph.get("auxiliary")
+        if group is None and auxiliary_group and auxiliary_group["key"] == group_key:
+            group = auxiliary_group
         if group is None:
             raise KeyError("Conversation group not found")
         _, page = _conversation_projection_view(
@@ -1267,6 +1280,7 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
         return {
             "active_session": None, "request_flow": [], "activity": [],
             "context_change": None, "conversations": [], "conversation_count": 0,
+            "auxiliary": None, "auxiliary_request_count": 0,
             "confirmed_parallel_streams": 0, "lineage_fragment_count": 0,
             "has_more_conversations": False,
             "most_recent_conversation_key": None,
@@ -1313,11 +1327,15 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
 
     graph = _live_lineage_graph(db, session.id, totals.n)
     groups = _conversation_order(graph)[:4]
-    conversations, _ = _conversation_projection_view(
-        db, graph, groups, preview_limit=_CONVERSATION_PREVIEW_LIMIT,
-    ) if groups else ([], None)
+    auxiliary_group = graph.get("auxiliary")
+    display_groups = groups + ([auxiliary_group] if auxiliary_group else [])
+    views, _ = _conversation_projection_view(
+        db, graph, display_groups, preview_limit=_CONVERSATION_PREVIEW_LIMIT,
+    ) if display_groups else ([], None)
+    conversations = views[:len(groups)]
+    auxiliary = views[-1] if auxiliary_group else None
 
-    most_recent = conversations[0] if conversations else None
+    most_recent = conversations[0] if conversations else auxiliary
     context_change = most_recent["context_change"] if most_recent else None
 
     return {
@@ -1326,6 +1344,8 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
         "activity": activity,
         "context_change": context_change,
         "conversations": conversations,
+        "auxiliary": auxiliary,
+        "auxiliary_request_count": graph["auxiliary_request_count"],
         "conversation_count": graph["conversation_count"],
         "confirmed_parallel_streams": graph["confirmed_parallel_streams"],
         "lineage_fragment_count": graph["lineage_fragment_count"],
