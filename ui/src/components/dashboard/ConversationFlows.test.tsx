@@ -88,6 +88,14 @@ describe('conversation-aware live session', () => {
     expect(screen.queryByRole('link', { name: /View all/ })).toBeNull()
   })
 
+  it('labels a long but not proven separate stream honestly', () => {
+    show([group('Conversation 1', 8, [card('r8', 8)], 'default'),
+      group('Conversation 2', 4, [card('r4', 4)], 'unresolved_stream')])
+    expect(within(screen.getByRole('region', { name: 'Conversation 2' })).getByText(
+      'Sustained stream · relationship to other conversations not established',
+    )).toBeTruthy()
+  })
+
   it('shows confirmed streams separately and changes the selected context', async () => {
     const primary = group('Primary conversation', 2, [card('a2', 2, 'a1')], 'fork')
     const second = group('Conversation 2', 4, [card('b4', 4, 'root')], 'fork')

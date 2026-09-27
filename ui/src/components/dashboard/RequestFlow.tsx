@@ -36,6 +36,7 @@ const lineageMarker: Record<NonNullable<FlowItem['lineage_relation']>, LineageMa
   inferred: { icon: '≈', label: 'Inferred predecessor', description: 'ContextSpy inferred a direct predecessor from the captured context.', uncertain: false },
   suggested: { icon: '≈', label: 'Suggested predecessor', description: 'A possible predecessor was found, but the link is not confirmed.', uncertain: true },
   context_affinity: { icon: '⋯', label: 'Same stream; direct predecessor not established', description: 'Shared context places this request in the same conversation, but its direct predecessor is unknown.', uncertain: true },
+  compaction_affinity: { icon: '⋯', label: 'Same stream after context reset; direct predecessor not established', description: 'Earlier retained context and a matching stream hint support this conversation after a context reset. The direct predecessor is still unknown.', uncertain: true },
   ambiguous: { icon: '?', label: 'Direct predecessor ambiguous', description: 'More than one request could be the direct predecessor.', uncertain: true },
   unresolved_exact: { icon: '!', label: 'Provider predecessor missing', description: 'The provider named a predecessor that ContextSpy could not link in this session.', uncertain: true },
   unavailable: { icon: '?', label: 'Predecessor context unavailable', description: 'There is not enough captured context to identify a predecessor.', uncertain: true },
@@ -141,7 +142,7 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
                   </p>
                   {item.parent_state && (
                     <p className="mt-2 text-[11px] text-[var(--text-muted)]">
-                      {item.lineage_relation === 'context_affinity'
+                      {item.lineage_relation === 'context_affinity' || item.lineage_relation === 'compaction_affinity'
                         ? 'Same stream · direct predecessor not established'
                         : item.parent_request_id
                         ? `${item.certainty === 'inferred' ? `Inferred ${Math.round((item.confidence ?? 0) * 100)}%` : 'Exact'} parent · ${item.parent_request_id.slice(0, 8)}`

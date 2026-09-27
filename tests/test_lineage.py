@@ -608,6 +608,74 @@ def test_strong_context_rejoins_unlinked_component_without_parent_edge():
     assert after["stream_bridges"]["resumed"]["parent_edge"] is False
 
 
+def test_context_reset_rejoins_sustained_hinted_stream_without_inventing_parent():
+    def request(prefix: str, index: int, seq: int, *, predecessor: str | None):
+        rid = f"{prefix}{index}"
+        blocks = [
+            _block(rid, seq * 100 + position, Direction.INPUT, BlockType.TOOL_RESULT,
+                   f"shared-{position} " * 64, position=position)
+            for position in range(10)
+        ] + [
+            _block(rid, seq * 100 + 10 + position, Direction.INPUT,
+                   BlockType.TOOL_RESULT, f"{prefix}-context-{position} " * 600,
+                   position=10 + position)
+            for position in range(2)
+        ]
+        return replace(
+            _snapshot(rid, seq, blocks, response_id=rid, predecessor_id=predecessor),
+            stream_hint_source="openai_prompt_cache_key", stream_hint_digest="same-hint",
+        )
+
+    requests = [
+        request("old", index, index + 1,
+                predecessor=f"old{index - 1}" if index else None)
+        for index in range(4)
+    ] + [
+        request("new", index, index + 5,
+                predecessor=f"new{index - 1}" if index else None)
+        for index in range(4)
+    ]
+    graph = build_lineage_graph(requests)
+    assert graph["conversation_count"] == 1
+    assert graph["auxiliary"] is None
+    assert set(graph["conversations"][0]["request_ids"]) == {r.id for r in requests}
+    assert graph["stream_bridges"]["new0"] == {
+        "prior_request_id": "old3", "evidence": "compaction_affinity", "parent_edge": False,
+    }
+    assert not any(edge["target_request_id"] == "new0" for edge in graph["edges"])
+    assert next(node for node in graph["nodes"] if node["request_id"] == "new0")["parent_state"] == "ambiguous"
+
+    changed_hint = [replace(r, stream_hint_digest="another-hint") if r.id.startswith("new")
+                    else r for r in requests]
+    assert "new0" not in build_lineage_graph(changed_hint)["stream_bridges"]
+    changed_agent = [replace(r, agent="claude_code") if r.id.startswith("new")
+                     else r for r in requests]
+    assert "new0" not in build_lineage_graph(changed_agent)["stream_bridges"]
+    late_new = [replace(r, timestamp=r.timestamp + timedelta(minutes=10),
+                        started_at=r.started_at + timedelta(minutes=10))
+                if r.id.startswith("new") else r for r in requests]
+    assert "new0" not in build_lineage_graph(late_new)["stream_bridges"]
+
+
+def test_long_supported_unlinked_chain_is_a_row_not_auxiliary():
+    requests = []
+    for prefix, offset in (("old", 0), ("new", 4)):
+        for index in range(4):
+            rid = f"{prefix}{index}"
+            requests.append(_snapshot(
+                rid, offset + index + 1,
+                [_block(rid, offset * 10 + index + 1, Direction.INPUT,
+                        BlockType.USER_MESSAGE, f"{prefix} task", position=0)],
+                response_id=rid,
+                predecessor_id=f"{prefix}{index - 1}" if index else None,
+            ))
+    graph = build_lineage_graph(requests)
+    assert graph["conversation_count"] == 2
+    assert graph["auxiliary"] is None
+    assert graph["confirmed_parallel_streams"] == 0
+    assert any(group["evidence"] == "unresolved_stream" for group in graph["conversations"])
+
+
 def test_exact_parent_can_be_returned_as_an_external_capture_stub():
     external = _snapshot("external", 1, [], response_id="resp-before")
     external = RequestSnapshot(**{**external.__dict__, "session_id": "capture-before", "external": True})

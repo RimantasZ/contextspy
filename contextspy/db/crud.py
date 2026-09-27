@@ -1143,7 +1143,7 @@ def _conversation_projection_view(
                 "certainty": edge["certainty"] if edge else None,
                 "confidence": edge["confidence"] if edge else None,
                 "lineage_relation": (
-                    "context_affinity" if rid in stream_bridges else
+                    stream_bridges[rid]["evidence"] if rid in stream_bridges else
                     "external" if edge and edge["external_source"] else
                     edge["certainty"] if edge else node["parent_state"]
                 ),

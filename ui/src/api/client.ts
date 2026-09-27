@@ -310,7 +310,7 @@ export interface LineageGraph {
   conversations: Array<{
     key: string
     label: string
-    evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity' | 'independent_agent_stream' | 'distinct_stream_hint' | 'sustained_chain'
+    evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity' | 'independent_agent_stream' | 'distinct_stream_hint' | 'sustained_chain' | 'unresolved_stream'
     fork_parent_request_id: string | null
     request_ids: string[]
     confirmed_request_ids: string[]
@@ -326,7 +326,7 @@ export interface LineageGraph {
   auxiliary_request_count?: number
   stream_bridges: Record<string, {
     prior_request_id: string
-    evidence: 'context_affinity'
+    evidence: 'context_affinity' | 'compaction_affinity'
     parent_edge: false
   }>
   unresolved_predecessors: Array<{
@@ -480,7 +480,7 @@ export interface DashboardContextChange {
 export interface DashboardConversation {
   key: string
   label: string
-  evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity' | 'independent_agent_stream' | 'distinct_stream_hint' | 'sustained_chain' | 'auxiliary'
+  evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity' | 'independent_agent_stream' | 'distinct_stream_hint' | 'sustained_chain' | 'unresolved_stream' | 'auxiliary'
   fork_parent_request_id: string | null
   latest_request_id: string
   latest_session_seq: number | null
@@ -492,7 +492,7 @@ export interface DashboardConversation {
     key: string
     gap_reason: LineageNode['parent_state'] | 'fork_branch' | 'graph_branch_unconfirmed' | 'stream_resume_unlinked' | null
     bridge_request_id?: string
-    bridge_evidence?: 'context_affinity'
+    bridge_evidence?: 'context_affinity' | 'compaction_affinity'
     first_request_id?: string
     first_session_seq?: number | null
     latest_session_seq?: number | null
@@ -504,7 +504,7 @@ export interface DashboardConversation {
       parent_state: LineageNode['parent_state']
       certainty: LineageEdge['certainty'] | null
       confidence: number | null
-      lineage_relation: LineageNode['parent_state'] | LineageEdge['certainty'] | 'context_affinity'
+      lineage_relation: LineageNode['parent_state'] | LineageEdge['certainty'] | 'context_affinity' | 'compaction_affinity'
       membership_state: 'confirmed' | 'unassigned' | 'provisional_unassigned'
       shared_history: boolean
       fork_status: LineageNode['conversation_fork_status']

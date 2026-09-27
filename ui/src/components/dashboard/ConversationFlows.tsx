@@ -9,6 +9,7 @@ export function evidenceLabel(group: DashboardConversation): string {
   if (group.evidence === 'independent_agent_stream') return 'Separate agent stream · sustained chain and distinct context'
   if (group.evidence === 'distinct_stream_hint') return 'Distinct stream hint · sustained chain and distinct context'
   if (group.evidence === 'sustained_chain') return 'Sustained chain · continuity to other streams not established'
+  if (group.evidence === 'unresolved_stream') return 'Sustained stream · relationship to other conversations not established'
   if (group.evidence === 'auxiliary') return 'Unclassified or one-off requests; these may move into a conversation as more evidence arrives.'
   return 'Session activity; separate streams not confirmed'
 }

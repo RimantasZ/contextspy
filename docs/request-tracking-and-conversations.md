@@ -21,8 +21,8 @@ should be compared as parent and child.
 | **Lineage** | The graph of accepted direct parent-to-child continuation links. An **exact** link comes from a provider-issued predecessor response ID; an **inferred** link is ContextSpy's conservative conclusion from captured context. |
 | **Lineage segment** | A run of requests joined by accepted lineage links. A gap between segments means direct continuity was not established. |
 | **Diagnostic path** | One root-to-leaf route through the lineage graph. Paths can share ancestors, and several paths or disconnected segments can belong to one displayed conversation. A path count is not a chat or agent count. |
-| **Conversation** or **request stream** | A supported backend display group. Separate rows require evidence of a fork, independent activity, or corroborated stream affinity. A row can contain more than one lineage segment and does **not** prove one unbroken chat. |
-| **Auxiliary requests** | An unnumbered holding block for unclassified or one-off requests. It may contain unrelated calls and is **not** itself one conversation or proof of a subagent. Its requests may later join or establish a conversation as evidence grows. |
+| **Conversation** or **request stream** | A supported backend display group. A long accepted chain can have a row even when its relationship to another row remains unresolved; the row's evidence label says so. A row can contain more than one lineage segment and does **not** prove one unbroken chat. |
+| **Auxiliary requests** | An unnumbered holding block for unclassified one-offs and short provisional chains (normally no more than three evidence-connected requests). It may contain unrelated calls and is **not** itself one conversation or proof of a subagent. |
 | **Fork** | Two or more children of the same parent. A structural branch in the graph is not automatically a confirmed split into separate conversations. |
 | **Capture** | The act of observing and storing provider traffic. It is not another grouping level above or below session; older API or diagnostic wording may use “capture” for the recorded session. |
 
@@ -119,6 +119,10 @@ The projection follows these rules:
   usable fingerprints cannot turn apparent non-overlap into proof. A provider or model change
   alone is not a split. An unlinked cluster can instead rejoin an existing row through strong
   retained context; that display bridge preserves the unknown direct-parent boundary.
+- A chain of **four or more evidence-connected requests** does not remain in Auxiliary requests
+  merely because separation from another row cannot be proven. It gets a numbered row labelled
+  **relationship to other conversations not established**. This is a supported stream, not a
+  claim that the two rows are independent. Later evidence can join them.
 - A graph branch becomes a **confirmed conversation fork** only when both child branches have
   sustained accepted continuation with exact diverging edges, or when their observed calls
   overlap and carry distinct meaningful context. A one-off replay or an uncertain structural
@@ -142,10 +146,16 @@ The projection follows these rules:
 The current affinity check requires at least three shared meaningful fingerprints, at least
 70% overlap by both distinct fingerprints and block-token weight relative to the smaller
 context, and at least 128 shared block-token weight. This strict check deliberately excludes
-shared boilerplate. A display-only affinity bridge **never** becomes a parent edge or a
-parent-relative token comparison. Requests that cannot be assigned confidently remain in
-Auxiliary requests; they do not automatically create another conversation. A previously
-auxiliary cluster can be promoted or rejoined as later requests supply corroboration. This can
+shared boilerplate. After a large context reset, a narrower bridge can use a matching stream
+hint and same known agent, a non-overlapping boundary within five minutes, an older supported
+chain, and at least ten shared fingerprints covering 70% of the smaller fingerprint set with
+512 shared block-token weight. This can join two rows even when the usual 70% token-weight
+ratio fails. The boundary card is marked **same stream after context reset**; the direct
+predecessor remains unknown. A display-only affinity bridge **never** becomes a parent edge or a
+parent-relative token comparison. Short requests or chains that cannot be assigned confidently
+remain in Auxiliary requests; a longer coherent chain gets a row with unresolved-relationship
+evidence. A previously auxiliary cluster can be promoted or rejoined as later requests supply
+corroboration. This can
 change its row on refresh while the original direct-parent state remains visible. Cards in the
 auxiliary block say **provisional stream** separately from their direct-parent marker: an exact
 edge between two provisional cards confirms that edge, but does not by itself confirm a new
@@ -171,13 +181,13 @@ calculate session totals.
 ## Reading the screens
 
 - **Overview → Active session:** shows only the currently active session, up to four recently
-  active confirmed conversation rows, plus Auxiliary requests when nonempty, and up to 15
+  active supported conversation rows, plus Auxiliary requests when nonempty, and up to 15
   recent request cards per row. Each row has its own “More” link to Session Detail. The
-  confirmed-conversation count excludes the auxiliary block. The session activity chart shows recent traffic for the
+  numbered-conversation count excludes the auxiliary block. The session activity chart shows recent traffic for the
   *whole session*, not one conversation. The separate global **Recent requests** table is a
   chronological audit list and is not grouped by conversation.
 - **Session Detail → Conversations → Conversation sequences:** uses the same backend grouping
-  for active or ended sessions. Confirmed rows are ordered by latest activity, with Auxiliary
+  for active or ended sessions. Numbered rows are ordered by latest activity, with Auxiliary
   requests last; it remains visible even when there are no confirmed rows. You can load more
   conversations or older cards, including older auxiliary cards. The “More (N total)” count is
   the represented request count for that row. The segment index helps find lineage breaks in a
@@ -214,6 +224,7 @@ tooltip rather than interpreting the shape alone.
 | ≈ | **Inferred predecessor.** ContextSpy inferred a direct predecessor from the captured context. | Accepted heuristic parent link, not provider-confirmed. |
 | ≈ | **Suggested predecessor.** A possible predecessor was found, but the link is not confirmed. | Candidate only; no accepted direct edge. The UI supports this label, but the current analyzer does not emit it; weaker candidates are reported as ambiguous. |
 | ⋯ | **Same stream; direct predecessor not established.** Shared context places this request in the same conversation, but its direct predecessor is unknown. | Display membership across a lineage gap, not a parent link. |
+| ⋯ | **Same stream after context reset; direct predecessor not established.** Earlier retained context and a matching stream hint support this conversation after a context reset. | Guarded display bridge across a context reset, not a parent link. |
 | ? | **Direct predecessor ambiguous.** More than one request could be the direct predecessor. | Plausible candidates, no accepted parent. |
 | ! | **Provider predecessor missing.** The provider named a predecessor that ContextSpy could not link in this session. | Explicit reference exists, but no accepted link. |
 | ? | **Predecessor context unavailable.** There is not enough captured context to identify a predecessor. | Insufficient block evidence. |

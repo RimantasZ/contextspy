@@ -81,6 +81,15 @@ describe('RequestFlow', () => {
     expect(screen.getAllByRole('link')[1].getAttribute('aria-label')).toContain('Same stream; direct predecessor not established')
   })
 
+  it('explains a display-only context-reset bridge without claiming a parent', () => {
+    renderFlow([{ ...item(), lineage_relation: 'compaction_affinity', parent_state: 'ambiguous', parent_request_id: null }])
+    fireEvent.mouseEnter(screen.getByText('⋯'))
+    expect(screen.getByRole('tooltip').textContent).toContain('matching stream hint')
+    const card = screen.getByRole('link', { name: /Same stream after context reset/ })
+    expect(card.textContent).toContain('Same stream · direct predecessor not established')
+    expect(card.textContent).not.toContain('Exact parent')
+  })
+
   it('shows an empty state', () => {
     renderFlow([])
     expect(screen.getByText(/No requests captured/)).toBeTruthy()

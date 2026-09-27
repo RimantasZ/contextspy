@@ -513,6 +513,40 @@ def test_stream_groups_match_dashboard_order_and_preserve_gap_provenance(db):
     assert all(edge["target_request_id"] not in {"r405", "r407"} for edge in graph["edges"])
 
 
+def test_compaction_bridge_is_shared_by_dashboard_and_session_without_parent_delta(db):
+    _session(db)
+    for prefix, offset in (("old", 0), ("new", 4)):
+        for index in range(4):
+            rid = f"{prefix}{index}"
+            _req(db, rid, seq=offset + index + 1, hint="same-hint",
+                 parent=f"{prefix}{index - 1}" if index else None)
+            for position in range(10):
+                db.add(BlockRecord(
+                    request_id=rid, direction="input", position=position,
+                    block_type="tool_result", category="tool_results",
+                    content_hash=f"shared-{position}", token_count=64,
+                ))
+            for position in range(2):
+                db.add(BlockRecord(
+                    request_id=rid, direction="input", position=10 + position,
+                    block_type="tool_result", category="tool_results",
+                    content_hash=f"{prefix}-{position}", token_count=600,
+                ))
+    db.flush()
+    session = crud.get_session_conversations(db, "s1")
+    dashboard = crud.get_dashboard_live(db)
+    assert session["conversation_count"] == dashboard["conversation_count"] == 1
+    assert session["auxiliary"] is None
+    assert session["conversations"] == dashboard["conversations"]
+    group = session["conversations"][0]
+    boundary = next(card for segment in group["recent_segments"]
+                    for card in segment["request_flow"] if card["id"] == "new0")
+    assert boundary["parent_request_id"] is None
+    assert boundary["lineage_relation"] == "compaction_affinity"
+    assert next(segment for segment in group["recent_segments"]
+                if segment["first_request_id"] == "new0")["bridge_evidence"] == "compaction_affinity"
+
+
 def test_session_projection_confirmed_fork_shared_history_and_external_parent(db):
     _session(db)
     _session(db, "old", active=False)

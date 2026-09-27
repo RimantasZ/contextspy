@@ -15,7 +15,7 @@ from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.analysis.context_diff import ContextBlock, ContextDelta, diff_contexts, semantic_key
 
 
-ANALYSIS_VERSION = "lineage-v4-retrospective-streams"
+ANALYSIS_VERSION = "lineage-v5-compaction-affinity"
 INFERENCE_THRESHOLD = 0.80
 AMBIGUOUS_THRESHOLD = 0.45
 INFERENCE_MARGIN = 0.15
@@ -409,6 +409,22 @@ def _strong_stream_context(
     return shared_weight >= 128 and smaller_weight > 0 and shared_weight / smaller_weight >= 0.70
 
 
+def _compacted_stream_context(
+    left: Mapping[tuple, int], right: Mapping[tuple, int],
+) -> bool:
+    """Strong fingerprint containment despite a context-size/weight reset.
+
+    This is only used with a matching stream hint, same known agent, and a
+    non-overlapping adjacent stream boundary. It never establishes a parent.
+    """
+    if not left or not right:
+        return False
+    shared = left.keys() & right.keys()
+    if len(shared) < 10 or len(shared) / min(len(left), len(right)) < 0.70:
+        return False
+    return sum(min(left[key], right[key]) for key in shared) >= 512
+
+
 def _stream_affinity_groups(
     internal: list[RequestSnapshot], edges: list[LineageEdge],
     primary_path: list[str], primary_ids: set[str], next_number: int,
@@ -655,14 +671,36 @@ def _finalize_activity_groups(
         }
         return next(iter(values)) if len(values) == 1 else None
 
-    def affinity(left: set[str], right: set[str]) -> tuple[str, str] | None:
+    def affinity(left: set[str], right: set[str]) -> tuple[str, str, str] | None:
         left_agent, right_agent = agent_of(left), agent_of(right)
         if left_agent and right_agent and left_agent != right_agent:
             return None
         for new_id in reversed(representatives(left)):
             for prior_id in reversed(representatives(right)):
                 if _strong_stream_context(weights[new_id], weights[prior_id]):
-                    return new_id, prior_id
+                    return new_id, prior_id, "context_affinity"
+
+        # A compacted request can retain many distinctive old fingerprints
+        # while replacing most token weight. Rejoin only sequential components
+        # of the same hinted agent, with a sustained older chain and a nearby
+        # boundary; this remains display-only affinity, not a direct edge.
+        if not (left_agent and left_agent == right_agent and
+                hint_of(left) is not None and hint_of(left) == hint_of(right)):
+            return None
+        older, newer = sorted((left, right), key=lambda ids: max(
+            _request_order(by_id[rid]) for rid in ids
+        ))
+        older_latest = max(older, key=lambda rid: _request_order(by_id[rid]))
+        newer_first = min(newer, key=lambda rid: _request_order(by_id[rid]))
+        gap = by_id[newer_first].effective_started_at - by_id[older_latest].timestamp
+        if len(older) < 3 or not timedelta(0) <= gap <= timedelta(minutes=5):
+            return None
+        if any(
+            _compacted_stream_context(weights[older_id], weights[newer_id])
+            for older_id in representatives(older)
+            for newer_id in representatives(newer)
+        ):
+            return newer_first, older_latest, "compaction_affinity"
         return None
 
     # Prefer the most recently active sustained component for the primary row.
@@ -701,7 +739,7 @@ def _finalize_activity_groups(
             match = affinity(ids, reference)
             if match is None:
                 continue
-            new_id, prior_id = match
+            new_id, prior_id, bridge_evidence = match
             group = confirmed[index]
             group["request_ids"] = ordered_ids(set(group["request_ids"]) | ids)
             group["confirmed_request_ids"] = ordered_ids(
@@ -711,7 +749,7 @@ def _finalize_activity_groups(
             if new_id not in bridges:
                 bridges[new_id] = {
                     "prior_request_id": prior_id,
-                    "evidence": "context_affinity",
+                    "evidence": bridge_evidence,
                     "parent_edge": False,
                 }
             joined = True
@@ -753,14 +791,16 @@ def _finalize_activity_groups(
             }
             confirmed.append(group)
             reference_groups.append(set(ids))
-        elif not reference_groups and len(ids) >= 3:
+        elif len(ids) >= 4 or (not reference_groups and len(ids) >= 3):
             # A first supported stream need not prove separation from a stream
-            # that does not yet exist.
+            # that does not yet exist. A longer coherent chain is a supported
+            # stream even if its relationship to other rows is still unknown;
+            # it should not languish among one-off auxiliary requests.
             anchor_request = by_id[min(ids, key=lambda rid: _request_order(by_id[rid]))]
             group = {
                 "key": f"session:{anchor_request.session_id}:stream:{anchor_request.id}",
                 "label": "Conversation 1",
-                "evidence": "default",
+                "evidence": "unresolved_stream" if reference_groups else "default",
                 "fork_parent_request_id": None,
                 "request_ids": ordered_ids(ids),
                 "confirmed_request_ids": ordered_ids(ids),
@@ -979,7 +1019,9 @@ def _conversation_projection(
                           for path in paths],
         "lineage_fragment_count": len(paths),
         "conversation_count": len(groups),
-        "confirmed_parallel_streams": max(0, len(groups) - 1),
+        "confirmed_parallel_streams": sum(
+            group["evidence"] != "unresolved_stream" for group in groups[1:]
+        ),
         "conversations": groups,
         "auxiliary": auxiliary,
         "auxiliary_request_count": len(auxiliary["request_ids"]) if auxiliary else 0,

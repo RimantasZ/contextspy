@@ -131,7 +131,7 @@ export function SessionConversationSequences({ data, initialGroupKey }: { data: 
       <div>
         <h2 className="section-title">Conversation sequences</h2>
         <p className="mt-1 text-sm text-[var(--text)]">
-          {data.conversation_count} confirmed conversation{data.conversation_count === 1 ? '' : 's'} · {data.auxiliary_request_count ?? 0} auxiliary request{(data.auxiliary_request_count ?? 0) === 1 ? '' : 's'} · {data.lineage_fragment_count} diagnostic path{data.lineage_fragment_count === 1 ? '' : 's'}
+          {data.conversation_count} supported conversation{data.conversation_count === 1 ? '' : 's'} · {data.auxiliary_request_count ?? 0} auxiliary request{(data.auxiliary_request_count ?? 0) === 1 ? '' : 's'} · {data.lineage_fragment_count} diagnostic path{data.lineage_fragment_count === 1 ? '' : 's'}
         </p>
         <p className="mt-1 text-xs text-[var(--text-muted)]">Diagnostic paths are lineage evidence, not additional conversations. Session totals count each stored request once; shared history may appear in more than one sequence.</p>
       </div>
