@@ -2,7 +2,9 @@
 
 ## Status and scope
 
-**Plan only; not implemented.** This follows
+**Implemented on `session_conversation_view`; automated verification complete.** Manual QA against
+the observed `codex 0925` capture and narrow browser viewport remains to be done because the
+local app server was unavailable during the final check. This follows
 [`dashboard-conversations-merge-plan.md`](dashboard-conversations-merge-plan.md). Do not merge,
 rewrite branches, or change the lineage classification rules as part of a presentation-only
 implementation without a separate, tested reason. The working tree was clean when this plan was

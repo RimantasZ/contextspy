@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from contextspy.api.websocket import ConnectionManager
@@ -83,15 +83,47 @@ def get_session_lineage(session_id: str):
         session = crud.get_session(db, session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-        requests, external_requests = crud.get_session_lineage_snapshots(db, session_id)
-        graph = build_lineage_graph(
-            requests,
-            external_requests=external_requests,
-        )
+        with db.begin_nested():
+            requests, external_requests = crud.get_session_lineage_snapshots(db, session_id)
+            graph = build_lineage_graph(requests, external_requests=external_requests)
         return {
             "capture": session.to_dict(),
             **graph,
         }
+
+
+@router.get("/sessions/{session_id}/conversations")
+def get_session_conversations(
+    session_id: str, group_offset: int = Query(0, ge=0),
+    group_limit: int = Query(4, ge=1, le=20), revision: str | None = None,
+    group_key: str | None = None,
+):
+    try:
+        with get_db() as db:
+            return crud.get_session_conversations(
+                db, session_id, group_offset=group_offset,
+                group_limit=group_limit, revision=revision, group_key=group_key,
+            )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/conversations/requests")
+def get_session_conversation_requests(
+    session_id: str, group_key: str, revision: str,
+    cursor: str | None = None, limit: int = Query(50, ge=1, le=100),
+):
+    try:
+        with get_db() as db:
+            return crud.get_session_conversation_requests(
+                db, session_id, group_key, revision=revision, cursor=cursor, limit=limit,
+            )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/sessions/{session_id}/end")

@@ -14,7 +14,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { useSession, useSessionLineage, useStatsSession, useTimeline, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
+import { useSession, useSessionLineage, useSessionConversations, useStatsSession, useTimeline, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { RequestTable } from '../components/RequestTable';
@@ -24,6 +24,7 @@ import { OutputSplit } from '../components/OutputSplit';
 import { CacheSplit } from '../components/CacheSplit';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import { SessionLineage } from '../components/SessionLineage';
+import { SessionConversationSequences } from '../components/SessionConversationSequences';
 import { SegmentedControl } from '../components/ui/SegmentedControl';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -55,6 +56,8 @@ export default function SessionDetail() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [bucket, setBucket] = useState<Bucket>('hour');
   const view: 'summary' | 'lineage' = searchParams.get('view') === 'lineage' ? 'lineage' : 'summary';
+  const mode: 'conversations' | 'fragments' = searchParams.get('mode') === 'fragments' ? 'fragments' : 'conversations';
+  const conversationKey = searchParams.get('conversation');
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameTitleRef = useRef<HTMLInputElement>(null);
@@ -68,8 +71,9 @@ export default function SessionDetail() {
   }
 
   const session = useSession(id ?? '');
-  const lineage = useSessionLineage(id ?? '', view === 'lineage');
-  const conversationCount = lineage.data?.conversation_count;
+  const lineage = useSessionLineage(id ?? '', view === 'lineage' && mode === 'fragments');
+  const conversations = useSessionConversations(id ?? '', view === 'lineage' && mode === 'conversations');
+  const conversationCount = mode === 'fragments' ? lineage.data?.conversation_count : conversations.data?.conversation_count;
   const stats = useStatsSession(id ?? '');
   const timeline = useTimeline(id, bucket);
   const requests = useRequests({ session_id: id, sort_by: reqSortKey ?? undefined, sort_dir: reqSortKey ? reqSortDir : undefined, limit: 500 });
@@ -392,20 +396,36 @@ export default function SessionDetail() {
           onChange={(nextView) => {
             const next = new URLSearchParams(searchParams)
             if (nextView === 'lineage') next.set('view', 'lineage')
-            else next.delete('view')
-            setSearchParams(next, { replace: true })
+            else { next.delete('view'); next.delete('mode') }
+            setSearchParams(next)
           }}
         />
       </div>
 
       {view === 'lineage' ? (
         <div className="panel">
-          {lineage.isLoading ? (
-            <div className="py-12 text-center text-sm text-[var(--text-muted)]">Analyzing conversations…</div>
-          ) : lineage.error || !lineage.data ? (
-            <div className="py-12 text-center text-sm text-[var(--danger)]">Conversations could not be loaded.</div>
+          <div className="mb-5 flex justify-end">
+            <SegmentedControl
+              label="Conversation display mode"
+              value={mode}
+              options={[{ value: 'conversations', label: 'Conversation sequences' }, { value: 'fragments', label: 'Lineage diagnostics' }]}
+              onChange={(nextMode) => {
+                const next = new URLSearchParams(searchParams)
+                next.set('view', 'lineage')
+                if (nextMode === 'fragments') next.set('mode', 'fragments')
+                else next.delete('mode')
+                setSearchParams(next)
+              }}
+            />
+          </div>
+          {mode === 'fragments' ? (
+            lineage.isLoading ? <div className="py-12 text-center text-sm text-[var(--text-muted)]">Analyzing lineage…</div>
+              : lineage.error || !lineage.data ? <div className="py-12 text-center text-sm text-[var(--danger)]">Lineage diagnostics could not be loaded.</div>
+              : <SessionLineage graph={lineage.data} />
           ) : (
-            <SessionLineage graph={lineage.data} />
+            conversations.isLoading ? <div className="py-12 text-center text-sm text-[var(--text-muted)]">Analyzing conversations…</div>
+              : conversations.error || !conversations.data ? <div className="py-12 text-center text-sm text-[var(--danger)]">Conversations could not be loaded.</div>
+              : <SessionConversationSequences data={conversations.data} initialGroupKey={conversationKey} />
           )}
         </div>
       ) : (

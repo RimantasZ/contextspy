@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from contextspy.analysis.blocks import BlockType, Direction
@@ -150,6 +151,85 @@ def test_many_unlinked_codex_requests_are_one_display_group():
     assert len(graph["conversations"][0]["request_ids"]) == 15
     assert all(node["conversation_membership"][0]["state"] == "unassigned"
                for node in graph["nodes"])
+
+
+def _stream_snapshot(request_id: str, sequence: int, hint: str, family: str,
+                     predecessor: str | None = None) -> RequestSnapshot:
+    blocks = [
+        _block(request_id, sequence * 10 + index, Direction.INPUT,
+               BlockType.TOOL_RESULT, f"{family}-{index} " * 50,
+               position=index, category="tool_results")
+        for index in range(3)
+    ]
+    return replace(
+        _snapshot(request_id, sequence, blocks, response_id=request_id,
+                  predecessor_id=predecessor),
+        stream_hint_source="openai_prompt_cache_key", stream_hint_digest=hint,
+    )
+
+
+def test_stream_affinity_bridges_gaps_without_inventing_parent_edges():
+    requests = [
+        _stream_snapshot("r293", 293, "B", "beta"),
+        _stream_snapshot("r294", 294, "B", "beta", "r293"),
+        _stream_snapshot("r402", 402, "A", "alpha"),
+        _stream_snapshot("r403", 403, "A", "alpha", "r402"),
+        _stream_snapshot("r404", 404, "A", "alpha", "r403"),
+        _stream_snapshot("r405", 405, "B", "beta"),
+        _stream_snapshot("r406", 406, "B", "beta", "r405"),
+        _stream_snapshot("r407", 407, "A", "alpha"),
+        _stream_snapshot("r408", 408, "A", "alpha", "r407"),
+        _stream_snapshot("r409", 409, "A", "alpha", "r408"),
+        _stream_snapshot("r410", 410, "A", "alpha", "r409"),
+    ]
+    graph = build_lineage_graph(requests)
+    assert graph["conversation_count"] == 2
+    primary, secondary = graph["conversations"]
+    assert {"r404", "r407", "r408", "r409", "r410"} <= set(primary["request_ids"])
+    assert {"r294", "r405", "r406"} <= set(secondary["request_ids"])
+    assert secondary["evidence"] == "stream_affinity"
+    assert graph["stream_bridges"]["r407"]["prior_request_id"] == "r404"
+    assert graph["stream_bridges"]["r405"]["prior_request_id"] == "r294"
+    assert graph["stream_bridges"]["r407"]["parent_edge"] is False
+    assert all(edge["target_request_id"] not in {"r405", "r407"}
+               for edge in graph["edges"])
+    # Sparse/opaque transport metadata need not erase independently retained
+    # block fingerprints, as in the observed Codex capture.
+    opaque = [replace(request, context_fidelity="opaque") for request in requests]
+    assert build_lineage_graph(opaque)["conversation_count"] == 2
+
+
+def test_stream_hint_requires_context_and_independent_chain():
+    unrelated = [
+        _stream_snapshot("a1", 1, "A", "alpha"),
+        _stream_snapshot("a2", 2, "A", "alpha", "a1"),
+        _stream_snapshot("a3", 3, "A", "alpha", "a2"),
+        _stream_snapshot("one-off", 4, "B", "beta"),
+    ]
+    assert build_lineage_graph(unrelated)["conversation_count"] == 1
+    same_hint_unrelated = unrelated[:3] + [
+        _stream_snapshot("other1", 4, "A", "beta"),
+        _stream_snapshot("other2", 5, "A", "beta", "other1"),
+    ]
+    assert build_lineage_graph(same_hint_unrelated)["conversation_count"] == 1
+    no_context = [replace(item, blocks=(), context_fidelity="opaque") for item in unrelated[:3]] + [
+        replace(_stream_snapshot("b1", 4, "B", "beta"), blocks=(), context_fidelity="opaque"),
+        replace(_stream_snapshot("b2", 5, "B", "beta", "b1"), blocks=(), context_fidelity="opaque"),
+    ]
+    assert build_lineage_graph(no_context)["conversation_count"] == 1
+
+
+def test_exact_chain_overrides_hint_rotation():
+    requests = [
+        _stream_snapshot("a1", 1, "A", "alpha"),
+        _stream_snapshot("a2", 2, "B", "alpha", "a1"),
+        _stream_snapshot("a3", 3, "A", "alpha", "a2"),
+    ]
+    graph = build_lineage_graph(requests)
+    assert graph["conversation_count"] == 1
+    assert len([edge for edge in graph["edges"] if edge["certainty"] == "exact"]) == 2
+    assert "hint_conflict" in next(edge for edge in graph["edges"]
+                                   if edge["target_request_id"] == "a2")["evidence"]["reason_codes"]
 
 
 def test_sustained_fork_shares_only_proven_ancestry():

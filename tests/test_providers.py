@@ -21,6 +21,7 @@ content-addressed dedup, retention GC, and hidden-reasoning synthesis.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -1895,6 +1896,7 @@ class TestHandleWsExchange:
         request_body = {
             "type": "response.create",
             "model": "gpt-5-codex",
+            "prompt_cache_key": "ws-stream-affinity",
             "input": [{"role": "user", "content": "Say hello"}],
         }
         events = [
@@ -1927,6 +1929,9 @@ class TestHandleWsExchange:
             assert row.transport == "websocket"
             assert row.provider == "openai_chatgpt"
             assert row.agent == "codex"
+            assert row.stream_hint_source == "openai_prompt_cache_key"
+            assert row.stream_hint_digest == hashlib.sha256(b"ws-stream-affinity").hexdigest()
+            assert "stream_hint_digest" not in row.to_dict(include_raw=False)
             assert row.status_code is None
             assert row.duration_ms == 500
             assert row.ttft_ms in (199, 200)

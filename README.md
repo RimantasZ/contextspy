@@ -180,6 +180,8 @@ If that name already exists, `-1`, `-2`, and so on is added before `.back`.
 - [Cloud API mode](docs/cloud-mode.md) — intercept OpenAI, Anthropic, Copilot, etc.
 - [Local LLM mode](docs/local-mode.md) — intercept Ollama, llama-server, vLLM
 - [Usage examples](docs/examples.md) — practical recipes and common workflows
+- [Request tracking and conversations](docs/request-tracking-and-conversations.md) — sessions,
+  lineage evidence, conversation grouping, and UI icons
 - [REST and WebSocket handling](docs/transport-normalization.md) — invocation boundaries,
   canonical JSON, reconstruction, storage, and token accounting
 - [CLI reference](docs/cli.md) — all commands and options

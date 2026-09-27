@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import type { DashboardRequestFlowItem } from '../../api/client'
@@ -25,7 +25,7 @@ function item(overrides: Partial<DashboardRequestFlowItem> = {}): DashboardReque
   }
 }
 
-function renderFlow(items: DashboardRequestFlowItem[]) {
+function renderFlow(items: Parameters<typeof RequestFlow>[0]['items']) {
   return render(<MemoryRouter><RequestFlow items={items} /></MemoryRouter>)
 }
 
@@ -38,6 +38,8 @@ describe('RequestFlow', () => {
     expect(cards[0].textContent).toContain('gpt-5.2 · 1.8s')
     expect(cards[0].textContent).toContain('87,412 in')
     expect(cards[0].textContent).toContain('612 out')
+    expect(cards[0].parentElement?.className).toContain('w-36')
+    expect(screen.getByRole('list').parentElement?.className).toContain('overflow-x-auto')
   })
 
   it('omits endpoint and HTTP method and links to the request', () => {
@@ -59,6 +61,24 @@ describe('RequestFlow', () => {
     const [failed, incomplete] = screen.getAllByRole('link')
     expect(failed.getAttribute('aria-label')).toContain('Failed (500)')
     expect(incomplete.getAttribute('aria-label')).toContain('Incomplete')
+  })
+
+  it('shows parent evidence in the card corner without splitting the request row', () => {
+    renderFlow([
+      { ...item(), lineage_relation: 'exact', parent_state: 'exact', parent_request_id: 'request-17', certainty: 'exact' },
+      { ...item({ id: 'request-17', session_seq: 17 }), lineage_relation: 'context_affinity', parent_state: 'ambiguous', parent_request_id: null },
+    ])
+    expect(screen.getAllByRole('list')).toHaveLength(1)
+    const exactIcon = screen.getByText('↳')
+    fireEvent.mouseEnter(exactIcon)
+    expect(screen.getByRole('tooltip').textContent).toContain('The provider explicitly linked this request to its predecessor.')
+    expect(screen.getByRole('tooltip').parentElement).toBe(document.body)
+    fireEvent.mouseLeave(exactIcon)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+
+    fireEvent.mouseEnter(screen.getByText('⋯'))
+    expect(screen.getByRole('tooltip').textContent).toContain('its direct predecessor is unknown')
+    expect(screen.getAllByRole('link')[1].getAttribute('aria-label')).toContain('Same stream; direct predecessor not established')
   })
 
   it('shows an empty state', () => {

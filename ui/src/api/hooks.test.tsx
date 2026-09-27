@@ -41,10 +41,11 @@ describe('session mutation invalidation', () => {
     const { spy, wrapper } = setup()
     const { result } = renderHook(() => useCreateSession(), { wrapper })
     result.current.mutate('x')
-    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(3))
     const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey)
     expect(keys).toContainEqual(['sessions'])
     expect(keys).toContainEqual(['stats'])
+    expect(keys).toContainEqual(['session-conversations'])
   })
 
   it('useRenameSession invalidates the dashboard-live query', async () => {

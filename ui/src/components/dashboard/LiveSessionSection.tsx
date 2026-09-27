@@ -30,7 +30,7 @@ export function LiveSessionSection() {
   useEffect(() => {
     if (selectedKey && groups.length && !groups.some((group) => group.key === selectedKey)) {
       setSelectedKey(groups[0].key)
-      setSelectionNotice('That conversation is no longer confirmed; showing the primary session sequence.')
+      setSelectionNotice('That conversation is no longer available; showing the latest conversation.')
     }
   }, [groups, selectedKey])
 

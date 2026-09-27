@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { Link } from 'react-router-dom'
+import type { ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { DashboardRequestFlowItem, DashboardConversation } from '../../api/client'
 import { formatRequestDuration } from '../../lib/format'
 import { parseServerTimestamp, requestLabel } from './dashboardFormat'
@@ -26,9 +29,71 @@ function statusOf(item: DashboardRequestFlowItem): { text: string; className: st
 
 type FlowItem = DashboardRequestFlowItem & Partial<DashboardConversation['recent_segments'][number]['request_flow'][number]>
 
-export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?: boolean }) {
+type LineageMarker = { icon: string; label: string; description: string; uncertain: boolean }
+
+const lineageMarker: Record<NonNullable<FlowItem['lineage_relation']>, LineageMarker> = {
+  exact: { icon: '↳', label: 'Exact predecessor', description: 'The provider explicitly linked this request to its predecessor.', uncertain: false },
+  inferred: { icon: '≈', label: 'Inferred predecessor', description: 'ContextSpy inferred a direct predecessor from the captured context.', uncertain: false },
+  suggested: { icon: '≈', label: 'Suggested predecessor', description: 'A possible predecessor was found, but the link is not confirmed.', uncertain: true },
+  context_affinity: { icon: '⋯', label: 'Same stream; direct predecessor not established', description: 'Shared context places this request in the same conversation, but its direct predecessor is unknown.', uncertain: true },
+  ambiguous: { icon: '?', label: 'Direct predecessor ambiguous', description: 'More than one request could be the direct predecessor.', uncertain: true },
+  unresolved_exact: { icon: '!', label: 'Provider predecessor missing', description: 'The provider named a predecessor that ContextSpy could not link in this session.', uncertain: true },
+  unavailable: { icon: '?', label: 'Predecessor context unavailable', description: 'There is not enough captured context to identify a predecessor.', uncertain: true },
+  root: { icon: '○', label: 'No predecessor established', description: 'No direct predecessor was established for this request.', uncertain: true },
+  external: { icon: '↗', label: 'Predecessor in another session', description: 'This request follows a predecessor captured in another session.', uncertain: false },
+}
+
+function LineageIcon({ marker }: { marker: LineageMarker }) {
+  const iconRef = useRef<HTMLSpanElement>(null)
+  const [tooltip, setTooltip] = useState<{ left: number; top: number; above: boolean } | null>(null)
+
+  function showTooltip() {
+    const rect = iconRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const above = window.innerHeight - rect.bottom < 120 && rect.top > 120
+    setTooltip({
+      left: Math.max(8, Math.min(rect.right - 240, window.innerWidth - 248)),
+      top: above ? rect.top - 8 : rect.bottom + 8,
+      above,
+    })
+  }
+
+  useEffect(() => {
+    if (!tooltip) return
+    const hideTooltip = () => setTooltip(null)
+    window.addEventListener('scroll', hideTooltip, true)
+    window.addEventListener('resize', hideTooltip)
+    return () => {
+      window.removeEventListener('scroll', hideTooltip, true)
+      window.removeEventListener('resize', hideTooltip)
+    }
+  }, [tooltip])
+
+  return <>
+    <span
+      ref={iconRef}
+      aria-hidden="true"
+      onMouseEnter={showTooltip}
+      onMouseLeave={() => setTooltip(null)}
+      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-semibold ${marker.uncertain ? 'border-[var(--warning)] text-[var(--warning)]' : 'border-[var(--border)] text-[var(--accent-soft-text)]'}`}
+    >{marker.icon}</span>
+    {tooltip && createPortal(
+      <div
+        role="tooltip"
+        className="pointer-events-none fixed z-[100] w-60 max-w-[calc(100vw-1rem)] rounded-md border border-[var(--border)] bg-[var(--chart-tooltip)] p-2.5 text-xs text-[var(--chart-tooltip-text)] shadow-lg"
+        style={{ left: tooltip.left, top: tooltip.top, transform: tooltip.above ? 'translateY(-100%)' : undefined }}
+      >
+        <span className="font-semibold">{marker.label}</span>
+        <span className="mt-1 block leading-relaxed">{marker.description}</span>
+      </div>,
+      document.body,
+    )}
+  </>
+}
+
+export function RequestFlow({ items, bare = false, trailingAction }: { items: FlowItem[]; bare?: boolean; trailingAction?: ReactNode }) {
   return (
-    <div className={bare ? '' : 'panel'}>
+    <div className={bare ? 'min-w-0' : 'panel min-w-0'}>
       {!bare && <div className="mb-3 flex items-baseline justify-between gap-2">
         <h2 id="request-flow-title" className="section-title">Request flow</h2>
         <span className="text-xs text-[var(--text-muted)]">Newest first</span>
@@ -36,29 +101,32 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
       {items.length === 0 ? (
         <p className="py-4 text-center text-sm text-[var(--text-muted)]">No requests captured in this session yet.</p>
       ) : (
-        <ol
-          aria-labelledby={bare ? undefined : 'request-flow-title'}
-          aria-description="Most recent requests in this session, ordered newest first"
-          className="flex gap-3 overflow-x-auto pb-1"
-        >
-          {items.map((item) => {
+        <div className="flex min-w-0 gap-2 overflow-x-auto overscroll-x-contain pb-2" role="group" tabIndex={0} aria-label="Request sequence; scroll horizontally for older requests">
+          <ol
+            aria-labelledby={bare ? undefined : 'request-flow-title'}
+            aria-description="Most recent requests in this session, ordered newest first"
+            className="flex w-max shrink-0 gap-2"
+          >
+            {items.map((item) => {
             const label = requestLabel(item.session_seq, item.id)
             const time = new Date(parseServerTimestamp(item.timestamp)).toLocaleTimeString()
             const status = statusOf(item)
+            const marker = item.lineage_relation ? lineageMarker[item.lineage_relation] : null
             const meta = [item.model, item.duration_ms != null ? formatRequestDuration(item.duration_ms) : null]
               .filter(Boolean)
               .join(' · ')
             return (
-              <li key={item.id} className="min-w-[9.5rem] flex-1">
+              <li key={item.id} className="w-36 shrink-0">
                 <Link
                   to={`/requests/${item.id}`}
-                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${status ? `, ${status.text}` : ''}`}
-                  className="block h-full rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-3 transition-colors hover:bg-[var(--surface-hover)]"
+                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${marker ? `, ${marker.label}: ${marker.description}` : ''}${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
+                  className="block h-full rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-2.5 transition-colors hover:bg-[var(--surface-hover)]"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold text-[var(--text)]">{label}</span>
-                    <span className="text-xs tabular-nums text-[var(--text-muted)]">{time}</span>
+                    {marker && <LineageIcon marker={marker} />}
                   </div>
+                  <span className="mt-0.5 block text-xs tabular-nums text-[var(--text-muted)]">{time}</span>
                   {(meta || status) && (
                     <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
                       {meta && <span className="truncate" title={meta}>{meta}</span>}
@@ -73,17 +141,22 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
                   </p>
                   {item.parent_state && (
                     <p className="mt-2 text-[11px] text-[var(--text-muted)]">
-                      {item.parent_request_id
+                      {item.lineage_relation === 'context_affinity'
+                        ? 'Same stream · direct predecessor not established'
+                        : item.parent_request_id
                         ? `${item.certainty === 'inferred' ? `Inferred ${Math.round((item.confidence ?? 0) * 100)}%` : 'Exact'} parent · ${item.parent_request_id.slice(0, 8)}`
                         : item.parent_state === 'root' ? 'No parent established' : `Parent ${item.parent_state.replace('_', ' ')}`}
                       {item.shared_history ? ' · Shared history' : ''}
+                      {item.membership_state === 'unassigned' ? ' · Stream uncertain' : ''}
                     </p>
                   )}
                 </Link>
               </li>
             )
-          })}
-        </ol>
+            })}
+          </ol>
+          {trailingAction && <div className="w-32 shrink-0">{trailingAction}</div>}
+        </div>
       )}
     </div>
   )

@@ -101,6 +101,10 @@ class Request(Base):
         String, nullable=False, default="complete", server_default="complete"
     )
     context_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
+    # Source-labelled, one-way digest of an application stream-affinity hint.
+    # This is not a provider conversation ID or a raw cache key.
+    stream_hint_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    stream_hint_digest: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Token counts by category
     tokens_system_prompt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
