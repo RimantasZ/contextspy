@@ -1,41 +1,47 @@
 # What's New
 
-## Unreleased
+## v0.5.1
+
+### Conversations
+
+- Reworked parent-request detection: exact provider links now always win, a known agent change
+  raises the bar for an inferred edge, and a later exact successor can retrospectively re-score
+  an earlier close call within a small bounded look-ahead.
+- Unclassified or one-off requests now land in a new **Auxiliary requests** block instead of a
+  catch-all conversation row, and are only promoted into a confirmed conversation once a coherent
+  chain plus independent evidence (a different agent, a corroborated stream hint, or a long
+  sustained chain) supports it.
+
+## v0.5.0
 
 ### Conversations
 
 - Added a Conversations view on Session Detail that reconstructs roots, continuations, forks, and
-  overlapping invocations. Provider predecessor IDs are authoritative; block-based inference is
-  conservative, confidence-labelled, and leaves ties ambiguous.
-- Added occurrence-aware parent/child context diffs for persisted, response-promoted, added,
-  removed, and replaced blocks, with token/category/type summaries and links back to requests.
-- Session request numbers are now allocated atomically and protected by a uniqueness index. New HTTP
-  and WebSocket invocations retain their observed start time and the session active when they began,
-  even when completion order differs or a session ends while work is in flight.
-- The UI calls the recording window a session and each linked path a conversation. Forked
-  conversations may share earlier requests; existing database, API, route, and CLI names remain.
+  overlapping invocations, with occurrence-aware parent/child context diffs linking back to the
+  underlying requests.
+- Session request numbers are now allocated atomically, and new HTTP/WebSocket invocations retain
+  their observed start time and originating session even when completion order differs.
+- The UI now calls the recording window a session and each linked path a conversation; existing
+  database, API, route, and CLI names are unchanged.
+
+## v0.4.1
+
+### Fixes & improvements
+
+- Dependency lockfile update only; no functional or UI changes.
+
+## v0.4.0
 
 ### UI redesign
 
-- Reworked the application shell around semantic light/dark themes, saved theme preference,
-  responsive desktop/icon-rail/mobile navigation, and route-level overflow containment.
-- Made request composition the primary request-detail view. The new Request/Response workbench
-  provides Compact, relative-size Proportional, and Raw views; block-type filters; content/tool
-  search; Compact-view sequence/turn/tool grouping; three block-size choices; zero-token
-  visibility; and a jump-to-largest action.
-- Added keyboard-operable block maps and a persistent inspector with token/position/message
-  metadata, first-seen request tracking, content state, and jumpable tool and previous-message
-  relationships. Selected and raw content can be searched, pretty-printed, and copied; normalized
-  response events remain available from the Raw view.
-- Replaced tool-definition/result donuts with a stable-colour treemap and sortable exact-value
-  table. Tools below 1% of tool tokens are grouped under **Other** in the treemap.
-- Simplified request lists into responsive desktop tables and mobile cards. Empty requests are
-  hidden by default, secondary metadata is expandable, filter values come from captured data, and
-  selecting **Unknown** agent now includes rows with missing agent metadata.
-- Refreshed Overview, Sessions, Session Detail, and Settings to use the same responsive visual
-  system while preserving session controls, PDF export, capture notices, and diagnostic details.
-- Added Vitest/React Testing Library coverage for the theme control, request filters and lists,
-  workbench, block maps/inspector/layout, searchable content, and tool-treemap transformation.
+- Reworked the application shell around semantic light/dark themes, responsive navigation, and a
+  new Request/Response workbench (Compact, Proportional, and Raw views) with block-type filters,
+  content search, and a persistent inspector showing token/position/message metadata and jumpable
+  relationships.
+- Replaced tool-definition/result donuts with a stable-colour treemap, simplified request lists
+  into responsive tables/cards, and refreshed Overview, Sessions, Session Detail, and Settings
+  onto the same visual system.
+- Added Vitest/React Testing Library coverage across the redesigned components.
 
 ## v0.3.5
 
