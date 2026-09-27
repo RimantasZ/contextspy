@@ -33,6 +33,7 @@ from contextspy.analysis.invocations import (
     CanonicalJsonDocument,
     analyze_invocation,
 )
+from contextspy.analysis.stream_hint import extract_stream_hint
 from contextspy.db import crud
 from contextspy.db.database import get_db
 from contextspy.normalization import (
@@ -727,6 +728,11 @@ class ContextSpyAddon:
                 "raw_response_body": raw_resp_text,
                 "response_events": response_events,
             }
+            hint_source, hint_digest = extract_stream_hint(
+                agent=agent, endpoint=endpoint, request=req_body,
+            )
+            data["stream_hint_source"] = hint_source
+            data["stream_hint_digest"] = hint_digest
             data.update(breakdown.to_db_fields())
             req_record = crud.create_request(db, data)
 

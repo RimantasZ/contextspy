@@ -41,7 +41,7 @@ export function SessionConversationSequences({ data }: { data: SessionConversati
           if (currentRevision.current !== revision) return
           if (error instanceof Error && error.message.includes('API error 404')) {
             setSelectedKey(null)
-            setNotice('Selected conversation changed. Showing the primary sequence.')
+            setNotice('Selected conversation changed. Showing the latest conversation.')
           } else {
             loadFailed(error, 'Selected conversation could not be revalidated. Try refreshing this view.')
           }
@@ -163,19 +163,12 @@ export function SessionConversationSequences({ data }: { data: SessionConversati
                   </div>
                 </details>
               )}
-              <div className="space-y-3">
-                {segments.map((segment, index) => (
-                  <div key={`${segment.key}:${index}`} className="min-w-0">
-                    {gapLabel(segment.gap_reason) && <p className="mb-1 text-xs text-[var(--warning)]">{gapLabel(segment.gap_reason)}</p>}
-                    <RequestFlow items={segment.request_flow} bare />
-                  </div>
-                ))}
-              </div>
+              <RequestFlow items={segments.flatMap((segment) => segment.request_flow)} bare />
               {nextCursor && <button type="button" className="app-button mt-3" disabled={!!loadingKey} onClick={() => loadEarlier(group)}>{loadingKey === group.key ? 'Loading…' : 'Show earlier requests'}</button>}
               {more?.continuesEarlier && <p className="mt-2 text-xs text-[var(--text-muted)]">This linked segment continues on the next page.</p>}
               {focused && <div className="mt-4 rounded border border-[var(--border)] p-3">
                 <div className="mb-2 flex justify-between gap-2"><h4 className="text-sm font-medium">Selected segment window</h4><button className="app-button min-h-7 py-1 text-xs" onClick={() => setJumped((previous) => ({ ...previous, [group.key]: undefined }))}>Close</button></div>
-                <div className="space-y-3">{focused.segments.map((segment, index) => <div key={`${segment.key}:${index}`} className="min-w-0">{gapLabel(segment.gap_reason) && <p className="mb-1 text-xs text-[var(--warning)]">{gapLabel(segment.gap_reason)}</p>}<RequestFlow items={segment.request_flow} bare /></div>)}</div>
+                <RequestFlow items={focused.segments.flatMap((segment) => segment.request_flow)} bare />
               </div>}
             </section>
           )

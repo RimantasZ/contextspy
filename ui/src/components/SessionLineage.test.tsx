@@ -69,6 +69,7 @@ const graph: LineageGraph = {
     { key: 'session:capture-1:primary', label: 'Primary conversation', evidence: 'fork', fork_parent_request_id: 'root', request_ids: ['root', 'exact-child'], confirmed_request_ids: ['root', 'exact-child'] },
     { key: 'session:capture-1:fork:inferred-child', label: 'Conversation 2', evidence: 'fork', fork_parent_request_id: 'root', request_ids: ['root', 'inferred-child'], confirmed_request_ids: ['root', 'inferred-child'] },
   ],
+  stream_bridges: {},
   nodes: [
     node({}),
     node({

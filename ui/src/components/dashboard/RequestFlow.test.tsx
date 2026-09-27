@@ -25,7 +25,7 @@ function item(overrides: Partial<DashboardRequestFlowItem> = {}): DashboardReque
   }
 }
 
-function renderFlow(items: DashboardRequestFlowItem[]) {
+function renderFlow(items: Parameters<typeof RequestFlow>[0]['items']) {
   return render(<MemoryRouter><RequestFlow items={items} /></MemoryRouter>)
 }
 
@@ -59,6 +59,17 @@ describe('RequestFlow', () => {
     const [failed, incomplete] = screen.getAllByRole('link')
     expect(failed.getAttribute('aria-label')).toContain('Failed (500)')
     expect(incomplete.getAttribute('aria-label')).toContain('Incomplete')
+  })
+
+  it('shows parent evidence in the card corner without splitting the request row', () => {
+    renderFlow([
+      { ...item(), lineage_relation: 'exact', parent_state: 'exact', parent_request_id: 'request-17', certainty: 'exact' },
+      { ...item({ id: 'request-17', session_seq: 17 }), lineage_relation: 'context_affinity', parent_state: 'ambiguous', parent_request_id: null },
+    ])
+    expect(screen.getAllByRole('list')).toHaveLength(1)
+    expect(screen.getByTitle('Exact predecessor')).toBeTruthy()
+    expect(screen.getByTitle('Same stream; direct predecessor not established')).toBeTruthy()
+    expect(screen.getAllByRole('link')[1].getAttribute('aria-label')).toContain('Same stream; direct predecessor not established')
   })
 
   it('shows an empty state', () => {

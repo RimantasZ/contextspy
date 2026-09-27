@@ -4,6 +4,8 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+import pytest
+
 from contextspy.db import migrations
 
 
@@ -21,7 +23,7 @@ def test_inspect_migration_state_is_read_only_for_legacy_database(tmp_path):
     version_from, pending = migrations.inspect_migration_state(db_path)
 
     assert version_from == 1
-    assert pending == [2, 3, 4, 5]
+    assert pending == [2, 3, 4, 5, 6]
     assert db_path.read_bytes() == original_bytes
     with sqlite3.connect(db_path) as conn:
         tables = {
@@ -77,7 +79,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
     settings = Settings(config_dir=tmp_path)
     settings.storage.db_path = db_path
     monkeypatch.setattr(Settings, "load", classmethod(lambda cls: settings))
-    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3, 4, 5]))
+    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3, 4, 5, 6]))
 
     events = []
     real_create_backup = migrations.create_migration_backup
@@ -100,8 +102,8 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
         yield object()
 
     monkeypatch.setattr(migrations, "create_migration_backup", create_backup)
-    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3, 4, 5])
-    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3, 4, 5])
+    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3, 4, 5, 6])
+    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3, 4, 5, 6])
     monkeypatch.setattr(database, "init_db", init_db)
     monkeypatch.setattr(database, "get_db", get_db)
 
@@ -115,7 +117,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
 
     cli.db_upgrade()
 
-    backup_path = tmp_path / "profile_backup_v1_to_v5_2026-08-27-0000.back"
+    backup_path = tmp_path / "profile_backup_v1_to_v6_2026-08-27-0000.back"
     assert events == ["backup", "init"]
     assert backup_path.read_bytes() == original_bytes
     assert db_path.read_bytes() == b"database changed by init"
@@ -140,6 +142,78 @@ def test_list_migration_backups_only_returns_backups_for_database(tmp_path):
     (tmp_path / "other_1_2_20260827T000000000000Z.back").write_bytes(b"other db")
 
     assert migrations.list_migration_backups(db_path) == matching
+
+
+def test_v6_backfills_only_hashed_codex_hints_and_skips_purged_bodies(tmp_path):
+    import hashlib
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "stream_hints.db")
+    cases = [
+        ("canonical", "codex", json.dumps({"prompt_cache_key": "stream-a"}), None),
+        ("raw-fallback", "codex", json.dumps({"input": []}), json.dumps({"prompt_cache_key": "stream-b"})),
+        ("purged", "codex", None, None),
+        ("other-agent", "other", json.dumps({"prompt_cache_key": "stream-c"}), None),
+        ("guardian", "codex", json.dumps({"prompt_cache_key": "guardian:stream"}), None),
+    ]
+    with get_db() as db:
+        for request_id, agent, canonical, raw in cases:
+            crud.create_request(db, {
+                "id": request_id, "timestamp": datetime.now(timezone.utc),
+                "provider": "openai_chatgpt", "agent": agent,
+                "endpoint": "/backend-api/codex/responses",
+                "canonical_request_body": canonical, "raw_request_body": raw,
+            })
+    with get_db() as db:
+        migrations._migrate_to_v6(db)
+        migrations._migrate_to_v6(db)
+    with get_db() as db:
+        rows = {row.id: row for row in db.query(migrations.Request).all()}
+        for request_id, key in (("canonical", "stream-a"), ("raw-fallback", "stream-b")):
+            assert rows[request_id].stream_hint_source == "openai_prompt_cache_key"
+            assert rows[request_id].stream_hint_digest == hashlib.sha256(key.encode()).hexdigest()
+            assert key not in rows[request_id].stream_hint_digest
+        assert all(rows[request_id].stream_hint_digest is None
+                   for request_id in ("purged", "other-agent", "guardian"))
+        assert "stream_hint_digest" not in rows["canonical"].to_dict(include_raw=False)
+
+
+def test_v6_interrupted_transaction_rolls_back_and_retries(tmp_path, monkeypatch):
+    from contextspy.analysis import stream_hint
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "interrupted_hint_backfill.db")
+    with get_db() as db:
+        for index in range(2):
+            crud.create_request(db, {
+                "id": f"r{index}", "timestamp": datetime.now(timezone.utc),
+                "provider": "openai_chatgpt", "agent": "codex",
+                "endpoint": "/v1/responses",
+                "canonical_request_body": json.dumps({"prompt_cache_key": f"stream-{index}"}),
+            })
+    original = stream_hint.extract_stream_hint
+    calls = 0
+
+    def interrupt(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("interrupted")
+        return original(**kwargs)
+
+    monkeypatch.setattr(stream_hint, "extract_stream_hint", interrupt)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        with get_db() as db:
+            migrations._migrate_to_v6(db)
+    with get_db() as db:
+        assert all(row.stream_hint_digest is None for row in db.query(migrations.Request).all())
+    monkeypatch.setattr(stream_hint, "extract_stream_hint", original)
+    with get_db() as db:
+        migrations._migrate_to_v6(db)
+    with get_db() as db:
+        assert all(row.stream_hint_digest for row in db.query(migrations.Request).all())
 
 
 def test_v3_backfill_retains_canonical_json_and_marks_sparse_ws_partial(tmp_path):

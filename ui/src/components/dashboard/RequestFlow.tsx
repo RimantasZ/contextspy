@@ -26,6 +26,18 @@ function statusOf(item: DashboardRequestFlowItem): { text: string; className: st
 
 type FlowItem = DashboardRequestFlowItem & Partial<DashboardConversation['recent_segments'][number]['request_flow'][number]>
 
+const lineageMarker: Record<NonNullable<FlowItem['lineage_relation']>, { icon: string; label: string; uncertain: boolean }> = {
+  exact: { icon: '↳', label: 'Exact predecessor', uncertain: false },
+  inferred: { icon: '≈', label: 'Inferred predecessor', uncertain: false },
+  suggested: { icon: '≈', label: 'Suggested predecessor', uncertain: true },
+  context_affinity: { icon: '⋯', label: 'Same stream; direct predecessor not established', uncertain: true },
+  ambiguous: { icon: '?', label: 'Direct predecessor ambiguous', uncertain: true },
+  unresolved_exact: { icon: '!', label: 'Provider predecessor missing', uncertain: true },
+  unavailable: { icon: '?', label: 'Predecessor context unavailable', uncertain: true },
+  root: { icon: '○', label: 'No predecessor established', uncertain: true },
+  external: { icon: '↗', label: 'Predecessor in another session', uncertain: false },
+}
+
 export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?: boolean }) {
   return (
     <div className={bare ? '' : 'panel'}>
@@ -45,6 +57,7 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
             const label = requestLabel(item.session_seq, item.id)
             const time = new Date(parseServerTimestamp(item.timestamp)).toLocaleTimeString()
             const status = statusOf(item)
+            const marker = item.lineage_relation ? lineageMarker[item.lineage_relation] : null
             const meta = [item.model, item.duration_ms != null ? formatRequestDuration(item.duration_ms) : null]
               .filter(Boolean)
               .join(' · ')
@@ -52,12 +65,15 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
               <li key={item.id} className="min-w-[9.5rem] flex-1">
                 <Link
                   to={`/requests/${item.id}`}
-                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
+                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${marker ? `, ${marker.label}` : ''}${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
                   className="block h-full rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-3 transition-colors hover:bg-[var(--surface-hover)]"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold text-[var(--text)]">{label}</span>
-                    <span className="text-xs tabular-nums text-[var(--text-muted)]">{time}</span>
+                    <span className="flex items-center gap-1">
+                      <span className="text-xs tabular-nums text-[var(--text-muted)]">{time}</span>
+                      {marker && <span aria-hidden="true" title={marker.label} className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-semibold ${marker.uncertain ? 'border-[var(--warning)] text-[var(--warning)]' : 'border-[var(--border)] text-[var(--accent-soft-text)]'}`}>{marker.icon}</span>}
+                    </span>
                   </div>
                   {(meta || status) && (
                     <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
@@ -73,7 +89,9 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
                   </p>
                   {item.parent_state && (
                     <p className="mt-2 text-[11px] text-[var(--text-muted)]">
-                      {item.parent_request_id
+                      {item.lineage_relation === 'context_affinity'
+                        ? 'Same stream · direct predecessor not established'
+                        : item.parent_request_id
                         ? `${item.certainty === 'inferred' ? `Inferred ${Math.round((item.confidence ?? 0) * 100)}%` : 'Exact'} parent · ${item.parent_request_id.slice(0, 8)}`
                         : item.parent_state === 'root' ? 'No parent established' : `Parent ${item.parent_state.replace('_', ' ')}`}
                       {item.shared_history ? ' · Shared history' : ''}

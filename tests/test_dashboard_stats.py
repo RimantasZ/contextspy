@@ -28,14 +28,17 @@ def _session(db, sid="s1", *, active=True):
     return s
 
 
-def _req(db, rid, *, sid="s1", seq=1, tin=100, tout=10, minutes=None, fidelity="complete", parent=None, started_at=None):
+def _req(db, rid, *, sid="s1", seq=1, tin=100, tout=10, minutes=None, fidelity="complete", parent=None, started_at=None, hint=None):
     r = Request(
         id=rid,
         session_id=sid,
         session_seq=seq,
         timestamp=T0 + timedelta(minutes=seq if minutes is None else minutes),
-        provider="anthropic",
-        endpoint="/v1/messages",
+        provider="openai_chatgpt" if hint else "anthropic",
+        endpoint="/backend-api/codex/responses" if hint else "/v1/messages",
+        agent="codex" if hint else None,
+        stream_hint_source="openai_prompt_cache_key" if hint else None,
+        stream_hint_digest=hint,
         tokens_total_input=tin,
         tokens_total_output=tout,
         context_fidelity=fidelity,
@@ -53,6 +56,16 @@ def _blocks(db, rid, block_type, n, direction="input", content_hash=None):
         db.add(BlockRecord(
             request_id=rid, direction=direction, position=i,
             block_type=block_type, content_hash=content_hash, token_count=0,
+        ))
+    db.flush()
+
+
+def _stream_blocks(db, rid, family):
+    for index in range(3):
+        db.add(BlockRecord(
+            request_id=rid, direction="input", position=index,
+            block_type="tool_result", category="tool_results",
+            content_hash=f"{family}-{index}", token_count=50,
         ))
     db.flush()
 
@@ -253,6 +266,61 @@ def test_sustained_fork_dashboard_has_shared_history_and_parent_comparison(db):
     assert {group["context_change"]["parent_request_id"] for group in out["conversations"]} == {"a", "b"}
 
 
+def test_conversation_order_uses_latest_completion_not_primary_rank(db):
+    _session(db)
+    for rid, seq, parent in (
+        ("root", 1, None), ("a", 2, "root"), ("aa", 3, "a"),
+        ("aaa", 4, "aa"), ("b", 5, "root"), ("bb", 6, "b"),
+    ):
+        _req(db, rid, seq=seq, parent=parent)
+    first = crud.get_session_conversations(db, "s1")
+    assert [group["latest_request_id"] for group in first["conversations"]] == ["bb", "aaa"]
+    assert first["primary_key"] == first["conversations"][1]["key"]
+    assert crud.get_dashboard_live(db)["most_recent_conversation_key"] == first["conversations"][0]["key"]
+    selected_key = first["conversations"][0]["key"]
+    _req(db, "aaaa", seq=7, parent="aaa")
+    second = crud.get_session_conversations(db, "s1")
+    assert [group["latest_request_id"] for group in second["conversations"]] == ["aaaa", "bb"]
+    assert second["conversations"][1]["key"] == selected_key
+    assert crud.get_session_conversations(
+        db, "s1", revision=second["revision"], group_key=selected_key,
+    )["conversations"][0]["key"] == selected_key
+    with pytest.raises(ValueError, match="revision changed"):
+        crud.get_session_conversations(db, "s1", revision=first["revision"])
+
+
+def test_dashboard_preview_does_not_reserve_slot_for_older_primary(db):
+    _session(db)
+    _req(db, "root", seq=1)
+    parent = "root"
+    for seq in range(2, 6):
+        rid = f"main-{seq}"
+        _req(db, rid, seq=seq, parent=parent)
+        parent = rid
+    for branch in range(4):
+        child = f"branch-{branch}"
+        _req(db, child, seq=10 + branch * 2, parent="root")
+        _req(db, f"leaf-{branch}", seq=11 + branch * 2, parent=child)
+    session = crud.get_session_conversations(db, "s1", group_limit=10)
+    dashboard = crud.get_dashboard_live(db)
+    assert session["conversation_count"] == 5
+    assert dashboard["has_more_conversations"] is True
+    assert len(dashboard["conversations"]) == 4
+    assert session["primary_key"] not in {group["key"] for group in dashboard["conversations"]}
+    assert [group["latest_session_seq"] for group in dashboard["conversations"]] == [17, 15, 13, 11]
+
+
+def test_hint_backfill_invalidates_revision_without_request_append(db):
+    _session(db)
+    row = _req(db, "r1", seq=1)
+    before = crud.get_session_conversations(db, "s1")["revision"]
+    row.stream_hint_source = "openai_prompt_cache_key"
+    row.stream_hint_digest = "digest"
+    db.flush()
+    after = crud.get_session_conversations(db, "s1")["revision"]
+    assert before != after
+
+
 def test_external_exact_parent_is_compared_but_not_counted(db):
     _session(db)
     _session(db, "old", active=False)
@@ -384,6 +452,55 @@ def test_session_projection_matches_dashboard_and_marks_unconfirmed_branch(db):
                for segment in session["conversations"][0]["recent_segments"])
     graph, _ = crud._session_lineage_graph(db, "s1", 3)
     assert next(node for node in graph["nodes"] if node["request_id"] == "root")["conversation_fork_status"] == "unconfirmed_graph_branch"
+
+
+def test_stream_groups_match_dashboard_order_and_preserve_gap_provenance(db):
+    _session(db)
+    rows = [
+        (293, "B", "beta", None), (294, "B", "beta", "r293"),
+        (402, "A", "alpha", None), (403, "A", "alpha", "r402"),
+        (404, "A", "alpha", "r403"), (405, "B", "beta", None),
+        (406, "B", "beta", "r405"), (407, "A", "alpha", None),
+        (408, "A", "alpha", "r407"), (409, "A", "alpha", "r408"),
+        (410, "A", "alpha", "r409"),
+    ]
+    for seq, hint, family, parent in rows:
+        rid = f"r{seq}"
+        _req(db, rid, seq=seq, parent=parent, hint=hint)
+        _stream_blocks(db, rid, family)
+    dashboard = crud.get_dashboard_live(db)
+    session = crud.get_session_conversations(db, "s1")
+    assert dashboard["conversation_count"] == session["conversation_count"] == 2
+    assert dashboard["conversations"] == session["conversations"]
+    assert [group["latest_request_id"] for group in session["conversations"]] == ["r410", "r406"]
+    assert dashboard["most_recent_conversation_key"] == session["conversations"][0]["key"]
+    assert session["primary_key"] == session["conversations"][0]["key"]
+    main, other = session["conversations"]
+    assert [card["id"] for segment in main["recent_segments"]
+            for card in segment["request_flow"]] == ["r410", "r409", "r408", "r407", "r404"]
+    assert next(segment for segment in main["recent_segments"]
+                if segment["first_request_id"] == "r407")["gap_reason"] == "stream_resume_unlinked"
+    assert next(card for segment in main["recent_segments"] for card in segment["request_flow"]
+                if card["id"] == "r407")["lineage_relation"] == "context_affinity"
+    assert next(card for segment in main["recent_segments"] for card in segment["request_flow"]
+                if card["id"] == "r410")["lineage_relation"] == "exact"
+    assert other["evidence"] == "stream_affinity"
+    assert [card["id"] for segment in other["recent_segments"]
+            for card in segment["request_flow"]][:2] == ["r406", "r405"]
+    assert next(segment for segment in other["recent_segments"]
+                if segment["first_request_id"] == "r405")["gap_reason"] == "stream_resume_unlinked"
+    assert next(card for segment in other["recent_segments"] for card in segment["request_flow"]
+                if card["id"] == "r405")["lineage_relation"] == "context_affinity"
+    assert other["context_change"]["parent_request_id"] == "r405"
+    assert main["context_change"]["parent_request_id"] == "r409"
+    page = crud.get_session_conversation_requests(
+        db, "s1", main["key"], revision=session["revision"],
+        cursor=main["next_request_cursor"],
+    )
+    assert [card["id"] for segment in page["segments"]
+            for card in segment["request_flow"]] == ["r403", "r402"]
+    graph, _ = crud._session_lineage_graph(db, "s1", len(rows))
+    assert all(edge["target_request_id"] not in {"r405", "r407"} for edge in graph["edges"])
 
 
 def test_session_projection_confirmed_fork_shared_history_and_external_parent(db):

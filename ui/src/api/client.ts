@@ -310,10 +310,15 @@ export interface LineageGraph {
   conversations: Array<{
     key: string
     label: string
-    evidence: 'default' | 'fork' | 'parallel_chains'
+    evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity'
     fork_parent_request_id: string | null
     request_ids: string[]
     confirmed_request_ids: string[]
+  }>
+  stream_bridges: Record<string, {
+    prior_request_id: string
+    evidence: 'context_affinity'
+    parent_edge: false
   }>
   unresolved_predecessors: Array<{
     request_id: string
@@ -466,7 +471,7 @@ export interface DashboardContextChange {
 export interface DashboardConversation {
   key: string
   label: string
-  evidence: 'default' | 'fork' | 'parallel_chains'
+  evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity'
   fork_parent_request_id: string | null
   latest_request_id: string
   latest_session_seq: number | null
@@ -476,7 +481,9 @@ export interface DashboardConversation {
   segment_count?: number
   recent_segments: Array<{
     key: string
-    gap_reason: LineageNode['parent_state'] | 'fork_branch' | 'graph_branch_unconfirmed' | null
+    gap_reason: LineageNode['parent_state'] | 'fork_branch' | 'graph_branch_unconfirmed' | 'stream_resume_unlinked' | null
+    bridge_request_id?: string
+    bridge_evidence?: 'context_affinity'
     first_request_id?: string
     first_session_seq?: number | null
     latest_session_seq?: number | null
@@ -488,6 +495,7 @@ export interface DashboardConversation {
       parent_state: LineageNode['parent_state']
       certainty: LineageEdge['certainty'] | null
       confidence: number | null
+      lineage_relation: LineageNode['parent_state'] | LineageEdge['certainty'] | 'context_affinity'
       membership_state: 'confirmed' | 'unassigned'
       shared_history: boolean
       fork_status: LineageNode['conversation_fork_status']

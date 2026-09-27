@@ -18,6 +18,7 @@ function group(key: string, seq: number, gap: SessionConversation['recent_segmen
     recent_segments: [{ key: id, gap_reason: gap, first_request_id: id, first_session_seq: seq, latest_session_seq: seq, newest_request_id: id, request_count: 1, request_flow: [{
       id, session_seq: seq, timestamp: `2026-09-18T08:${String(seq).padStart(2, '0')}:00`, model: 'gpt-test', duration_ms: 10, status_code: 200, invocation_outcome: 'completed',
       tokens_total_input: 100, tokens_total_output: 5, parent_request_id: null, parent_state: 'root', certainty: null, confidence: null,
+      lineage_relation: gap === 'stream_resume_unlinked' ? 'context_affinity' : 'root',
       membership_state: 'unassigned', shared_history: false, fork_status: 'none',
     }] }],
     context_change: { request_id: id, session_seq: seq, tokens_total_input: 100, parent_request_id: null, parent_session_seq: null,
@@ -35,12 +36,28 @@ describe('session conversation sequences', () => {
   function show(data: SessionConversationsData) {
     return render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SessionConversationSequences data={data} /></MemoryRouter></QueryClientProvider>)
   }
-  it('keeps diagnostic paths out of the group count and marks uncertain branches', () => {
+  it('keeps diagnostic paths out of the group count', () => {
     show(base)
     expect(screen.getByText('1 conversation sequence · 28 diagnostic paths')).toBeTruthy()
-    expect(screen.getByText('Graph branch · separate conversation not confirmed')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: 'primary' })).getAllByRole('list')).toHaveLength(1)
+    expect(screen.getByTitle('No predecessor established')).toBeTruthy()
     expect(screen.getByRole('link', { name: /stream membership uncertain/ }).getAttribute('href')).toBe('/requests/r9')
     expect(screen.queryByText('Conversation 2')).toBeNull()
+  })
+
+  it('preserves newest-first group order and marks a stream resumption between request runs', () => {
+    const main = group('Conversation 1', 410, 'stream_resume_unlinked')
+    main.recent_segments = [main.recent_segments[0], group('older', 404).recent_segments[0]]
+    const other = group('Conversation 2', 406)
+    other.evidence = 'stream_affinity'
+    show({ ...base, conversation_count: 2, conversations: [main, other] })
+    const regions = screen.getAllByRole('region', { name: /Conversation [12]/ })
+    expect(regions.map((region) => region.getAttribute('aria-label'))).toEqual(['Conversation 1', 'Conversation 2'])
+    const text = regions[0].textContent ?? ''
+    expect(text.indexOf('#410')).toBeGreaterThanOrEqual(0)
+    expect(text.indexOf('#410')).toBeLessThan(text.indexOf('Same stream · direct predecessor not established'))
+    expect(text.indexOf('Same stream · direct predecessor not established')).toBeLessThan(text.indexOf('#404'))
+    expect(within(regions[0]).getAllByRole('list')).toHaveLength(1)
   })
 
   it('loads earlier cards and additional confirmed groups without changing semantics', async () => {

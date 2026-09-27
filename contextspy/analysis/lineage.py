@@ -15,11 +15,13 @@ from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.analysis.context_diff import ContextBlock, ContextDelta, diff_contexts, semantic_key
 
 
-ANALYSIS_VERSION = "lineage-v2"
+ANALYSIS_VERSION = "lineage-v3-stream-affinity"
 INFERENCE_THRESHOLD = 0.80
 AMBIGUOUS_THRESHOLD = 0.45
 INFERENCE_MARGIN = 0.15
 MAX_INFERENCE_CANDIDATES = 64
+MAX_AFFINITY_CANDIDATES = 32
+MAX_AFFINITY_POSTINGS = 64
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,8 @@ class RequestSnapshot:
     context_fidelity: str
     tokens_total_input: int
     tokens_total_output: int
+    stream_hint_source: str | None = None
+    stream_hint_digest: str | None = None
     blocks: tuple[ContextBlock, ...] = ()
     external: bool = False
 
@@ -307,6 +311,174 @@ def _assign_topology(
     return topology
 
 
+def _strong_stream_context(
+    left: Mapping[tuple, int], right: Mapping[tuple, int],
+) -> bool:
+    """Substantive retained transcript, excluding configuration boilerplate."""
+    if len(left) < 3 or len(right) < 3:
+        return False
+    shared = left.keys() & right.keys()
+    if len(shared) < 3 or len(shared) / min(len(left), len(right)) < 0.70:
+        return False
+    shared_weight = sum(min(left[key], right[key]) for key in shared)
+    smaller_weight = min(sum(left.values()), sum(right.values()))
+    return shared_weight >= 128 and smaller_weight > 0 and shared_weight / smaller_weight >= 0.70
+
+
+def _stream_affinity_groups(
+    internal: list[RequestSnapshot], edges: list[LineageEdge],
+    primary_path: list[str], primary_ids: set[str], next_number: int,
+) -> tuple[list[dict[str, Any]], set[str], dict[str, dict[str, Any]]]:
+    """Promote corroborated Codex streams without modifying lineage edges.
+
+    Exact/inferred parents establish components. A matching cache-affinity
+    hint plus strong non-configuration context can join components for display
+    only. Distinct hints need an independently accepted chain to make a new
+    group; transient single calls never suffice.
+    """
+    by_id = {request.id: request for request in internal}
+    hint = {
+        request.id: (request.stream_hint_source, request.stream_hint_digest)
+        if request.stream_hint_source and request.stream_hint_digest else None
+        for request in internal
+    }
+    base_confirmed = set(primary_path) if len(primary_path) > 1 else set()
+    if not any(hint.values()):
+        return [], base_confirmed, {}
+
+    request_parent = {rid: rid for rid in by_id}
+    def find_request(rid: str) -> str:
+        while request_parent[rid] != rid:
+            request_parent[rid] = request_parent[request_parent[rid]]
+            rid = request_parent[rid]
+        return rid
+    def join_requests(left: str, right: str) -> None:
+        request_parent[find_request(right)] = find_request(left)
+
+    accepted_internal = [edge for edge in edges
+                         if edge.relation_type == "context_continuation"
+                         and edge.source_request_id in by_id]
+    for edge in accepted_internal:
+        join_requests(edge.source_request_id, edge.target_request_id)
+
+    hint_parent = {value: value for value in hint.values() if value}
+    def find_hint(value: tuple[str, str]) -> tuple[str, str]:
+        while hint_parent[value] != value:
+            hint_parent[value] = hint_parent[hint_parent[value]]
+            value = hint_parent[value]
+        return value
+    def join_hints(left: tuple[str, str], right: tuple[str, str]) -> None:
+        hint_parent[find_hint(right)] = find_hint(left)
+
+    hints_by_component: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    for rid, value in hint.items():
+        if value:
+            hints_by_component[find_request(rid)].add(value)
+    for values in hints_by_component.values():
+        if len(values) > 1:
+            first = min(values)
+            for value in sorted(values):
+                join_hints(first, value)
+    canonical_hint = {rid: find_hint(value) if value else None
+                      for rid, value in hint.items()}
+
+    weights: dict[str, dict[tuple, int]] = {}
+    for request in internal:
+        values: dict[tuple, int] = {}
+        for block in request.blocks:
+            if block.direction != Direction.INPUT or block.is_configuration:
+                continue
+            key = semantic_key(block)
+            if key is not None:
+                values[key] = max(values.get(key, 0), max(1, block.token_count))
+        weights[request.id] = values
+
+    postings: dict[tuple, list[str]] = defaultdict(list)
+    bridges: dict[str, dict[str, Any]] = {}
+    accepted_children = {edge.target_request_id for edge in edges
+                         if edge.relation_type == "context_continuation"}
+    for request in internal:
+        rid = request.id
+        value = canonical_hint[rid]
+        if value is None or not weights[rid]:
+            continue
+        overlaps: Counter[str] = Counter()
+        for key in weights[rid]:
+            overlaps.update(postings[(value, key)][-MAX_AFFINITY_POSTINGS:])
+        candidates = sorted(
+            overlaps, key=lambda candidate: (overlaps[candidate], _request_order(by_id[candidate])),
+            reverse=True,
+        )[:MAX_AFFINITY_CANDIDATES]
+        for candidate in candidates:
+            if find_request(candidate) == find_request(rid):
+                continue
+            if not _strong_stream_context(weights[candidate], weights[rid]):
+                continue
+            join_requests(candidate, rid)
+            if rid not in accepted_children:
+                bridges[rid] = {
+                    "prior_request_id": candidate,
+                    "evidence": "context_affinity",
+                    "parent_edge": False,
+                }
+            break
+        for key in weights[rid]:
+            postings[(value, key)].append(rid)
+
+    members: dict[str, set[str]] = defaultdict(set)
+    for rid in by_id:
+        members[find_request(rid)].add(rid)
+    anchor_root = find_request(primary_path[-1])
+    anchor_members = members[anchor_root]
+    anchor_hints = Counter(canonical_hint[rid] for rid in anchor_members if canonical_hint[rid])
+    if not anchor_hints:
+        return [], base_confirmed, bridges
+    anchor_hint = min(anchor_hints, key=lambda value: (-anchor_hints[value], value))
+    anchor_latest = max(anchor_members, key=lambda rid: _request_order(by_id[rid]))
+    if (len(weights[anchor_latest]) < 3
+            or sum(weights[anchor_latest].values()) < 128):
+        return [], base_confirmed | (anchor_members & primary_ids), bridges
+
+    accepted_counts: Counter[str] = Counter()
+    for edge in accepted_internal:
+        accepted_counts[find_request(edge.target_request_id)] += 1
+    candidates_by_hint: dict[tuple[str, str], list[tuple[str, set[str]]]] = defaultdict(list)
+    for root, ids in members.items():
+        if root == anchor_root or not ids <= primary_ids or accepted_counts[root] == 0:
+            continue
+        values = Counter(canonical_hint[rid] for rid in ids if canonical_hint[rid])
+        if not values:
+            continue
+        value = min(values, key=lambda candidate: (-values[candidate], candidate))
+        if value == anchor_hint:
+            continue
+        latest = max(ids, key=lambda rid: _request_order(by_id[rid]))
+        if (len(weights[latest]) < 3
+                or sum(weights[latest].values()) < 128):
+            continue
+        if (_strong_stream_context(weights[anchor_latest], weights[latest])
+                or _strong_stream_context(weights[latest], weights[anchor_latest])):
+            continue
+        candidates_by_hint[value].append((root, ids))
+
+    session_id = internal[0].session_id or "unassigned"
+    groups: list[dict[str, Any]] = []
+    for components in candidates_by_hint.values():
+        _, ids = max(components, key=lambda item: (
+            len(item[1]), max(_request_order(by_id[rid]) for rid in item[1]),
+        ))
+        anchor = min(ids, key=lambda rid: _request_order(by_id[rid]))
+        groups.append({
+            "key": f"session:{session_id}:stream:{anchor}",
+            "label": f"Conversation {next_number + len(groups)}",
+            "evidence": "stream_affinity",
+            "fork_parent_request_id": None,
+            "request_ids": sorted(ids, key=lambda rid: _request_order(by_id[rid])),
+            "confirmed_request_ids": sorted(ids, key=lambda rid: _request_order(by_id[rid])),
+        })
+    return groups, base_confirmed | (anchor_members & primary_ids), bridges
+
+
 def _conversation_projection(
     internal: list[RequestSnapshot], edges: list[LineageEdge],
     parent_states: Mapping[str, str], ambiguous: list[dict[str, Any]],
@@ -320,7 +492,7 @@ def _conversation_projection(
     if not internal:
         return {"lineage_paths": [], "lineage_fragment_count": 0,
                 "conversation_count": 0, "confirmed_parallel_streams": 0,
-                "conversations": [], "membership": {}}
+                "conversations": [], "membership": {}, "stream_bridges": {}}
 
     by_id = {request.id: request for request in internal}
     parent_edge = {edge.target_request_id: edge for edge in edges
@@ -467,6 +639,20 @@ def _conversation_projection(
             "request_ids": paths[index],
             "confirmed_request_ids": paths[index],
         })
+    affinity_groups, primary_confirmed, bridges = _stream_affinity_groups(
+        internal, edges, primary_path, primary_ids, len(groups) + 1,
+    )
+    if affinity_groups:
+        promoted_ids = set().union(*(set(group["request_ids"]) for group in affinity_groups))
+        groups[0]["request_ids"] = [rid for rid in groups[0]["request_ids"]
+                                    if rid not in promoted_ids]
+        groups.extend(affinity_groups)
+    groups[0]["confirmed_request_ids"] = sorted(
+        primary_confirmed & set(groups[0]["request_ids"]),
+        key=lambda rid: _request_order(by_id[rid]),
+    )
+    if len(groups) > 1:
+        groups[0]["label"] = "Conversation 1"
     membership: dict[str, list[dict[str, str]]] = defaultdict(list)
     for group in groups:
         confirmed_ids = set(group["confirmed_request_ids"])
@@ -483,6 +669,7 @@ def _conversation_projection(
         "confirmed_parallel_streams": len(groups) - 1,
         "conversations": groups,
         "membership": dict(membership),
+        "stream_bridges": bridges,
     }
 
 
@@ -627,6 +814,15 @@ def build_lineage_graph(
                     for position, candidate in enumerate(candidates[:3])
                 ],
             })
+
+    for edge in edges:
+        parent = request_by_id[edge.source_request_id]
+        child = request_by_id[edge.target_request_id]
+        if (parent.stream_hint_source and child.stream_hint_source
+                and parent.stream_hint_source == child.stream_hint_source
+                and parent.stream_hint_digest and child.stream_hint_digest
+                and parent.stream_hint_digest != child.stream_hint_digest):
+            edge.evidence.setdefault("reason_codes", []).append("hint_conflict")
 
     graph_requests = internal + [
         request for request in external

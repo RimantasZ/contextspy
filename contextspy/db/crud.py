@@ -13,9 +13,10 @@
 # limitations under the License.
 from __future__ import annotations
 
-import json
 import base64
 import binascii
+import hashlib
+import json
 import uuid
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -225,6 +226,8 @@ def _lineage_snapshots_for_requests(
         context_fidelity=request.context_fidelity,
         tokens_total_input=request.tokens_total_input,
         tokens_total_output=request.tokens_total_output,
+        stream_hint_source=request.stream_hint_source,
+        stream_hint_digest=request.stream_hint_digest,
         blocks=tuple(blocks_by_request.get(request.id, ())),
         external=False,
     ) for request in requests]
@@ -902,9 +905,15 @@ def _session_lineage_graph(db: OrmSession, session_id: str, session_count: int) 
     global_count, last_rowid = db.execute(
         text("SELECT count(*), max(rowid) FROM requests")
     ).one()
-    revision = f"{ANALYSIS_VERSION}:{session_count}:{global_count}:{last_rowid or 0}"
-    key = (db.get_bind(), session_id, revision,
-           global_count, last_rowid)
+    hint_hash = hashlib.sha256()
+    for request_id, source, digest in db.execute(
+        select(Request.id, Request.stream_hint_source, Request.stream_hint_digest)
+        .where(Request.session_id == session_id).order_by(Request.id)
+    ):
+        hint_hash.update(f"{request_id}\0{source or ''}\0{digest or ''}\n".encode())
+    revision = (f"{ANALYSIS_VERSION}:{session_count}:{global_count}:"
+                f"{last_rowid or 0}:{hint_hash.hexdigest()[:16]}")
+    key = (db.get_bind(), session_id, revision)
     with _live_graph_cache_lock:
         cached = _live_graph_cache.get(key)
         if cached is not None:
@@ -1009,10 +1018,10 @@ def _conversation_order(graph: dict) -> list[dict]:
     nodes = {node["request_id"]: node for node in graph["nodes"]}
     def order(rid: str) -> tuple:
         node = nodes[rid]
-        return (node["session_seq"] if node["session_seq"] is not None else -1,
-                node["completed_at"], rid)
+        return (node["completed_at"],
+                node["session_seq"] if node["session_seq"] is not None else -1, rid)
     groups = graph["conversations"]
-    return groups[:1] + sorted(groups[1:], key=lambda group: (
+    return sorted(groups, key=lambda group: (
         max(map(order, group["request_ids"])), group["key"]), reverse=True)
 
 
@@ -1043,6 +1052,7 @@ def _conversation_projection_view(
     block counts are hydrated in batches after graph-wide classification.
     """
     nodes = {node["request_id"]: node for node in graph["nodes"]}
+    stream_bridges = graph.get("stream_bridges", {})
     parent_edges = {edge["target_request_id"]: edge for edge in graph["edges"]
                     if edge["relation_type"] == "context_continuation"}
     def order(rid: str) -> tuple:
@@ -1074,11 +1084,16 @@ def _conversation_projection_view(
                            else "graph_branch_unconfirmed")
                 elif edge and edge["external_source"]:
                     gap = "external"
+                elif rid in stream_bridges:
+                    gap = "stream_resume_unlinked"
                 else:
                     gap = None if node["parent_state"] in ("exact", "inferred") else node["parent_state"]
                 starts[rid] = {"key": rid, "gap_reason": gap, "first_request_id": rid,
                                "first_session_seq": node["session_seq"],
                                "latest_session_seq": node["session_seq"], "request_count": 0}
+                if rid in stream_bridges:
+                    starts[rid]["bridge_request_id"] = stream_bridges[rid]["prior_request_id"]
+                    starts[rid]["bridge_evidence"] = stream_bridges[rid]["evidence"]
         for rid in ordered:
             segment = starts[segment_by_id[rid]]
             segment["request_count"] += 1
@@ -1125,6 +1140,11 @@ def _conversation_projection_view(
                 "parent_state": node["parent_state"],
                 "certainty": edge["certainty"] if edge else None,
                 "confidence": edge["confidence"] if edge else None,
+                "lineage_relation": (
+                    "context_affinity" if rid in stream_bridges else
+                    "external" if edge and edge["external_source"] else
+                    edge["certainty"] if edge else node["parent_state"]
+                ),
                 "membership_state": "confirmed" if rid in confirmed else "unassigned",
                 "shared_history": len(node["conversation_membership"]) > 1,
                 "fork_status": node["conversation_fork_status"],
@@ -1205,7 +1225,7 @@ def get_session_conversations(
             "conversation_count": graph["conversation_count"],
             "confirmed_parallel_streams": graph["confirmed_parallel_streams"],
             "lineage_fragment_count": graph["lineage_fragment_count"],
-            "primary_key": ordered[0]["key"] if ordered else None,
+            "primary_key": graph["conversations"][0]["key"] if ordered else None,
             "conversations": views, "next_group_offset": next_offset,
         }
 
@@ -1290,14 +1310,10 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
     ]
 
     graph = _live_lineage_graph(db, session.id, totals.n)
-    nodes = {node["request_id"]: node for node in graph["nodes"]}
     groups = _conversation_order(graph)[:4]
     conversations, _ = _conversation_projection_view(db, graph, groups, preview_limit=_LIVE_FLOW_LIMIT) if groups else ([], None)
 
-    most_recent = max(conversations, key=lambda group: (
-        group["latest_session_seq"] or -1,
-        nodes[group["latest_request_id"]]["completed_at"], group["latest_request_id"]),
-    ) if conversations else None
+    most_recent = conversations[0] if conversations else None
     context_change = most_recent["context_change"] if most_recent else None
 
     return {

@@ -2,7 +2,15 @@
 
 ## Status and relationship to earlier work
 
-**Plan only; not implemented.** This is a follow-up to
+**Implemented in `session_conversation_view` (2026-09-27).** The live database has not been
+upgraded; running `contextspy db-upgrade` on it still requires separate authorization. The
+v6 migration and projection were validated on an isolated SQLite backup: the observed session
+produced two rows, ending at #410 and #406, with display-only bridges #404→#407 and
+#294→#405 and no new lineage parent edges. Migration of that copy took about 6.6 seconds;
+the database file occupied about 6.6 GB, so the CLI's additional backup needs comparable
+free space. The conversation presentation was subsequently refined to keep all visible
+requests in one scrollable row per conversation, with each card marking its own parent
+evidence; diagnostic segment boundaries remain available in the segment index. This is a follow-up to
 [`session-conversations-and-lineage-views.md`](archive/session-conversations-and-lineage-views.md).
 That archived plan delivered the two Session Detail modes and a shared dashboard/session
 projection. This plan changes the **Python conversation classification and display ordering**;
@@ -123,11 +131,13 @@ and substantive context retention independently corroborate it. The product may 
   reserve a slot for an older primary. Session Detail can still page through every group.
   Keep stable opaque group keys, selected-group context state, and revision-bound cursors when
   rows reorder after a live append.
-- Within each group keep newest-first requests and backend-defined lineage segments. The main
-  row should show #410, #409, #408, #407, then #404, #403, #402 as its history is revealed,
-  with an explicit **same stream; direct predecessor not established** break between #407 and
-  #404. The second row begins #406, #405; if earlier B history is included, show a break before
-  it rather than implying #294→#405 is an exact edge. No edge may be drawn across either gap.
+- Within each group keep newest-first requests and backend-defined diagnostic lineage segments,
+  but render visible cards in one scrollable row per conversation. The main row should show
+  #410, #409, #408, #407, then #404, #403, #402 as its history is revealed; #407's card marks
+  **same stream; direct predecessor not established**. The second row begins #406, #405;
+  #405's card carries the same marker if older B history is included. Exact/inferred parent
+  types and unresolved parents likewise appear on individual cards. No edge may be drawn
+  across either gap.
 - Keep the selected group's context-size panel parent-relative: #410 compares to #409, #406
   to #405. At a gap root such as #407 or #405, show no parent delta unless the existing lineage
   analyzer independently resolves a parent. Diagnostic mode continues to show the raw exact

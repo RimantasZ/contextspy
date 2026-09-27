@@ -34,12 +34,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, Session, ToolStat
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA_VERSION_KEY = "schema_version"
 _PENDING_KEY = "pending_data_migrations"
@@ -656,9 +656,66 @@ def _migrate_to_v5(db: OrmSession) -> None:
     ))
 
 
+# ---------------------------------------------------------------------------
+# v6: durable, source-labelled conversation stream hints
+# ---------------------------------------------------------------------------
+
+def _migrate_to_v6(db: OrmSession) -> None:
+    """Backfill only the compact hint; never retain request bodies here.
+
+    Keyset batches bound Python memory even when a retained canonical request
+    is large. The migration runner owns the transaction and backup; on an
+    interrupted run it rolls back and this idempotent function can be retried.
+    """
+    from contextspy.analysis.stream_hint import extract_stream_hint
+
+    last_id = ""
+    while True:
+        rows = db.execute(
+            select(
+                Request.id, Request.agent, Request.endpoint,
+                Request.canonical_request_body, Request.raw_request_body,
+            )
+            .where(
+                Request.id > last_id,
+                Request.stream_hint_digest.is_(None),
+                (Request.canonical_request_body.isnot(None)
+                 | Request.raw_request_body.isnot(None)),
+            )
+            .order_by(Request.id)
+            .limit(10)
+        ).all()
+        if not rows:
+            break
+        for row in rows:
+            last_id = row.id
+            source = digest = None
+            for body in (row.canonical_request_body, row.raw_request_body):
+                if not body:
+                    continue
+                try:
+                    value = json.loads(body)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(value, dict):
+                    source, digest = extract_stream_hint(
+                        agent=row.agent, endpoint=row.endpoint, request=value,
+                    )
+                    if digest:
+                        break
+            if digest:
+                db.execute(
+                    update(Request).where(Request.id == row.id).values(
+                        stream_hint_source=source, stream_hint_digest=digest,
+                    )
+                )
+    db.flush()
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
     5: _migrate_to_v5,
+    6: _migrate_to_v6,
 }

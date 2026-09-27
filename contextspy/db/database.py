@@ -66,6 +66,8 @@ def _migrate(engine) -> None:
         ("requests", "invocation_outcome", "TEXT NOT NULL DEFAULT 'unknown'"),
         ("requests", "context_fidelity", "TEXT NOT NULL DEFAULT 'complete'"),
         ("requests", "context_notes", "TEXT"),
+        ("requests", "stream_hint_source", "TEXT"),
+        ("requests", "stream_hint_digest", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_columns:
