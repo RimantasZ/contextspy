@@ -86,4 +86,16 @@ describe('conversation-aware live session', () => {
     await userEvent.click(within(screen.getByRole('region', { name: 'Primary conversation' })).getByRole('button', { name: 'Show context' }))
     expect(screen.getByText('102')).toBeTruthy()
   })
+
+  it('puts the total-count More link after the visible request cards', () => {
+    const conversation = group('Conversation 1', 23, [card('r23', 23), card('r22', 22)])
+    conversation.request_count = 23
+    conversation.has_older_requests = true
+    show([conversation])
+    const row = within(screen.getByRole('region', { name: 'Conversation 1' })).getByRole('list')
+    expect(within(row).getAllByRole('listitem')).toHaveLength(2)
+    const more = within(row.parentElement as HTMLElement).getByRole('link', { name: 'More (23 total) →' })
+    expect(more.getAttribute('href')).toBe('/sessions/s1?view=lineage&conversation=Conversation%201')
+    expect(row.nextElementSibling?.contains(more)).toBe(true)
+  })
 })

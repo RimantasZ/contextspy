@@ -888,6 +888,7 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
 
 _LIVE_FLOW_LIMIT = 5
 _LIVE_ACTIVITY_LIMIT = 10
+_CONVERSATION_PREVIEW_LIMIT = 15
 _LIVE_GRAPH_CACHE_LIMIT = 4
 _live_graph_cache: OrderedDict[tuple, dict] = OrderedDict()
 _live_graph_cache_lock = Lock()
@@ -1042,7 +1043,8 @@ def _cursor_decode(cursor: str) -> tuple:
 
 
 def _conversation_projection_view(
-    db: OrmSession, graph: dict, groups: list[dict], *, preview_limit: int = 5,
+    db: OrmSession, graph: dict, groups: list[dict], *,
+    preview_limit: int = _CONVERSATION_PREVIEW_LIMIT,
     only_group: str | None = None, cursor: str | None = None,
     request_limit: int | None = None,
 ) -> tuple[list[dict], dict | None]:
@@ -1311,7 +1313,9 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
 
     graph = _live_lineage_graph(db, session.id, totals.n)
     groups = _conversation_order(graph)[:4]
-    conversations, _ = _conversation_projection_view(db, graph, groups, preview_limit=_LIVE_FLOW_LIMIT) if groups else ([], None)
+    conversations, _ = _conversation_projection_view(
+        db, graph, groups, preview_limit=_CONVERSATION_PREVIEW_LIMIT,
+    ) if groups else ([], None)
 
     most_recent = conversations[0] if conversations else None
     context_change = most_recent["context_change"] if most_recent else None

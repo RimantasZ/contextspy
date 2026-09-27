@@ -57,6 +57,7 @@ export default function SessionDetail() {
   const [bucket, setBucket] = useState<Bucket>('hour');
   const view: 'summary' | 'lineage' = searchParams.get('view') === 'lineage' ? 'lineage' : 'summary';
   const mode: 'conversations' | 'fragments' = searchParams.get('mode') === 'fragments' ? 'fragments' : 'conversations';
+  const conversationKey = searchParams.get('conversation');
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameTitleRef = useRef<HTMLInputElement>(null);
@@ -424,7 +425,7 @@ export default function SessionDetail() {
           ) : (
             conversations.isLoading ? <div className="py-12 text-center text-sm text-[var(--text-muted)]">Analyzing conversations…</div>
               : conversations.error || !conversations.data ? <div className="py-12 text-center text-sm text-[var(--danger)]">Conversations could not be loaded.</div>
-              : <SessionConversationSequences data={conversations.data} />
+              : <SessionConversationSequences data={conversations.data} initialGroupKey={conversationKey} />
           )}
         </div>
       ) : (

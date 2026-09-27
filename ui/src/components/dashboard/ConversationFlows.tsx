@@ -56,8 +56,16 @@ export function ConversationFlows({ data, selectedKey, onSelect }: {
               {selectedKey === group.key ? 'Showing context' : 'Show context'}
             </button>
           </div>
-          <RequestFlow items={group.recent_segments.flatMap((segment) => segment.request_flow)} bare />
-          {group.has_older_requests && <p className="mt-2 text-xs text-[var(--text-muted)]">Showing five newest requests in this sequence.</p>}
+          <RequestFlow
+            items={group.recent_segments.flatMap((segment) => segment.request_flow)}
+            bare
+            trailingAction={group.has_older_requests && data.active_session ? (
+              <Link className="app-button h-full w-full text-center" to={`/sessions/${data.active_session.id}?view=lineage&conversation=${encodeURIComponent(group.key)}`}>
+                More ({group.request_count} total) →
+              </Link>
+            ) : null}
+          />
+          {group.has_older_requests && <p className="mt-1 text-xs text-[var(--text-muted)]">Scroll right for older requests.</p>}
         </section>
       ))}
       {data.has_more_conversations && data.active_session && (

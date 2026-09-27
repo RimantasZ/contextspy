@@ -10,19 +10,23 @@ import { parseServerTimestamp } from './dashboard/dashboardFormat'
 
 type Loaded = { segments: SessionConversationPage['segments']; nextCursor: string | null; continuesEarlier: boolean }
 
-export function SessionConversationSequences({ data }: { data: SessionConversationsData }) {
+export function SessionConversationSequences({ data, initialGroupKey }: { data: SessionConversationsData; initialGroupKey?: string | null }) {
   const queryClient = useQueryClient()
   const [extraGroups, setExtraGroups] = useState<SessionConversation[]>([])
   const [nextGroupOffset, setNextGroupOffset] = useState<number | null>(data.next_group_offset)
   const [loaded, setLoaded] = useState<Record<string, Loaded>>({})
   const [jumped, setJumped] = useState<Record<string, SessionConversationPage | undefined>>({})
   const [indexLimit, setIndexLimit] = useState<Record<string, number>>({})
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [selectedKey, setSelectedKey] = useState<string | null>(initialGroupKey ?? null)
   const [loadingKey, setLoadingKey] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const [loadedRevision, setLoadedRevision] = useState(data.revision)
   const currentRevision = useRef(data.revision)
   currentRevision.current = data.revision
+
+  useEffect(() => {
+    if (initialGroupKey) setSelectedKey(initialGroupKey)
+  }, [initialGroupKey])
 
   useEffect(() => {
     if (loadedRevision !== data.revision) {
@@ -163,8 +167,16 @@ export function SessionConversationSequences({ data }: { data: SessionConversati
                   </div>
                 </details>
               )}
-              <RequestFlow items={segments.flatMap((segment) => segment.request_flow)} bare />
-              {nextCursor && <button type="button" className="app-button mt-3" disabled={!!loadingKey} onClick={() => loadEarlier(group)}>{loadingKey === group.key ? 'Loading…' : 'Show earlier requests'}</button>}
+              <RequestFlow
+                items={segments.flatMap((segment) => segment.request_flow)}
+                bare
+                trailingAction={nextCursor ? (
+                  <button type="button" className="app-button h-full w-full text-center" disabled={!!loadingKey} onClick={() => loadEarlier(group)}>
+                    {loadingKey === group.key ? 'Loading…' : `More (${group.request_count} total) →`}
+                  </button>
+                ) : null}
+              />
+              {nextCursor && <p className="mt-1 text-xs text-[var(--text-muted)]">Scroll right for older requests.</p>}
               {more?.continuesEarlier && <p className="mt-2 text-xs text-[var(--text-muted)]">This linked segment continues on the next page.</p>}
               {focused && <div className="mt-4 rounded border border-[var(--border)] p-3">
                 <div className="mb-2 flex justify-between gap-2"><h4 className="text-sm font-medium">Selected segment window</h4><button className="app-button min-h-7 py-1 text-xs" onClick={() => setJumped((previous) => ({ ...previous, [group.key]: undefined }))}>Close</button></div>

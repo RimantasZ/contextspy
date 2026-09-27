@@ -69,7 +69,10 @@ describe('session conversation sequences', () => {
       ...base, conversations: [group('second', 10)], next_group_offset: null,
     })
     show({ ...base, conversation_count: 2, next_group_offset: 1 })
-    await userEvent.click(screen.getByRole('button', { name: 'Show earlier requests' }))
+    const sequence = within(screen.getByRole('region', { name: 'primary' })).getByRole('list')
+    expect(within(sequence).getAllByRole('listitem')).toHaveLength(1)
+    expect(sequence.nextElementSibling?.textContent).toContain('More (2 total)')
+    await userEvent.click(screen.getByRole('button', { name: 'More (2 total) →' }))
     expect(await screen.findByRole('link', { name: /Request #8/ })).toBeTruthy()
     expect(earlier).toHaveBeenCalledWith('s1', 'primary', 'v1', 'cursor-1')
     await userEvent.click(screen.getByRole('button', { name: 'Show more conversations' }))
@@ -91,5 +94,11 @@ describe('session conversation sequences', () => {
     expect(await within(await screen.findByRole('region', { name: 'second' })).findByRole('button', { name: 'Showing context' })).toBeTruthy()
     expect(pinned).toHaveBeenCalledWith('s1', 0, 'v2', 'second')
     pinned.mockRestore()
+  })
+
+  it('selects the conversation linked from the dashboard', () => {
+    const other = group('second', 10)
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SessionConversationSequences data={{ ...base, conversation_count: 2, conversations: [base.conversations[0], other] }} initialGroupKey="second" /></MemoryRouter></QueryClientProvider>)
+    expect(within(screen.getByRole('region', { name: 'second' })).getByRole('button', { name: 'Showing context' })).toBeTruthy()
   })
 })

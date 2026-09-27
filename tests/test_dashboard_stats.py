@@ -118,6 +118,20 @@ def test_flow_limit_and_order_and_activity_limit_and_order(db):
     }
 
 
+def test_dashboard_conversation_preview_has_fifteen_cards_and_total_count(db):
+    _session(db)
+    for seq in range(1, 24):
+        _req(db, f"r{seq}", seq=seq, parent=f"r{seq - 1}" if seq > 1 else None)
+    dashboard = crud.get_dashboard_live(db)
+    group = dashboard["conversations"][0]
+    assert group["request_count"] == 23
+    assert group["has_older_requests"] is True
+    assert [card["session_seq"] for segment in group["recent_segments"]
+            for card in segment["request_flow"]] == list(range(23, 8, -1))
+    session = crud.get_session_conversations(db, "s1")
+    assert session["conversations"] == dashboard["conversations"]
+
+
 @pytest.mark.parametrize("prev,cur,delta", [(1000, 1600, 600), (1600, 1000, -600), (500, 500, 0)])
 def test_token_delta(db, prev, cur, delta):
     _session(db)
@@ -416,20 +430,20 @@ def test_session_conversations_page_all_requests_and_reject_stale_cursor(db):
     assert dashboard["conversations"] == []  # Ended sessions are not dashboard-live.
     assert first["conversation_count"] == 1
     assert first["conversations"][0]["request_count"] == 71
-    assert len(first["conversations"][0]["recent_segments"][0]["request_flow"]) == 5
+    assert len(first["conversations"][0]["recent_segments"][0]["request_flow"]) == 15
     group = first["conversations"][0]
     page = crud.get_session_conversation_requests(
         db, "s1", group["key"], revision=first["revision"],
         cursor=group["next_request_cursor"],
     )
     ids = [card["id"] for segment in page["segments"] for card in segment["request_flow"]]
-    assert ids == [f"r{seq}" for seq in range(66, 16, -1)]
+    assert ids == [f"r{seq}" for seq in range(56, 6, -1)]
     assert page["continues_earlier"] is True
     tail = crud.get_session_conversation_requests(
         db, "s1", group["key"], revision=first["revision"], cursor=page["next_cursor"],
     )
     assert [card["id"] for segment in tail["segments"] for card in segment["request_flow"]] == [
-        f"r{seq}" for seq in range(16, 0, -1)
+        f"r{seq}" for seq in range(6, 0, -1)
     ]
     assert tail["next_cursor"] is None
     _req(db, "r72", seq=72, parent="r71")
@@ -477,7 +491,7 @@ def test_stream_groups_match_dashboard_order_and_preserve_gap_provenance(db):
     assert session["primary_key"] == session["conversations"][0]["key"]
     main, other = session["conversations"]
     assert [card["id"] for segment in main["recent_segments"]
-            for card in segment["request_flow"]] == ["r410", "r409", "r408", "r407", "r404"]
+            for card in segment["request_flow"]] == ["r410", "r409", "r408", "r407", "r404", "r403", "r402"]
     assert next(segment for segment in main["recent_segments"]
                 if segment["first_request_id"] == "r407")["gap_reason"] == "stream_resume_unlinked"
     assert next(card for segment in main["recent_segments"] for card in segment["request_flow"]
@@ -493,12 +507,7 @@ def test_stream_groups_match_dashboard_order_and_preserve_gap_provenance(db):
                 if card["id"] == "r405")["lineage_relation"] == "context_affinity"
     assert other["context_change"]["parent_request_id"] == "r405"
     assert main["context_change"]["parent_request_id"] == "r409"
-    page = crud.get_session_conversation_requests(
-        db, "s1", main["key"], revision=session["revision"],
-        cursor=main["next_request_cursor"],
-    )
-    assert [card["id"] for segment in page["segments"]
-            for card in segment["request_flow"]] == ["r403", "r402"]
+    assert main["next_request_cursor"] is None
     graph, _ = crud._session_lineage_graph(db, "s1", len(rows))
     assert all(edge["target_request_id"] not in {"r405", "r407"} for edge in graph["edges"])
 
@@ -528,7 +537,7 @@ def test_session_projection_confirmed_fork_shared_history_and_external_parent(db
 
 def test_session_conversations_null_sequence_cursor(db):
     _session(db)
-    for index in range(8):
+    for index in range(18):
         _req(db, f"n{index}", seq=None, minutes=index)
     result = crud.get_session_conversations(db, "s1")
     group = result["conversations"][0]
@@ -591,7 +600,7 @@ def test_large_session_conversations_are_bounded_and_paged(db, size):
     assert result["lineage_fragment_count"] == size
     assert result["conversations"][0]["request_count"] == size
     assert sum(len(segment["request_flow"])
-               for segment in result["conversations"][0]["recent_segments"]) == 5
+               for segment in result["conversations"][0]["recent_segments"]) == 15
     assert len(statements) <= 9
 
 
@@ -623,7 +632,7 @@ def test_session_conversation_routes_return_revision_and_refresh_condition(tmp_p
         client = TestClient(app)
         with database.get_db() as session:
             _session(session, active=False)
-            for seq in range(1, 8):
+            for seq in range(1, 18):
                 _req(session, f"r{seq}", seq=seq, parent=f"r{seq - 1}" if seq > 1 else None)
         response = client.get("/api/sessions/s1/conversations")
         assert response.status_code == 200
@@ -637,7 +646,7 @@ def test_session_conversation_routes_return_revision_and_refresh_condition(tmp_p
         assert [card["id"] for segment in page.json()["segments"]
                 for card in segment["request_flow"]] == ["r2", "r1"]
         with database.get_db() as session:
-            _req(session, "r8", seq=8, parent="r7")
+            _req(session, "r18", seq=18, parent="r17")
         stale = client.get("/api/sessions/s1/conversations/requests", params={
             "group_key": group["key"], "revision": body["revision"],
         })

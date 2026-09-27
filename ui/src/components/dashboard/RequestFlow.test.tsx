@@ -38,6 +38,8 @@ describe('RequestFlow', () => {
     expect(cards[0].textContent).toContain('gpt-5.2 · 1.8s')
     expect(cards[0].textContent).toContain('87,412 in')
     expect(cards[0].textContent).toContain('612 out')
+    expect(cards[0].parentElement?.className).toContain('w-36')
+    expect(screen.getByRole('list').parentElement?.className).toContain('overflow-x-auto')
   })
 
   it('omits endpoint and HTTP method and links to the request', () => {

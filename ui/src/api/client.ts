@@ -385,7 +385,7 @@ export const sessionsApi = {
     return apiFetch<SessionConversationsData>(`/sessions/${id}/conversations?${q}`)
   },
   conversationRequests: (id: string, groupKey: string, revision: string, cursor?: string | null) => {
-    const q = new URLSearchParams({ group_key: groupKey, revision })
+    const q = new URLSearchParams({ group_key: groupKey, revision, limit: '15' })
     if (cursor) q.set('cursor', cursor)
     return apiFetch<SessionConversationPage>(`/sessions/${id}/conversations/requests?${q}`)
   },

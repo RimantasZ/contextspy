@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { Link } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import type { DashboardRequestFlowItem, DashboardConversation } from '../../api/client'
 import { formatRequestDuration } from '../../lib/format'
 import { parseServerTimestamp, requestLabel } from './dashboardFormat'
@@ -38,9 +39,9 @@ const lineageMarker: Record<NonNullable<FlowItem['lineage_relation']>, { icon: s
   external: { icon: '↗', label: 'Predecessor in another session', uncertain: false },
 }
 
-export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?: boolean }) {
+export function RequestFlow({ items, bare = false, trailingAction }: { items: FlowItem[]; bare?: boolean; trailingAction?: ReactNode }) {
   return (
-    <div className={bare ? '' : 'panel'}>
+    <div className={bare ? 'min-w-0' : 'panel min-w-0'}>
       {!bare && <div className="mb-3 flex items-baseline justify-between gap-2">
         <h2 id="request-flow-title" className="section-title">Request flow</h2>
         <span className="text-xs text-[var(--text-muted)]">Newest first</span>
@@ -48,12 +49,13 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
       {items.length === 0 ? (
         <p className="py-4 text-center text-sm text-[var(--text-muted)]">No requests captured in this session yet.</p>
       ) : (
-        <ol
-          aria-labelledby={bare ? undefined : 'request-flow-title'}
-          aria-description="Most recent requests in this session, ordered newest first"
-          className="flex gap-3 overflow-x-auto pb-1"
-        >
-          {items.map((item) => {
+        <div className="flex min-w-0 gap-2 overflow-x-auto overscroll-x-contain pb-2" role="group" tabIndex={0} aria-label="Request sequence; scroll horizontally for older requests">
+          <ol
+            aria-labelledby={bare ? undefined : 'request-flow-title'}
+            aria-description="Most recent requests in this session, ordered newest first"
+            className="flex w-max shrink-0 gap-2"
+          >
+            {items.map((item) => {
             const label = requestLabel(item.session_seq, item.id)
             const time = new Date(parseServerTimestamp(item.timestamp)).toLocaleTimeString()
             const status = statusOf(item)
@@ -62,19 +64,17 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
               .filter(Boolean)
               .join(' · ')
             return (
-              <li key={item.id} className="min-w-[9.5rem] flex-1">
+              <li key={item.id} className="w-36 shrink-0">
                 <Link
                   to={`/requests/${item.id}`}
                   aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${marker ? `, ${marker.label}` : ''}${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
-                  className="block h-full rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-3 transition-colors hover:bg-[var(--surface-hover)]"
+                  className="block h-full rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-2.5 transition-colors hover:bg-[var(--surface-hover)]"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold text-[var(--text)]">{label}</span>
-                    <span className="flex items-center gap-1">
-                      <span className="text-xs tabular-nums text-[var(--text-muted)]">{time}</span>
-                      {marker && <span aria-hidden="true" title={marker.label} className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-semibold ${marker.uncertain ? 'border-[var(--warning)] text-[var(--warning)]' : 'border-[var(--border)] text-[var(--accent-soft-text)]'}`}>{marker.icon}</span>}
-                    </span>
+                    {marker && <span aria-hidden="true" title={marker.label} className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-semibold ${marker.uncertain ? 'border-[var(--warning)] text-[var(--warning)]' : 'border-[var(--border)] text-[var(--accent-soft-text)]'}`}>{marker.icon}</span>}
                   </div>
+                  <span className="mt-0.5 block text-xs tabular-nums text-[var(--text-muted)]">{time}</span>
                   {(meta || status) && (
                     <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
                       {meta && <span className="truncate" title={meta}>{meta}</span>}
@@ -101,8 +101,10 @@ export function RequestFlow({ items, bare = false }: { items: FlowItem[]; bare?:
                 </Link>
               </li>
             )
-          })}
-        </ol>
+            })}
+          </ol>
+          {trailingAction && <div className="w-32 shrink-0">{trailingAction}</div>}
+        </div>
       )}
     </div>
   )
