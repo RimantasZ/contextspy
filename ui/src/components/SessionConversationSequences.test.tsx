@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -40,7 +40,8 @@ describe('session conversation sequences', () => {
     show(base)
     expect(screen.getByText('1 conversation sequence · 28 diagnostic paths')).toBeTruthy()
     expect(within(screen.getByRole('region', { name: 'primary' })).getAllByRole('list')).toHaveLength(1)
-    expect(screen.getByTitle('No predecessor established')).toBeTruthy()
+    fireEvent.mouseEnter(screen.getByText('○'))
+    expect(screen.getByRole('tooltip').textContent).toContain('No direct predecessor was established')
     expect(screen.getByRole('link', { name: /stream membership uncertain/ }).getAttribute('href')).toBe('/requests/r9')
     expect(screen.queryByText('Conversation 2')).toBeNull()
   })

@@ -1,0 +1,209 @@
+# How ContextSpy tracks requests and conversations
+
+ContextSpy records the LLM calls it can observe, then uses provider links and captured context to
+show how those calls relate. The key distinction is that **a conversation row is not necessarily
+one unbroken chain of requests**. ContextSpy can have good evidence that two runs belong to the
+same conversation without knowing which request directly preceded the next one.
+
+This guide describes the current behavior of the Overview dashboard and Session Detail. It
+supersedes the original dashboard design's assumption that consecutive requests in a session
+should be compared as parent and child.
+
+## Terms
+
+| Term | Meaning |
+| --- | --- |
+| **Request** or **invocation** | One observable call to an LLM provider and its response or failure. One user prompt or agent task can produce several requests. Streaming chunks and WebSocket frames do not each become requests. |
+| **Provider** | The LLM API/service that handles a request, such as OpenAI or Anthropic. This is different from the **agent**, the client application such as Codex or Claude Code. An `agent: codex` label does not identify a particular Codex task, process, or subagent. |
+| **Session** | A named recording time window. Requests starting while a session is active belong to it; requests captured without an active session are ungrouped. A session can contain several independent or forked conversations. Only one session is active at a time. |
+| **Session request number** (`#404`, for example) | A stable, session-local recording label assigned when the request row is saved. It is not a turn number, conversation position, or parent link. Concurrent requests can finish in a different order from when they started. |
+| **Parent / predecessor** | The earlier request whose response or context is directly continued by a later request. A parent need not have the immediately preceding session request number; an explicitly referenced parent may even be in another session. |
+| **Lineage** | The graph of accepted direct parent-to-child continuation links. An **exact** link comes from a provider-issued predecessor response ID; an **inferred** link is ContextSpy's conservative conclusion from captured context. |
+| **Lineage segment** | A run of requests joined by accepted lineage links. A gap between segments means direct continuity was not established. |
+| **Diagnostic path** | One root-to-leaf route through the lineage graph. Paths can share ancestors, and several paths or disconnected segments can belong to one displayed conversation. A path count is not a chat or agent count. |
+| **Conversation** or **request stream** | A backend display group. A nonempty session has one fallback row; additional rows require evidence of a confirmed fork, independent parallel activity, or corroborated stream affinity. A row can contain more than one lineage segment and does **not** prove one unbroken chat. |
+| **Fork** | Two or more children of the same parent. A structural branch in the graph is not automatically a confirmed split into separate conversations. |
+| **Capture** | The act of observing and storing provider traffic. It is not another grouping level above or below session; older API or diagnostic wording may use “capture” for the recorded session. |
+
+## From traffic to a request
+
+ContextSpy observes provider invocations through its proxy. A buffered HTTP exchange, a completed
+SSE/NDJSON stream, or a supported WebSocket start-to-terminal lifecycle produces one request row.
+The request keeps its provider, agent label, model, observed start when available, completion
+time, outcome, token counts, provider response/predecessor IDs when supplied, and analyzed input
+and output blocks. Failed or incomplete calls can still be recorded. See [REST, streaming, and
+WebSocket request handling](transport-normalization.md) for the exact invocation boundaries.
+
+Session membership is fixed when an invocation starts, even if its response arrives after the
+session ends. Session request numbers are assigned when rows are saved. Neither membership nor
+adjacent numbers establish a conversation or a parent.
+
+For a provider-managed request that names a previous response, ContextSpy can expand the visible
+canonical input from that **explicit** predecessor's input and output plus the current input.
+An inferred display-lineage link never authorizes reconstruction of missing provider state.
+When explicit state is missing or opaque, ContextSpy reports partial or opaque context instead
+of inventing content.
+
+## How a direct parent is established
+
+ContextSpy analyzes lineage in the Python backend from stored request and block metadata,
+separately from session recording order. The UI displays those decisions; it does not infer
+parents or conversation membership itself.
+
+1. **Use an explicit provider link first.** If a request contains a predecessor response ID,
+   ContextSpy matches it to a captured response from the same provider. That produces an
+   **exact** parent edge, including when the parent was captured in another session. If the
+   referenced response cannot be linked, the state is **provider predecessor missing**; the
+   analyzer does not replace that explicit reference with a guessed parent. A link that would
+   create a cycle is also rejected.
+2. **Otherwise, look for retained context.** For requests without an explicit predecessor ID,
+   ContextSpy considers earlier captured requests with matching meaningful block fingerprints.
+   A fingerprint includes the block type, content hash, and relevant tool name/call ID. Ordered
+   matches distinguish input retained from a candidate parent's context and parent output that
+   appears in the child's input. Repeated configuration such as system prompts and tool
+   definitions carries little weight; transcript and tool-call evidence matter more.
+3. **Accept only a clear winner.** The heuristic measures how much of the candidate parent's
+   input was retained, how much of the child's input it explains, and—when available—how much
+   parent output was carried forward. Its score must be at least **0.80** and exceed the next
+   candidate by at least **0.15** to become an **inferred** direct edge. Candidates scoring at
+   least **0.45** but lacking a clear winner leave the parent **ambiguous**. The displayed
+   inferred percentage is this heuristic score, **not** a calibrated probability of correctness.
+
+For transparency, the current score weights retained input / child coverage / promoted output
+at 35% / 45% / 20% when parent output is available, or 45% / 55% for the first two signals
+otherwise. Common blocks are downweighted, configuration blocks are heavily discounted, and
+matching tool-call IDs are weighted more strongly. Boilerplate-only matches cannot reach the
+acceptance threshold. Partial or opaque child context reduces the score. Candidate search is
+bounded to 64 plausible earlier requests for performance, so this is evidence from what
+ContextSpy captured, not omniscient reconstruction of the agent's internal state.
+
+If no usable candidate exists, ContextSpy reports **no predecessor established** (or
+**predecessor context unavailable** when block evidence is absent). It never creates a direct
+edge merely because requests have consecutive numbers, similar timestamps, the same model, or
+the same generic agent label.
+
+## How requests become conversation rows
+
+First, accepted exact and inferred edges form lineage segments and diagnostic paths. ContextSpy
+then computes a separate, conservative **conversation projection** for the dashboard and
+Session Detail. These groups are derived when the data is read, not stored as permanent
+conversation IDs; new requests or newly available evidence can change a grouping or row order.
+
+The projection follows these rules:
+
+- A nonempty session has at least one display row. With no positive evidence for a separate
+  stream, this is a **session activity** fallback containing requests and visibly marked gaps;
+  it does not claim that all of them share one direct lineage. A gap, time delay, model change,
+  or generic agent label alone does not create another row.
+- A graph branch becomes a **confirmed conversation fork** only when both child branches have
+  sustained accepted continuation with exact diverging edges, or when their observed calls
+  overlap and carry distinct meaningful context. A one-off replay or an uncertain structural
+  branch stays diagnostic, not a new conversation.
+- Two disconnected chains can establish **parallel independent conversations** when each has
+  at least three requests, their *observed* starts show sustained A–B–A–B interleaving, they
+  share neither ancestry nor meaningful non-configuration fingerprints, and no plausible
+  ambiguous cross-parent remains. Estimated start times and two isolated calls alone are not
+  enough.
+- For Codex requests to a Responses endpoint, a valid `prompt_cache_key` can be a
+  **stream-affinity hint**. ContextSpy stores only its digest and source, not the raw key as a
+  separate field. The raw/canonical request body can still contain the key until normal payload
+  retention purges it. A matching hint **plus substantial shared non-configuration context** can
+  place disconnected segments in the same display row. A distinct hint can support another
+  row only when an independent accepted chain and dissimilar substantive context corroborate
+  it. An exact parent edge overrides a changed hint. [OpenAI documents the key for cache
+  routing and accounting](https://developers.openai.com/api/docs/guides/prompt-caching);
+  ContextSpy therefore treats it as a hint, **not** a documented conversation, Codex process,
+  or subagent ID.
+
+The current affinity check requires at least three shared meaningful fingerprints, at least
+70% overlap by both distinct fingerprints and block-token weight relative to the smaller
+context, and at least 128 shared block-token weight. This strict check deliberately excludes
+shared boilerplate. A display-only affinity bridge **never** becomes a parent edge or a
+parent-relative token comparison. Requests that cannot be assigned confidently remain marked as
+uncertain within the primary/default row; they do not automatically create another
+conversation.
+
+For example, if `#404` ends one exact chain, `#407–#410` continue with strong affinity to it
+but no recorded direct parent for `#407`, and `#405–#406` form a separate supported stream, the
+rows can look like this:
+
+```text
+Latest conversation:  #410  #409  #408  #407⋯  #404  #403  #402 …
+Other conversation:   #406  #405⋯  …
+```
+
+The `⋯` on `#407` means “same stream, direct predecessor not established”; it does **not** draw
+an edge from `#404` to `#407`. Rows are ordered by their latest completed request, so the row
+ending at `#410` is above the one ending at `#406`. Cards within a row are shown newest-first.
+Confirmed forks can show the same earlier request in multiple rows as **shared history**;
+session totals still count that stored request only once. Do not add row request counts to
+calculate session totals.
+
+## Reading the screens
+
+- **Overview → Active session:** shows only the currently active session, up to four recently
+  active conversation rows, and up to 15 recent request cards per row. Each row has its own
+  “More” link to Session Detail. The session activity chart shows recent traffic for the
+  *whole session*, not one conversation. The separate global **Recent requests** table is a
+  chronological audit list and is not grouped by conversation.
+- **Session Detail → Conversations → Conversation sequences:** uses the same backend grouping
+  for active or ended sessions. It initially shows the most recent rows and cards, then lets
+  you load more conversations or older cards. The “More (N total)” count is the represented
+  request count for that row. The segment index helps find lineage breaks in a long row.
+- **Session Detail → Conversations → Lineage diagnostics:** shows the accepted exact and
+  inferred parent edges, uncertain candidates, missing/external parents, structural branches,
+  and root-to-leaf diagnostic paths. This is the place to inspect *why* a row has gaps. A
+  diagnostic path is not automatically a separate conversation. A “graph branch” badge means
+  only a structural split; a “confirmed fork” badge means the stricter conversation rule passed.
+  Selecting an edge shows which input blocks persisted, which parent output was carried into
+  child input, and which blocks were added, removed, or replaced relative to that parent.
+- **Context size:** selecting a row compares its latest request with its **resolved direct
+  parent**, not the preceding session request number or the nearest card in the row. If the
+  parent is missing or uncertain, there is no token delta. An exact parent from another session
+  may be used for comparison but is excluded from this session's cards and totals. The input
+  token delta is a difference between locally analyzed input sizes; “Block changes” are net
+  counts of input block types, not a proof that content was added or removed. A zero block-count
+  delta can still hide replaced content. Block comparison is marked partial when either context
+  is partial and unavailable when either is opaque; a parent-relative token delta may still be
+  shown when block comparison is unavailable.
+
+The `?view=lineage` URL opens **Conversation sequences** for compatibility with existing links;
+`?view=lineage&mode=fragments` opens **Lineage diagnostics**.
+
+## Request-card corner icons
+
+Hover over a request card's top-right icon for its full explanation. The text is also included
+in the card's accessible label. The same glyph may represent two related states, so read the
+tooltip rather than interpreting the shape alone.
+
+| Icon | Tooltip heading and explanation | What it means |
+| --- | --- | --- |
+| ↳ | **Exact predecessor.** The provider explicitly linked this request to its predecessor. | Confirmed direct provider link. |
+| ≈ | **Inferred predecessor.** ContextSpy inferred a direct predecessor from the captured context. | Accepted heuristic parent link, not provider-confirmed. |
+| ≈ | **Suggested predecessor.** A possible predecessor was found, but the link is not confirmed. | Candidate only; no accepted direct edge. The UI supports this label, but the current analyzer does not emit it; weaker candidates are reported as ambiguous. |
+| ⋯ | **Same stream; direct predecessor not established.** Shared context places this request in the same conversation, but its direct predecessor is unknown. | Display membership across a lineage gap, not a parent link. |
+| ? | **Direct predecessor ambiguous.** More than one request could be the direct predecessor. | Plausible candidates, no accepted parent. |
+| ! | **Provider predecessor missing.** The provider named a predecessor that ContextSpy could not link in this session. | Explicit reference exists, but no accepted link. |
+| ? | **Predecessor context unavailable.** There is not enough captured context to identify a predecessor. | Insufficient block evidence. |
+| ○ | **No predecessor established.** No direct predecessor was established for this request. | Start of a diagnostic segment; not necessarily the first turn of a real-world chat. |
+| ↗ | **Predecessor in another session.** This request follows a predecessor captured in another session. | Exact cross-session parent; only the child belongs to this session's counts. |
+
+## What not to conclude
+
+Conversation rows express **supported streams, not verified agent identities**. ContextSpy
+currently does not persist a reliable Codex task or subagent ID. One fallback row may hide
+several unproven independent activities; multiple diagnostic paths may still be one ongoing
+conversation. It also does not currently establish delegation or contribution links between
+agent tasks. An inferred score is evidence strength, not certainty. Missing or opaque context,
+purged raw request bodies, and older captures without a recoverable cache hint can make grouping
+more conservative. Retained block fingerprints may still support lineage after readable block
+content has been purged.
+
+When upgrading an existing database, `contextspy db-upgrade` attempts to backfill supported
+stream-hint digests from request bodies that are still retained. It cannot recover a hint from a
+body already purged by retention. Missing historical hints leave the analyzer with the other
+lineage and context evidence; they do not justify guessing a separate conversation.
+
+For details on session commands, see the [CLI reference](cli.md#session-commands). For how visible
+provider context and token counts are reconstructed, see [REST, streaming, and WebSocket request
+handling](transport-normalization.md).

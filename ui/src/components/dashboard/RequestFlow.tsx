@@ -13,6 +13,8 @@
 // limitations under the License.
 import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { DashboardRequestFlowItem, DashboardConversation } from '../../api/client'
 import { formatRequestDuration } from '../../lib/format'
 import { parseServerTimestamp, requestLabel } from './dashboardFormat'
@@ -27,16 +29,66 @@ function statusOf(item: DashboardRequestFlowItem): { text: string; className: st
 
 type FlowItem = DashboardRequestFlowItem & Partial<DashboardConversation['recent_segments'][number]['request_flow'][number]>
 
-const lineageMarker: Record<NonNullable<FlowItem['lineage_relation']>, { icon: string; label: string; uncertain: boolean }> = {
-  exact: { icon: '↳', label: 'Exact predecessor', uncertain: false },
-  inferred: { icon: '≈', label: 'Inferred predecessor', uncertain: false },
-  suggested: { icon: '≈', label: 'Suggested predecessor', uncertain: true },
-  context_affinity: { icon: '⋯', label: 'Same stream; direct predecessor not established', uncertain: true },
-  ambiguous: { icon: '?', label: 'Direct predecessor ambiguous', uncertain: true },
-  unresolved_exact: { icon: '!', label: 'Provider predecessor missing', uncertain: true },
-  unavailable: { icon: '?', label: 'Predecessor context unavailable', uncertain: true },
-  root: { icon: '○', label: 'No predecessor established', uncertain: true },
-  external: { icon: '↗', label: 'Predecessor in another session', uncertain: false },
+type LineageMarker = { icon: string; label: string; description: string; uncertain: boolean }
+
+const lineageMarker: Record<NonNullable<FlowItem['lineage_relation']>, LineageMarker> = {
+  exact: { icon: '↳', label: 'Exact predecessor', description: 'The provider explicitly linked this request to its predecessor.', uncertain: false },
+  inferred: { icon: '≈', label: 'Inferred predecessor', description: 'ContextSpy inferred a direct predecessor from the captured context.', uncertain: false },
+  suggested: { icon: '≈', label: 'Suggested predecessor', description: 'A possible predecessor was found, but the link is not confirmed.', uncertain: true },
+  context_affinity: { icon: '⋯', label: 'Same stream; direct predecessor not established', description: 'Shared context places this request in the same conversation, but its direct predecessor is unknown.', uncertain: true },
+  ambiguous: { icon: '?', label: 'Direct predecessor ambiguous', description: 'More than one request could be the direct predecessor.', uncertain: true },
+  unresolved_exact: { icon: '!', label: 'Provider predecessor missing', description: 'The provider named a predecessor that ContextSpy could not link in this session.', uncertain: true },
+  unavailable: { icon: '?', label: 'Predecessor context unavailable', description: 'There is not enough captured context to identify a predecessor.', uncertain: true },
+  root: { icon: '○', label: 'No predecessor established', description: 'No direct predecessor was established for this request.', uncertain: true },
+  external: { icon: '↗', label: 'Predecessor in another session', description: 'This request follows a predecessor captured in another session.', uncertain: false },
+}
+
+function LineageIcon({ marker }: { marker: LineageMarker }) {
+  const iconRef = useRef<HTMLSpanElement>(null)
+  const [tooltip, setTooltip] = useState<{ left: number; top: number; above: boolean } | null>(null)
+
+  function showTooltip() {
+    const rect = iconRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const above = window.innerHeight - rect.bottom < 120 && rect.top > 120
+    setTooltip({
+      left: Math.max(8, Math.min(rect.right - 240, window.innerWidth - 248)),
+      top: above ? rect.top - 8 : rect.bottom + 8,
+      above,
+    })
+  }
+
+  useEffect(() => {
+    if (!tooltip) return
+    const hideTooltip = () => setTooltip(null)
+    window.addEventListener('scroll', hideTooltip, true)
+    window.addEventListener('resize', hideTooltip)
+    return () => {
+      window.removeEventListener('scroll', hideTooltip, true)
+      window.removeEventListener('resize', hideTooltip)
+    }
+  }, [tooltip])
+
+  return <>
+    <span
+      ref={iconRef}
+      aria-hidden="true"
+      onMouseEnter={showTooltip}
+      onMouseLeave={() => setTooltip(null)}
+      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-semibold ${marker.uncertain ? 'border-[var(--warning)] text-[var(--warning)]' : 'border-[var(--border)] text-[var(--accent-soft-text)]'}`}
+    >{marker.icon}</span>
+    {tooltip && createPortal(
+      <div
+        role="tooltip"
+        className="pointer-events-none fixed z-[100] w-60 max-w-[calc(100vw-1rem)] rounded-md border border-[var(--border)] bg-[var(--chart-tooltip)] p-2.5 text-xs text-[var(--chart-tooltip-text)] shadow-lg"
+        style={{ left: tooltip.left, top: tooltip.top, transform: tooltip.above ? 'translateY(-100%)' : undefined }}
+      >
+        <span className="font-semibold">{marker.label}</span>
+        <span className="mt-1 block leading-relaxed">{marker.description}</span>
+      </div>,
+      document.body,
+    )}
+  </>
 }
 
 export function RequestFlow({ items, bare = false, trailingAction }: { items: FlowItem[]; bare?: boolean; trailingAction?: ReactNode }) {
@@ -67,12 +119,12 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
               <li key={item.id} className="w-36 shrink-0">
                 <Link
                   to={`/requests/${item.id}`}
-                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${marker ? `, ${marker.label}` : ''}${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
+                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${marker ? `, ${marker.label}: ${marker.description}` : ''}${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
                   className="block h-full rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-2.5 transition-colors hover:bg-[var(--surface-hover)]"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold text-[var(--text)]">{label}</span>
-                    {marker && <span aria-hidden="true" title={marker.label} className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-semibold ${marker.uncertain ? 'border-[var(--warning)] text-[var(--warning)]' : 'border-[var(--border)] text-[var(--accent-soft-text)]'}`}>{marker.icon}</span>}
+                    {marker && <LineageIcon marker={marker} />}
                   </div>
                   <span className="mt-0.5 block text-xs tabular-nums text-[var(--text-muted)]">{time}</span>
                   {(meta || status) && (

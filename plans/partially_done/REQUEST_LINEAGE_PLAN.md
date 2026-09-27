@@ -2,19 +2,24 @@
 
 ## Status and relationship to existing plans
 
-The first-release vertical slice (phases 1–6) is implemented on the
-`refactor-request-sequence-tracking` branch. It includes capture-safe numbering and timing,
-provider-exact and conservative inferred continuation edges, parent-relative context diffs, the
-capture lineage API, and the graph/timeline UI. Phases 7–9 remain follow-up work: orchestration
-overlays require observable agent/trace metadata, and inferred relations intentionally remain
-read-time results until real-capture accuracy and performance have been validated.
+**Status on `main`: partially implemented.** The first-release lineage workflow is available,
+but several requirements in phases 3, 4, and 6 and the follow-up work remain open.
+
+| Status | Phases | Remaining work |
+| --- | --- | --- |
+| Implemented | 1, 2, 5 | Exact graph contract, capture timing and numbering, lineage API and initial navigation. |
+| Partially implemented | 3, 4, 6, 9 | Ancestor-path introduction fields, real-capture inference calibration, graph filters/navigation, and session-analysis/documentation reconciliation. |
+| Pending | 7, 8 | Orchestration overlays and persisted relation caching/backfill. |
+
+Inferred relations remain read-time results until accuracy and performance have been validated on
+real captures. The phase notes below identify the specific unfinished requirements.
 
 Terminology update: the product calls the named recording window a **session** and a single
 linked path a **conversation**. The older uses of “capture” below refer to a session; `capture`
 in the lineage API is retained as a response property. Conversations are derived at read time,
 and forked conversations can share earlier requests.
 
-It extends, and partially corrects, `SESSION_ANALYSIS_PLAN.md`:
+It extends, and partially corrects, [SESSION_ANALYSIS_PLAN.md](../postponed/SESSION_ANALYSIS_PLAN.md):
 
 - the current session-analysis plan assumes requests form one sequence;
 - this plan treats a capture as a directed acyclic graph of invocations;
@@ -22,7 +27,8 @@ It extends, and partially corrects, `SESSION_ANALYSIS_PLAN.md`:
   in the capture;
 - context continuation and agent orchestration are represented as different relationships.
 
-It preserves the primary contract from `WEBSOCKET_INVOCATION_NORMALIZATION_PLAN.md`:
+It preserves the primary contract from
+[WEBSOCKET_INVOCATION_NORMALIZATION_PLAN.md](../archive/WEBSOCKET_INVOCATION_NORMALIZATION_PLAN.md):
 
 - one `Request` row is one provider invocation attempt;
 - provider-declared predecessor IDs are authoritative;
@@ -842,7 +848,7 @@ lineage edge.
 
 ## Implementation phases
 
-### Phase 1 - Establish terminology and exact graph contract
+### Phase 1 - Establish terminology and exact graph contract — Implemented
 
 - Document Capture, Invocation, Context lineage, Branch, Conversation, and Agent trace.
 - Add provider-ID-based parent/child resolution in a pure backend lineage module.
@@ -853,7 +859,7 @@ lineage edge.
 Acceptance: an OpenAI Responses capture renders the correct exact chain/fork topology without using
 timestamps, connection identity, or adjacency.
 
-### Phase 2 - Correct capture timing and numbering semantics
+### Phase 2 - Correct capture timing and numbering semantics — Implemented
 
 - Capture `started_at` and capture membership at invocation start.
 - Keep `timestamp` as the compatibility completion timestamp.
@@ -864,7 +870,11 @@ timestamps, connection identity, or adjacency.
 Acceptance: parallel requests can be placed on a real timeline, retain unique stable capture labels,
 and are assigned to the capture in which they began.
 
-### Phase 3 - Build the parent-relative context diff engine
+### Phase 3 - Build the parent-relative context diff engine — Partially implemented
+
+The occurrence-aware diff, summaries, and edge-detail API are implemented. Explicit
+`first_seen_on_ancestor_path` and related branch-aware introduction fields remain pending; the
+existing `added` mapping is relative to one parent only.
 
 - Implement semantic block fingerprints and duplicate occurrences.
 - Partition configuration, transcript, current input, and output.
@@ -875,7 +885,10 @@ and are assigned to the capture in which they began.
 Acceptance: known parent/child fixtures produce exact occurrence mappings and token totals even after
 block content text is purged.
 
-### Phase 4 - Add conservative parent inference
+### Phase 4 - Add conservative parent inference — Partially implemented
+
+Conservative read-time inference and uncertainty states are implemented. Threshold calibration
+against labelled real captures, including measured accuracy and performance, remains pending.
 
 - Build in-memory rare-hash/tool-ID indexes for one capture.
 - Implement document-frequency weighting, ordered comparison, scoring, margins, and reason codes.
@@ -886,7 +899,7 @@ block content text is purged.
 Acceptance: interleaved branches link correctly, unrelated agents sharing boilerplate do not, and
 ambiguous cases remain visibly unresolved.
 
-### Phase 5 - Add the capture lineage API and initial UI
+### Phase 5 - Add the capture lineage API and initial UI — Implemented
 
 - Add the bulk `/sessions/{id}/lineage` endpoint.
 - Add frontend types/hooks and live invalidation.
@@ -897,7 +910,10 @@ ambiguous cases remain visibly unresolved.
 Acceptance: users can navigate exact/inferred branches and inspect what changed without a graphical
 canvas.
 
-### Phase 6 - Add the visual graph/timeline
+### Phase 6 - Add the visual graph/timeline — Partially implemented
+
+The graph, inspectors, keyboard access, path search, and windowed navigation are implemented.
+The planned agent/model/certainty/root filters and pan/zoom behavior remain pending.
 
 - Add the timeline/lineage switch and branch-lane layout.
 - Render duration overlap, edge certainty, forks, unresolved parents, and delta badges.
@@ -907,7 +923,7 @@ canvas.
 Acceptance: the visualization makes parallelism, forks, and context growth understandable while its
 accessible tree reports the same information.
 
-### Phase 7 - Add orchestration overlays
+### Phase 7 - Add orchestration overlays — Pending
 
 - Introduce registered normalized orchestration-hint extractors.
 - Store observable conversation, trace, and agent-run identifiers.
@@ -918,7 +934,7 @@ accessible tree reports the same information.
 Acceptance: a verified subagent capture distinguishes context continuation from delegation and later
 result contribution.
 
-### Phase 8 - Persist/cache validated relations and backfill
+### Phase 8 - Persist/cache validated relations and backfill — Pending
 
 - Add `request_relations`, indexes, constraints, and algorithm versioning.
 - Cache exact/inferred graph edges and delta summaries.
@@ -929,9 +945,13 @@ result contribution.
 Acceptance: large historical captures load predictably, exact evidence is immutable, and inferred
 results can be upgraded without stale topology.
 
-### Phase 9 - Reconcile existing session analysis work
+### Phase 9 - Reconcile existing session analysis work — Partially implemented
 
-- Update `SESSION_ANALYSIS_PLAN.md` so its default request tree follows graph topology.
+The companion plan and parts of the product documentation already acknowledge graph-aware
+lineage. The graph-based request tree, branch-aware introduction default, block-to-JSON navigation,
+and remaining documentation and help updates are pending.
+
+- Update [SESSION_ANALYSIS_PLAN.md](../postponed/SESSION_ANALYSIS_PLAN.md) so its default request tree follows graph topology.
 - Replace capture-global introduction as the default with `introduced_relative_to_parent`.
 - Retain the planned block-to-canonical-JSON navigation as a complementary edge/node inspector.
 - Update `SPEC.md`, development documentation, CLI help, FAQ, screenshots, and changelog.

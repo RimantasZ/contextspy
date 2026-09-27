@@ -110,17 +110,21 @@ event and closes it on a terminal event. Deltas and utility frames never become 
 Provider normalization then produces a standalone `CanonicalInvocation`. For Responses API
 traffic, an explicit `previous_response_id` is resolved to a persisted predecessor and the visible
 input is expanded as predecessor input + predecessor output + current input. This applies to REST
-as well as WebSocket traffic. Only explicit provider IDs establish lineage.
+as well as WebSocket traffic. Only explicit provider IDs authorize this provider-state expansion;
+the display graph may infer a parent from captured blocks without expanding provider state.
 
 The session lineage API also computes conservative display conversations. Its raw root-to-leaf
 paths are diagnostic fragments: absent or ambiguous parent IDs do not split a session into chats.
 Separate rows need evidence of a sustained fork with exact diverging predecessor edges, an
 overlapping fork with distinct meaningful context, or two disjoint, observed, interleaved chains
-with distinct meaningful context. The persisted `agent` field identifies a product (for example,
+with distinct meaningful context. For supported Codex Responses traffic, a source-labelled digest
+of a cache hint may also support grouping when substantive context corroborates it; this is not
+a provider conversation ID. The persisted `agent` field identifies a product (for example,
 `codex`), not a task or subagent; captured requests currently have no reliable dedicated task or
-thread identifier. No extra schema field is inferred from opaque payloads. The live dashboard
-reads totals, lineage, cards, and parent comparisons from one SQLite snapshot, reusing a bounded
-analysis cache until the request set changes.
+thread identifier. The live dashboard reads totals, lineage, cards, and parent comparisons from
+one SQLite snapshot, reusing a bounded analysis cache until the request set changes.
+See [Request tracking and conversations](request-tracking-and-conversations.md) for the
+user-facing interpretation of these groups and their uncertainty markers.
 
 `canonical_request_body` and `canonical_response_body` store the exact JSON documents passed to
 the provider adapter. Blocks and category/token columns are derived indexes over those documents;
