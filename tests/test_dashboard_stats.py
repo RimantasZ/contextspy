@@ -259,9 +259,10 @@ def test_latest_compares_with_resolved_parent_not_adjacent_request(db):
     out = crud.get_dashboard_live(db)
     assert out["context_change"]["parent_request_id"] == "parent"
     assert out["context_change"]["token_delta"] == 80
-    assert out["conversation_count"] == 1
+    assert out["conversation_count"] == 0
+    assert out["auxiliary_request_count"] == 12
     assert out["lineage_fragment_count"] == 11
-    assert out["conversations"][0]["unlinked_segment_count"] == 10
+    assert out["auxiliary"]["unlinked_segment_count"] == 10
 
 
 def test_sustained_fork_dashboard_has_shared_history_and_parent_comparison(db):
@@ -345,7 +346,7 @@ def test_external_exact_parent_is_compared_but_not_counted(db):
     assert out["context_change"]["parent_request_id"] == "external"
     assert out["context_change"]["external_parent"] is True
     assert out["context_change"]["token_delta"] == 50
-    assert [card["id"] for group in out["conversations"]
+    assert [card["id"] for group in [out["auxiliary"]]
             for segment in group["recent_segments"] for card in segment["request_flow"]] == ["child"]
 
 
@@ -378,7 +379,7 @@ def test_dashboard_pins_one_read_snapshot_during_append(tmp_path, monkeypatch):
     assert inserted
     assert out["active_session"]["request_count"] == 1
     assert out["request_flow"][0]["id"] == "before"
-    assert out["conversations"][0]["latest_request_id"] == "before"
+    assert out["auxiliary"]["latest_request_id"] == "before"
     with OrmSession(engine) as reader:
         assert crud.get_dashboard_live(reader)["active_session"]["request_count"] == 2
 
@@ -540,12 +541,41 @@ def test_session_conversations_null_sequence_cursor(db):
     for index in range(18):
         _req(db, f"n{index}", seq=None, minutes=index)
     result = crud.get_session_conversations(db, "s1")
-    group = result["conversations"][0]
+    group = result["auxiliary"]
     page = crud.get_session_conversation_requests(
         db, "s1", group["key"], revision=result["revision"],
         cursor=group["next_request_cursor"], limit=2,
     )
     assert [card["id"] for segment in page["segments"] for card in segment["request_flow"]] == ["n2", "n1"]
+
+
+def test_auxiliary_block_matches_dashboard_and_promotes_on_third_link(db):
+    _session(db)
+    _req(db, "root", seq=1)
+    _req(db, "second", seq=2, parent="root")
+    before = crud.get_session_conversations(db, "s1")
+    live = crud.get_dashboard_live(db)
+    assert before["conversation_count"] == live["conversation_count"] == 0
+    assert before["auxiliary_request_count"] == live["auxiliary_request_count"] == 2
+    assert before["auxiliary"] == live["auxiliary"]
+    assert all(card["membership_state"] == "provisional_unassigned"
+               for segment in before["auxiliary"]["recent_segments"]
+               for card in segment["request_flow"])
+    auxiliary_key = before["auxiliary"]["key"]
+    assert crud.get_session_conversations(
+        db, "s1", revision=before["revision"], group_key=auxiliary_key,
+    )["auxiliary"]["key"] == auxiliary_key
+
+    _req(db, "third", seq=3, parent="second")
+    after = crud.get_session_conversations(db, "s1")
+    assert after["conversation_count"] == 1
+    assert after["auxiliary"] is None
+    assert after["auxiliary_request_count"] == 0
+    assert {"root", "second", "third"} == {
+        card["id"] for segment in after["conversations"][0]["recent_segments"] for card in segment["request_flow"]
+    }
+    with pytest.raises(ValueError, match="revision changed"):
+        crud.get_session_conversation_requests(db, "s1", auxiliary_key, revision=before["revision"])
 
 
 def test_session_conversation_group_pagination_and_cursor_validation(db):
@@ -596,11 +626,12 @@ def test_large_session_conversations_are_bounded_and_paged(db, size):
         result = crud.get_session_conversations(db, "s1")
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    assert result["conversation_count"] == 1
+    assert result["conversation_count"] == 0
+    assert result["auxiliary_request_count"] == size
     assert result["lineage_fragment_count"] == size
-    assert result["conversations"][0]["request_count"] == size
+    assert result["auxiliary"]["request_count"] == size
     assert sum(len(segment["request_flow"])
-               for segment in result["conversations"][0]["recent_segments"]) == 15
+               for segment in result["auxiliary"]["recent_segments"]) == 15
     assert len(statements) <= 9
 
 
@@ -679,9 +710,9 @@ def test_session_conversations_pin_one_read_snapshot_during_append(tmp_path, mon
     monkeypatch.setattr(crud, "get_session_lineage_snapshots", append_between_reads)
     with OrmSession(engine) as reader:
         first = crud.get_session_conversations(reader, "s1")
-    assert first["conversations"][0]["latest_request_id"] == "before"
-    assert first["conversations"][0]["request_count"] == 1
+    assert first["auxiliary"]["latest_request_id"] == "before"
+    assert first["auxiliary"]["request_count"] == 1
     with OrmSession(engine) as reader:
         second = crud.get_session_conversations(reader, "s1")
-    assert second["conversations"][0]["latest_request_id"] == "after"
+    assert second["auxiliary"]["latest_request_id"] == "after"
     assert second["revision"] != first["revision"]

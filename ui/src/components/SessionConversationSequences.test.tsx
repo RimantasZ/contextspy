@@ -38,12 +38,25 @@ describe('session conversation sequences', () => {
   }
   it('keeps diagnostic paths out of the group count', () => {
     show(base)
-    expect(screen.getByText('1 conversation sequence · 28 diagnostic paths')).toBeTruthy()
+    expect(screen.getByText('1 confirmed conversation · 0 auxiliary requests · 28 diagnostic paths')).toBeTruthy()
     expect(within(screen.getByRole('region', { name: 'primary' })).getAllByRole('list')).toHaveLength(1)
     fireEvent.mouseEnter(screen.getByText('○'))
     expect(screen.getByRole('tooltip').textContent).toContain('No direct predecessor was established')
     expect(screen.getByRole('link', { name: /stream membership uncertain/ }).getAttribute('href')).toBe('/requests/r9')
     expect(screen.queryByText('Conversation 2')).toBeNull()
+  })
+
+  it('keeps an auxiliary-only session accessible without counting it as a conversation', () => {
+    const auxiliary = group('Auxiliary requests', 9)
+    auxiliary.evidence = 'auxiliary'
+    auxiliary.recent_segments[0].request_flow[0].membership_state = 'provisional_unassigned'
+    show({ ...base, conversation_count: 0, primary_key: null, conversations: [], auxiliary, auxiliary_request_count: 2 })
+    expect(screen.getByText('0 confirmed conversations · 2 auxiliary requests · 28 diagnostic paths')).toBeTruthy()
+    const region = screen.getByRole('region', { name: 'Auxiliary requests' })
+    expect(within(region).getByText(/Unclassified or one-off requests/)).toBeTruthy()
+    expect(within(region).getByRole('link', { name: /provisional stream membership/ })).toBeTruthy()
+    expect(within(region).getByRole('button', { name: 'Showing context' })).toBeTruthy()
+    expect(screen.queryByText('No invocations captured yet.')).toBeNull()
   })
 
   it('preserves newest-first group order and marks a stream resumption between request runs', () => {

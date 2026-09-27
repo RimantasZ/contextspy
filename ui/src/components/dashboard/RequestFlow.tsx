@@ -119,7 +119,7 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
               <li key={item.id} className="w-36 shrink-0">
                 <Link
                   to={`/requests/${item.id}`}
-                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${marker ? `, ${marker.label}: ${marker.description}` : ''}${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
+                  aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${marker ? `, ${marker.label}: ${marker.description}` : ''}${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'provisional_unassigned' ? ', provisional stream membership' : item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
                   className="block h-full rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-2.5 transition-colors hover:bg-[var(--surface-hover)]"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -147,7 +147,7 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
                         ? `${item.certainty === 'inferred' ? `Inferred ${Math.round((item.confidence ?? 0) * 100)}%` : 'Exact'} parent · ${item.parent_request_id.slice(0, 8)}`
                         : item.parent_state === 'root' ? 'No parent established' : `Parent ${item.parent_state.replace('_', ' ')}`}
                       {item.shared_history ? ' · Shared history' : ''}
-                      {item.membership_state === 'unassigned' ? ' · Stream uncertain' : ''}
+                      {item.membership_state === 'provisional_unassigned' ? ' · Provisional stream' : item.membership_state === 'unassigned' ? ' · Stream uncertain' : ''}
                     </p>
                   )}
                 </Link>

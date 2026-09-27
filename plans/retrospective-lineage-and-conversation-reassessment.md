@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-**Proposed; not implemented.** This plan follows the investigation of session
+**Implemented in the current branch.** This plan follows the investigation of session
 `300de078-a310-494c-aa75-95bf6ad2755d` and the discussion of future evidence,
 ancestor competition, and conversation attribution. It changes backend analysis and,
 only where needed, the shared dashboard/Session Detail presentation. It does not
@@ -289,3 +289,19 @@ Implementation is complete when later trustworthy evidence can promote or
 rejoin provisional requests without inventing lineage, the Claude
 ancestor-score ambiguity is resolved by ordered-turn evidence where available,
 and the UI still makes every uncertain direct-parent boundary explicit.
+
+## Implementation note
+
+The graph now computes turn-frontier evidence for ancestor candidates, performs a
+bounded reassessment using later exact successors, and derives confirmed and
+provisional activity after parent decisions. The API exposes an unnumbered
+Auxiliary requests block separately from `conversation_count`; both dashboard and
+Session Detail render it with the existing request-card and pagination controls.
+No captured rows or schema were changed, so no database migration is required.
+Read-only validation against the investigated session links #273–#284 to their
+immediate predecessors, displays #272–#284 together, and leaves #270–#271 in
+Auxiliary requests. Synthetic tests cover promotion, rejoining without an invented
+parent, weak candidates, exact-successor limits, and the API/UI contracts. A
+local in-memory check of 2,000 exact-linked requests with a rolling 21-block
+context (41,790 captured blocks) took about 0.37 seconds for graph analysis on
+the development machine; this is an observation, not a formal regression budget.

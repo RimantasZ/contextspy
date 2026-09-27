@@ -266,7 +266,7 @@ export interface LineageNode {
   is_fork: boolean
   conversation_fork_status: 'none' | 'confirmed' | 'unconfirmed_graph_branch'
   parent_request_id: string | null
-  conversation_membership: Array<{ key: string; state: 'confirmed' | 'unassigned' }>
+  conversation_membership: Array<{ key: string; state: 'confirmed' | 'unassigned' | 'provisional_unassigned' }>
 }
 
 export interface LineageEdge {
@@ -310,11 +310,20 @@ export interface LineageGraph {
   conversations: Array<{
     key: string
     label: string
-    evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity'
+    evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity' | 'independent_agent_stream' | 'distinct_stream_hint' | 'sustained_chain'
     fork_parent_request_id: string | null
     request_ids: string[]
     confirmed_request_ids: string[]
   }>
+  auxiliary?: {
+    key: string
+    label: 'Auxiliary requests'
+    evidence: 'auxiliary'
+    fork_parent_request_id: null
+    request_ids: string[]
+    confirmed_request_ids: string[]
+  } | null
+  auxiliary_request_count?: number
   stream_bridges: Record<string, {
     prior_request_id: string
     evidence: 'context_affinity'
@@ -471,7 +480,7 @@ export interface DashboardContextChange {
 export interface DashboardConversation {
   key: string
   label: string
-  evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity'
+  evidence: 'default' | 'fork' | 'parallel_chains' | 'stream_affinity' | 'independent_agent_stream' | 'distinct_stream_hint' | 'sustained_chain' | 'auxiliary'
   fork_parent_request_id: string | null
   latest_request_id: string
   latest_session_seq: number | null
@@ -496,7 +505,7 @@ export interface DashboardConversation {
       certainty: LineageEdge['certainty'] | null
       confidence: number | null
       lineage_relation: LineageNode['parent_state'] | LineageEdge['certainty'] | 'context_affinity'
-      membership_state: 'confirmed' | 'unassigned'
+      membership_state: 'confirmed' | 'unassigned' | 'provisional_unassigned'
       shared_history: boolean
       fork_status: LineageNode['conversation_fork_status']
     }>
@@ -530,6 +539,8 @@ export interface SessionConversationsData {
   lineage_fragment_count: number
   primary_key: string | null
   conversations: SessionConversation[]
+  auxiliary?: SessionConversation | null
+  auxiliary_request_count?: number
   next_group_offset: number | null
 }
 
@@ -548,6 +559,8 @@ export interface DashboardLiveData {
   activity: DashboardActivityPoint[]
   context_change: DashboardContextChange | null
   conversations: DashboardConversation[]
+  auxiliary?: DashboardConversation | null
+  auxiliary_request_count?: number
   conversation_count: number
   confirmed_parallel_streams: number
   lineage_fragment_count: number
