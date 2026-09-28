@@ -16,7 +16,7 @@ import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { DashboardRequestFlowItem, DashboardConversation } from '../../api/client'
-import { formatRequestDuration, formatTimeShort } from '../../lib/format'
+import { formatRequestDuration, formatTimeShort, formatDateTimeFull } from '../../lib/format'
 import { requestLabel } from './dashboardFormat'
 
 function statusOf(item: DashboardRequestFlowItem): { text: string; className: string } | null {
@@ -111,6 +111,7 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
             {items.map((item) => {
             const label = requestLabel(item.session_seq, item.id)
             const time = formatTimeShort(item.timestamp)
+            const fullTime = formatDateTimeFull(item.timestamp)
             const status = statusOf(item)
             const marker = item.lineage_relation ? lineageMarker[item.lineage_relation] : null
             const meta = [item.model, item.duration_ms != null ? formatRequestDuration(item.duration_ms) : null]
@@ -127,7 +128,7 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
                     <span className="text-sm font-semibold text-[var(--text)]">{label}</span>
                     {marker && <LineageIcon marker={marker} />}
                   </div>
-                  <span className="mt-0.5 block text-xs tabular-nums text-[var(--text-muted)]">{time}</span>
+                  <span className="mt-0.5 block text-xs tabular-nums text-[var(--text-muted)]" title={fullTime}>{time}</span>
                   {(meta || status) && (
                     <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
                       {meta && <span className="truncate" title={meta}>{meta}</span>}

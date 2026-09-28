@@ -37,9 +37,16 @@ export function formatDateTimeCompact(timestamp: string): string {
   })
 }
 
-/** Time only, e.g. "14:32". For cards where the date is already implied. */
+/** Time only, e.g. "14:32:07". For cards where the date is already implied. */
 export function formatTimeShort(timestamp: string): string {
   return new Date(normalizeServerTimestamp(timestamp)).toLocaleString(undefined, {
-    hour: '2-digit', minute: '2-digit', hour12: false,
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   })
+}
+
+/** Unambiguous full date + time, e.g. "2026-09-28 14:32:07". For tooltips. */
+export function formatDateTimeFull(timestamp: string): string {
+  const d = new Date(normalizeServerTimestamp(timestamp))
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
