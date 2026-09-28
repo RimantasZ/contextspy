@@ -28,6 +28,7 @@ function group(label: string, seq: number, evidence: DashboardConversation['evid
 }
 
 function show(groups: DashboardConversation[], auxiliary: DashboardConversation | null = null, onSelect = vi.fn()) {
+  localStorage.removeItem('contextspy.conversation-density:s1')
   const data: DashboardLiveData = {
     active_session: { id: 's1', name: 'Work', started_at: '2026-09-18T08:00:00', request_count: 3,
       tokens_total_input: 300, tokens_total_output: 15 },
@@ -36,7 +37,7 @@ function show(groups: DashboardConversation[], auxiliary: DashboardConversation 
     confirmed_parallel_streams: 0, lineage_fragment_count: 0, has_more_conversations: false,
     most_recent_conversation_key: groups[0]?.key ?? null,
   }
-  render(<MemoryRouter><ConversationFlows data={data} compact={false} selectedId={null} onSelect={onSelect} /></MemoryRouter>)
+  render(<MemoryRouter><ConversationFlows data={data} compact selectedId={null} onSelect={onSelect} onShowSequence={() => {}} /></MemoryRouter>)
   return onSelect
 }
 
@@ -47,6 +48,7 @@ describe('grouped conversation rows', () => {
     expect(regions).toHaveLength(2)
     expect(within(regions[1]).getByText('Supported separate stream · corroborated by context')).toBeTruthy()
     expect(within(regions[0]).getAllByRole('listitem')).toHaveLength(1)
+    expect(regions[0].parentElement).toBe(regions[1].parentElement)
   })
 
   it('shows auxiliary requests after numbered conversations', () => {
@@ -65,5 +67,17 @@ describe('grouped conversation rows', () => {
     expect(onSelect).toHaveBeenCalledWith('r23')
     expect(screen.getByRole('link', { name: 'More (23 total) →' }).getAttribute('href'))
       .toBe('/sessions/s1?view=lineage&conversation=Conversation%201')
+  })
+
+  it('expands conversations independently and remembers each choice', () => {
+    localStorage.removeItem('contextspy.conversation-density:s1')
+    show([group('Conversation 1', 9), group('Conversation 2', 8)])
+    const first = screen.getByRole('region', { name: 'Conversation 1' })
+    const second = screen.getByRole('region', { name: 'Conversation 2' })
+    fireEvent.click(within(first).getByRole('button', { name: 'Detailed' }))
+    expect(within(first).getByRole('button', { name: /Request #9/ }).textContent).toContain('100 in')
+    expect(within(second).getByRole('button', { name: /Request #8/ }).textContent).not.toContain('100 in')
+    expect(JSON.parse(localStorage.getItem('contextspy.conversation-density:s1') ?? '{}'))
+      .toEqual({ 'Conversation 1': false })
   })
 })

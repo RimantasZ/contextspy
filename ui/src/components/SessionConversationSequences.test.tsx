@@ -35,8 +35,10 @@ const base: SessionConversationsData = {
 describe('session conversation sequences', () => {
   function show(data: SessionConversationsData) {
     localStorage.setItem('contextspy.compact-request-cards', 'true')
+    localStorage.removeItem('contextspy.conversation-density:s1')
     const result = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SessionConversationSequences data={data} /></MemoryRouter></QueryClientProvider>)
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Compact mode' }))
+    const firstLabel = data.conversations[0]?.label ?? data.auxiliary?.label
+    if (firstLabel) fireEvent.click(within(screen.getByRole('group', { name: `${firstLabel} card detail` })).getByRole('button', { name: 'Detailed' }))
     return result
   }
   it('keeps diagnostic paths out of the group count', () => {
@@ -69,6 +71,10 @@ describe('session conversation sequences', () => {
     show({ ...base, conversation_count: 2, conversations: [main, other] })
     const regions = screen.getAllByRole('region', { name: /Conversation [12]/ })
     expect(regions.map((region) => region.getAttribute('aria-label'))).toEqual(['Conversation 1', 'Conversation 2'])
+    expect(regions[0].parentElement).toBe(regions[1].parentElement)
+    expect(within(screen.getByRole('heading', { name: 'Conversations' }).parentElement as HTMLElement).getByRole('button', { name: 'Show sequence' })).toBeTruthy()
+    expect(within(regions[0]).getByRole('button', { name: /Request #410/ }).textContent).toContain('100 in')
+    expect(within(regions[1]).getByRole('button', { name: /Request #406/ }).textContent).not.toContain('100 in')
     const text = regions[0].textContent ?? ''
     expect(text.indexOf('#410')).toBeGreaterThanOrEqual(0)
     expect(text.indexOf('#410')).toBeLessThan(text.indexOf('Same stream · direct predecessor not established'))

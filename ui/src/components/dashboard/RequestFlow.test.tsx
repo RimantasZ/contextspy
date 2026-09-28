@@ -119,4 +119,25 @@ describe('RequestFlow', () => {
     expect(screen.queryByRole('tooltip')).toBeNull()
     expect(screen.getByRole('button').getAttribute('aria-label')).toContain('Exact predecessor')
   })
+
+  it('shows conversation code, seconds, and corrected arrows in three compact rows', () => {
+    render(<MemoryRouter><RequestFlow items={[{ ...item({ conversation_code: 'C1', duration_ms: 250 }), lineage_relation: 'exact' }]}
+      compact selectedId="request-18" onSelect={() => {}} /></MemoryRouter>)
+    const card = screen.getByRole('button', { name: /Request #C1-18/ })
+    expect(card.className).toContain('bg-[var(--surface-selected)]')
+    expect(card.className).not.toContain('ring-2')
+    expect(card.firstElementChild?.textContent).toContain('#C1-18')
+    const rows = card.querySelectorAll('p')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toContain('0.3s')
+    expect(rows[1].textContent).toContain('↑ 87k')
+    expect(rows[1].textContent).toContain('↓ 612')
+  })
+
+  it('labels auxiliary cards and uses the corrected arrows in detailed mode', () => {
+    renderFlow([item({ conversation_code: 'AUX' })])
+    const card = screen.getByRole('button', { name: /Request #AUX-18/ })
+    expect(card.textContent).toContain('↑ 87,412 in')
+    expect(card.textContent).toContain('↓ 612 out')
+  })
 })

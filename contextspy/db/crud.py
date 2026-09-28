@@ -1015,10 +1015,12 @@ def _flow_item(r: Request) -> dict:
 
 
 def _lineage_flow_item(row: Request, node: dict, edge: dict | None,
-                       stream_bridges: dict, auxiliary_ids: set[str]) -> dict:
+                       stream_bridges: dict, auxiliary_ids: set[str],
+                       conversation_code: str) -> dict:
     rid = row.id
     return {
         **_flow_item(row),
+        "conversation_code": conversation_code,
         "parent_request_id": edge["source_request_id"] if edge else None,
         "parent_state": node["parent_state"],
         "certainty": edge["certainty"] if edge else None,
@@ -1056,11 +1058,21 @@ def _session_sequence_projection(db: OrmSession, graph: dict, *, limit: int,
     edges = {edge["target_request_id"]: edge for edge in graph["edges"]
              if edge["relation_type"] == "context_continuation"}
     auxiliary_ids = set((graph.get("auxiliary") or {}).get("request_ids", []))
+    codes = {group["key"]: f"C{index}" for index, group in enumerate(graph["conversations"], 1)}
+
+    def code_for(node: dict) -> str:
+        if node["request_id"] in auxiliary_ids:
+            return "AUX"
+        memberships = node["conversation_membership"]
+        confirmed = next((item["key"] for item in memberships if item["state"] == "confirmed"), None)
+        return codes.get(confirmed or (memberships[0]["key"] if memberships else ""), "AUX")
+
     return {
         "request_flow": [
             _lineage_flow_item(row_by_id[node["request_id"]], node,
                                edges.get(node["request_id"]),
-                               graph.get("stream_bridges", {}), auxiliary_ids)
+                               graph.get("stream_bridges", {}), auxiliary_ids,
+                               code_for(node))
             for node in selected
         ],
         "request_count": len(ordered),
@@ -1171,6 +1183,7 @@ def _conversation_projection_view(
     block counts are hydrated in batches after graph-wide classification.
     """
     nodes = {node["request_id"]: node for node in graph["nodes"]}
+    conversation_codes = {group["key"]: f"C{index}" for index, group in enumerate(graph["conversations"], 1)}
     stream_bridges = graph.get("stream_bridges", {})
     parent_edges = {edge["target_request_id"]: edge for edge in graph["edges"]
                     if edge["relation_type"] == "context_continuation"}
@@ -1255,6 +1268,7 @@ def _conversation_projection_view(
             node = nodes[rid]
             segment_slices[-1]["request_flow"].append({
                 **_flow_item(row_by_id[rid]),
+                "conversation_code": conversation_codes.get(group["key"], "AUX"),
                 "parent_request_id": edge["source_request_id"] if edge else None,
                 "parent_state": node["parent_state"],
                 "certainty": edge["certainty"] if edge else None,

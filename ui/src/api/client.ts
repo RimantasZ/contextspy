@@ -450,6 +450,7 @@ export interface DashboardActiveSession {
 
 export interface DashboardRequestFlowItem {
   id: string
+  conversation_code?: string
   session_seq: number | null
   timestamp: string
   model: string | null

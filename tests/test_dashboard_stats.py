@@ -524,6 +524,9 @@ def test_stream_groups_match_dashboard_order_and_preserve_gap_provenance(db):
     assert dashboard["conversation_count"] == session["conversation_count"] == 2
     assert dashboard["conversations"] == session["conversations"]
     assert [group["latest_request_id"] for group in session["conversations"]] == ["r410", "r406"]
+    codes = {card["id"]: card["conversation_code"] for card in dashboard["request_flow"]}
+    assert codes["r410"] == "C1"
+    assert codes["r406"] == "C2"
     assert dashboard["most_recent_conversation_key"] == session["conversations"][0]["key"]
     assert session["primary_key"] == session["conversations"][0]["key"]
     main, other = session["conversations"]
@@ -628,6 +631,7 @@ def test_auxiliary_block_matches_dashboard_and_promotes_on_third_link(db):
     assert before["conversation_count"] == live["conversation_count"] == 0
     assert before["auxiliary_request_count"] == live["auxiliary_request_count"] == 2
     assert before["auxiliary"] == live["auxiliary"]
+    assert {card["conversation_code"] for card in live["request_flow"]} == {"AUX"}
     assert all(card["membership_state"] == "provisional_unassigned"
                for segment in before["auxiliary"]["recent_segments"]
                for card in segment["request_flow"])
@@ -640,6 +644,7 @@ def test_auxiliary_block_matches_dashboard_and_promotes_on_third_link(db):
     after = crud.get_session_conversations(db, "s1")
     assert after["conversation_count"] == 1
     assert after["auxiliary"] is None
+    assert {card["conversation_code"] for card in crud.get_dashboard_live(db)["request_flow"]} == {"C1"}
     assert after["auxiliary_request_count"] == 0
     assert {"root", "second", "third"} == {
         card["id"] for segment in after["conversations"][0]["recent_segments"] for card in segment["request_flow"]
@@ -662,6 +667,12 @@ def test_session_conversation_group_pagination_and_cursor_validation(db):
     second = crud.get_session_conversations(db, "s1", group_offset=4, revision=first["revision"])
     assert len(second["conversations"]) == 1
     assert second["next_group_offset"] is None
+    for group in first["conversations"] + second["conversations"]:
+        root = next(card for segment in group["recent_segments"]
+                    for card in segment["request_flow"] if card["id"] == "root")
+        assert root["conversation_code"] == "C" + group["label"].split()[-1]
+    assert next(card for card in crud.get_session_sequence(db, "s1")["request_flow"]
+                if card["id"] == "root")["conversation_code"] == "C1"
     assert len({group["key"] for group in first["conversations"] + second["conversations"]}) == 5
     pinned = crud.get_session_conversations(
         db, "s1", revision=first["revision"], group_key=second["conversations"][0]["key"],

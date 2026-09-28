@@ -195,9 +195,16 @@ calculate session totals.
   (N total)” counts the represented requests in that row; grouped rows may repeat shared
   history. The segment index helps find lineage breaks in a long row. The activity chart above
   the rows again shows only the last 10 session requests.
-- **Request cards and context:** compact cards are the default and show request number, time,
-  lineage icon, and input/output tokens. The Compact mode setting persists across Dashboard and
-  Session Detail in this browser. Detailed cards show additional metadata and icon tooltips.
+- **Request cards and context:** compact cards are the default. The first line shows a label
+  such as `#C1-128` (request 128 in Conversation 1) or `#AUX-345` (Auxiliary requests) and the
+  lineage icon. The second shows time and duration in seconds; the third shows `↑` input-context
+  tokens and `↓` output tokens. In a grouped view, shared-history cards carry that row's
+  conversation code. In the chronological row, shared history uses its first confirmed
+  conversation. A selected card has a darker background. The Request flow header contains the
+  conversation switch and a Compact/Detailed toggle. Grouped conversations share one section,
+  with an independent toggle on each row (including Auxiliary requests), so one can be expanded
+  without expanding the others. Card-density choices persist in this browser; detailed cards
+  show additional metadata and icon tooltips.
   Click a card once to select it and update the context panel; click it again, or use “Open
   request” in the panel, for Request Detail. As new requests arrive, selection follows the
   newest request automatically. The panel can grow to include request actions in the future.

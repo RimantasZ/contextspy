@@ -71,11 +71,12 @@ export function LiveSessionSection() {
               failed={!!selectedId && selectedId !== newestId && context.isError}
             />
           </div>
-          <RequestViewControls compact={compact} onCompactChange={setCompact} layout={layout} onLayoutChange={setLayout}
-            groupCount={data.conversation_count + (data.auxiliary ? 1 : 0)} />
           {layout === 'sequence' ? <RequestFlow items={data.request_flow} compact={compact} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setSelectionNotice('') }}
+            headerActions={<RequestViewControls compact={compact} onCompactChange={setCompact} layout={layout} onLayoutChange={setLayout}
+              groupCount={data.conversation_count + (data.auxiliary ? 1 : 0)} />}
             trailingAction={data.sequence_next_cursor && <Link className="app-button h-full w-full text-center" to={`/sessions/${data.active_session.id}?view=lineage`}>More ({data.active_session.request_count} total) →</Link>} />
-            : <ConversationFlows data={data} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setSelectionNotice('') }} compact={compact} />}
+            : <ConversationFlows data={data} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setSelectionNotice('') }} compact={compact}
+                onShowSequence={() => setLayout('sequence')} />}
         </>
       )}
     </section>
