@@ -32,7 +32,8 @@ describe('ContextChangePanel', () => {
   it('shows size, comparison sequence and positive delta', () => {
     render(<ContextChangePanel change={change()} />)
     expect(screen.getByText('87,412')).toBeTruthy()
-    expect(screen.getByText('Latest request · compared with #17')).toBeTruthy()
+    expect(screen.getByText('Compared with #17')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Open request' }).getAttribute('href')).toBe('/requests/r18')
     expect(screen.getByText(/\+5,612 tokens/)).toBeTruthy()
   })
 

@@ -58,6 +58,7 @@ export default function SessionDetail() {
   const view: 'summary' | 'lineage' = searchParams.get('view') === 'lineage' ? 'lineage' : 'summary';
   const mode: 'conversations' | 'fragments' = searchParams.get('mode') === 'fragments' ? 'fragments' : 'conversations';
   const conversationKey = searchParams.get('conversation');
+  const conversationLayout: 'sequence' | 'conversations' = conversationKey || searchParams.get('layout') === 'conversations' ? 'conversations' : 'sequence';
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameTitleRef = useRef<HTMLInputElement>(null);
@@ -403,7 +404,7 @@ export default function SessionDetail() {
       </div>
 
       {view === 'lineage' ? (
-        <div className="panel">
+        <div className="min-w-0">
           <div className="mb-5 flex justify-end">
             <SegmentedControl
               label="Conversation display mode"
@@ -425,7 +426,14 @@ export default function SessionDetail() {
           ) : (
             conversations.isLoading ? <div className="py-12 text-center text-sm text-[var(--text-muted)]">Analyzing conversations…</div>
               : conversations.error || !conversations.data ? <div className="py-12 text-center text-sm text-[var(--danger)]">Conversations could not be loaded.</div>
-              : <SessionConversationSequences data={conversations.data} initialGroupKey={conversationKey} />
+              : <SessionConversationSequences data={conversations.data} initialGroupKey={conversationKey}
+                  layout={conversationLayout} onLayoutChange={(nextLayout) => {
+                    const next = new URLSearchParams(searchParams)
+                    next.delete('conversation')
+                    if (nextLayout === 'conversations') next.set('layout', 'conversations')
+                    else next.delete('layout')
+                    setSearchParams(next)
+                  }} />
           )}
         </div>
       ) : (

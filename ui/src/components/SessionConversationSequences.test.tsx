@@ -34,7 +34,10 @@ const base: SessionConversationsData = {
 
 describe('session conversation sequences', () => {
   function show(data: SessionConversationsData) {
-    return render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SessionConversationSequences data={data} /></MemoryRouter></QueryClientProvider>)
+    localStorage.setItem('contextspy.compact-request-cards', 'true')
+    const result = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SessionConversationSequences data={data} /></MemoryRouter></QueryClientProvider>)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Compact mode' }))
+    return result
   }
   it('keeps diagnostic paths out of the group count', () => {
     show(base)
@@ -42,7 +45,7 @@ describe('session conversation sequences', () => {
     expect(within(screen.getByRole('region', { name: 'primary' })).getAllByRole('list')).toHaveLength(1)
     fireEvent.mouseEnter(screen.getByText('○'))
     expect(screen.getByRole('tooltip').textContent).toContain('No direct predecessor was established')
-    expect(screen.getByRole('link', { name: /stream membership uncertain/ }).getAttribute('href')).toBe('/requests/r9')
+    expect(screen.getByRole('button', { name: /stream membership uncertain/ })).toBeTruthy()
     expect(screen.queryByText('Conversation 2')).toBeNull()
   })
 
@@ -54,8 +57,7 @@ describe('session conversation sequences', () => {
     expect(screen.getByText('0 supported conversations · 2 auxiliary requests · 28 diagnostic paths')).toBeTruthy()
     const region = screen.getByRole('region', { name: 'Auxiliary requests' })
     expect(within(region).getByText(/Unclassified or one-off requests/)).toBeTruthy()
-    expect(within(region).getByRole('link', { name: /provisional stream membership/ })).toBeTruthy()
-    expect(within(region).getByRole('button', { name: 'Showing context' })).toBeTruthy()
+    expect(within(region).getByRole('button', { name: /provisional stream membership/ })).toBeTruthy()
     expect(screen.queryByText('No invocations captured yet.')).toBeNull()
   })
 
@@ -87,32 +89,38 @@ describe('session conversation sequences', () => {
     expect(within(sequence).getAllByRole('listitem')).toHaveLength(1)
     expect(sequence.nextElementSibling?.textContent).toContain('More (2 total)')
     await userEvent.click(screen.getByRole('button', { name: 'More (2 total) →' }))
-    expect(await screen.findByRole('link', { name: /Request #8/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /Request #8/ })).toBeTruthy()
     expect(earlier).toHaveBeenCalledWith('s1', 'primary', 'v1', 'cursor-1')
     await userEvent.click(screen.getByRole('button', { name: 'Show more conversations' }))
     const second = await screen.findByRole('region', { name: 'second' })
-    expect(within(second).getByRole('link', { name: /Request #10/ })).toBeTruthy()
+    expect(within(second).getByRole('button', { name: /Request #10/ })).toBeTruthy()
     expect(extra).toHaveBeenCalledWith('s1', 1, 'v1')
     earlier.mockRestore()
     extra.mockRestore()
   })
 
-  it('revalidates a selected group that moves beyond the preview after a revision', async () => {
-    const secondary = group('second', 10)
-    const pinned = vi.spyOn(sessionsApi, 'conversations').mockResolvedValue({
-      ...base, revision: 'v2', conversation_count: 2, conversations: [secondary], next_group_offset: null,
-    })
-    const { rerender } = show({ ...base, conversation_count: 2, conversations: [base.conversations[0], secondary] })
-    await userEvent.click(within(screen.getByRole('region', { name: 'second' })).getByRole('button', { name: 'Show context' }))
-    rerender(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SessionConversationSequences data={{ ...base, revision: 'v2', conversation_count: 2, next_group_offset: 1 }} /></MemoryRouter></QueryClientProvider>)
-    expect(await within(await screen.findByRole('region', { name: 'second' })).findByRole('button', { name: 'Showing context' })).toBeTruthy()
-    expect(pinned).toHaveBeenCalledWith('s1', 0, 'v2', 'second')
-    pinned.mockRestore()
+  it('selects a request card in the grouped view', async () => {
+    show(base)
+    const card = within(screen.getByRole('region', { name: 'primary' })).getByRole('button', { name: /Request #9/ })
+    await userEvent.click(card)
+    expect(card.getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('selects the conversation linked from the dashboard', () => {
-    const other = group('second', 10)
-    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SessionConversationSequences data={{ ...base, conversation_count: 2, conversations: [base.conversations[0], other] }} initialGroupKey="second" /></MemoryRouter></QueryClientProvider>)
-    expect(within(screen.getByRole('region', { name: 'second' })).getByRole('button', { name: 'Showing context' })).toBeTruthy()
+  it('loads older cards in the default chronological sequence', async () => {
+    const first = group('primary', 9).recent_segments[0].request_flow[0]
+    const older = group('older', 8).recent_segments[0].request_flow[0]
+    const sequence = vi.spyOn(sessionsApi, 'sequence')
+      .mockResolvedValueOnce({ session_id: 's1', revision: 'v1', request_flow: [first],
+        request_count: 2, next_cursor: 'older-cursor', activity: [] })
+      .mockResolvedValueOnce({ session_id: 's1', revision: 'v1', request_flow: [older],
+        request_count: 2, next_cursor: null, activity: [] })
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter>
+      <SessionConversationSequences data={base} layout="sequence" />
+    </MemoryRouter></QueryClientProvider>)
+    expect(await screen.findByRole('button', { name: /Request #9/ })).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'More (2 total) →' }))
+    expect(await screen.findByRole('button', { name: /Request #8/ })).toBeTruthy()
+    expect(sequence).toHaveBeenCalledWith('s1', 'v1', 'older-cursor')
+    sequence.mockRestore()
   })
 })

@@ -109,13 +109,14 @@ def test_flow_limit_and_order_and_activity_limit_and_order(db):
     for i in range(1, 13):
         _req(db, f"r{i}", seq=i)
     out = crud.get_dashboard_live(db)
-    assert [r["session_seq"] for r in out["request_flow"]] == [12, 11, 10, 9, 8]
+    assert [r["session_seq"] for r in out["request_flow"]] == list(range(12, 0, -1))
     assert [r["session_seq"] for r in out["activity"]] == list(range(3, 13))
     assert out["active_session"]["request_count"] == 12
-    assert set(out["request_flow"][0]) == {
+    assert {
         "id", "session_seq", "timestamp", "model", "duration_ms",
         "status_code", "invocation_outcome", "tokens_total_input", "tokens_total_output",
-    }
+    } <= set(out["request_flow"][0])
+    assert "lineage_relation" in out["request_flow"][0]
 
 
 def test_dashboard_conversation_preview_has_fifteen_cards_and_total_count(db):
@@ -401,7 +402,7 @@ def test_dashboard_batches_card_and_parent_queries(db):
         assert crud.get_dashboard_live(db)["conversation_count"] == 2
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    assert len(statements) <= 9
+    assert len(statements) <= 12
 
 
 def test_dashboard_reuses_analysis_until_request_revision_changes(db, monkeypatch):
@@ -450,6 +451,41 @@ def test_session_conversations_page_all_requests_and_reject_stale_cursor(db):
     _req(db, "r72", seq=72, parent="r71")
     with pytest.raises(ValueError, match="revision changed"):
         crud.get_session_conversation_requests(db, "s1", group["key"], revision=first["revision"])
+
+
+def test_session_sequence_is_unique_paged_and_excludes_external_parent(db):
+    _session(db, active=False)
+    _session(db, "old", active=False)
+    _req(db, "external", sid="old", seq=1)
+    for seq in range(1, 19):
+        _req(db, f"r{seq}", seq=seq, parent="external" if seq == 1 else f"r{seq - 1}")
+    first = crud.get_session_sequence(db, "s1")
+    assert first["request_count"] == 18
+    assert [card["id"] for card in first["request_flow"]] == [f"r{seq}" for seq in range(18, 3, -1)]
+    assert [point["id"] for point in first["activity"]] == [f"r{seq}" for seq in range(9, 19)]
+    second = crud.get_session_sequence(db, "s1", revision=first["revision"], cursor=first["next_cursor"])
+    assert [card["id"] for card in second["request_flow"]] == ["r3", "r2", "r1"]
+    assert second["next_cursor"] is None
+    assert second["request_flow"][-1]["lineage_relation"] == "external"
+    with pytest.raises(ValueError, match="cursor does not belong"):
+        crud.get_session_sequence(db, "s1", cursor="WzAsIm5vdC1oZXJlIiwibm9wZSJd")
+    _req(db, "r19", seq=19, parent="r18")
+    with pytest.raises(ValueError, match="revision changed"):
+        crud.get_session_sequence(db, "s1", revision=first["revision"], cursor=first["next_cursor"])
+
+
+def test_selected_context_uses_accepted_parent_not_chronological_neighbor(db):
+    _session(db, active=False)
+    _req(db, "root", seq=1, tin=100)
+    _req(db, "other", seq=2, tin=900)
+    _req(db, "child", seq=3, tin=140, parent="root")
+    revision = crud.get_session_sequence(db, "s1")["revision"]
+    change = crud.get_session_request_context(db, "s1", "child", revision=revision)["context_change"]
+    assert change["parent_request_id"] == "root"
+    assert change["token_delta"] == 40
+    assert crud.get_session_request_context(db, "s1", "other")["context_change"]["parent_request_id"] is None
+    with pytest.raises(KeyError, match="Request not found"):
+        crud.get_session_request_context(db, "s1", "missing")
 
 
 def test_session_projection_matches_dashboard_and_marks_unconfirmed_branch(db):

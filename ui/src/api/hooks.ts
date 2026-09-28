@@ -58,6 +58,23 @@ export function useSessionConversations(id: string, enabled: boolean = true) {
   })
 }
 
+export function useSessionSequence(id: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['session-sequence', id],
+    queryFn: () => sessionsApi.sequence(id),
+    enabled: !!id && enabled,
+    refetchInterval: 5_000,
+  })
+}
+
+export function useRequestContext(sessionId: string, requestId: string | null, revision?: string) {
+  return useQuery({
+    queryKey: ['request-context', sessionId, requestId, revision],
+    queryFn: () => sessionsApi.requestContext(sessionId, requestId!, revision),
+    enabled: !!sessionId && !!requestId,
+  })
+}
+
 export function useCreateSession() {
   const qc = useQueryClient()
   return useMutation({

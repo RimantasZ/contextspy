@@ -20,13 +20,16 @@ function tokenGlyph(delta: number): string {
   return '•'
 }
 
-export function ContextChangePanel({ change, unavailable = false }: { change: DashboardContextChange | null; unavailable?: boolean }) {
+export function ContextChangePanel({ change, unavailable = false, pending = false, failed = false }: {
+  change: DashboardContextChange | null; unavailable?: boolean; pending?: boolean; failed?: boolean
+}) {
   if (!change) {
     return (
       <div className="panel">
         <h2 className="section-title">Context size</h2>
         <p className="py-6 text-center text-sm text-[var(--text-muted)]">
-          {unavailable ? 'Parent comparisons unavailable for the ungrouped session requests.' : 'No requests captured in this session yet.'}
+          {pending ? 'Loading request context…' : failed ? 'Request context could not be loaded.' :
+            unavailable ? 'Parent comparison unavailable for this request.' : 'No requests captured in this session yet.'}
         </p>
       </div>
     )
@@ -46,10 +49,13 @@ export function ContextChangePanel({ change, unavailable = false }: { change: Da
 
   return (
     <div className="panel">
-      <h2 className="section-title">Context size</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="section-title">Context size · {requestLabel(change.session_seq, change.request_id)}</h2>
+        <a className="app-button min-h-7 py-1 text-xs" href={`/requests/${change.request_id}`}>Open request</a>
+      </div>
       <p className="mb-3 text-xs text-[var(--text-muted)]">
         {hasParent
-          ? `Latest request · compared with ${parentLabel}${change.external_parent ? ' (another session)' : ''}${change.parent_state === 'inferred' ? ` · inferred ${Math.round((change.parent_confidence ?? 0) * 100)}%` : ''}`
+          ? `Compared with ${parentLabel}${change.external_parent ? ' (another session)' : ''}${change.parent_state === 'inferred' ? ` · inferred ${Math.round((change.parent_confidence ?? 0) * 100)}%` : ''}`
           : noParentText}
       </p>
       <p className="text-2xl font-semibold tabular-nums text-[var(--text)]">
