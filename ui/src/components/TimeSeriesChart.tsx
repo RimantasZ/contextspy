@@ -21,6 +21,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { TimelineBucket } from '../api/client';
+import { normalizeServerTimestamp } from '../lib/format';
 
 type Bucket = 'minute' | 'hour' | 'day';
 
@@ -32,14 +33,11 @@ interface Props {
 }
 
 function formatLabel(ts: string, bucket: Bucket): string {
-  const d = new Date(ts);
-  if (bucket === 'minute') {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const d = new Date(normalizeServerTimestamp(ts));
+  if (bucket === 'day') {
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   }
-  if (bucket === 'hour') {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 export function TimeSeriesChart({ data, bucket, onBucketChange, loading }: Props) {

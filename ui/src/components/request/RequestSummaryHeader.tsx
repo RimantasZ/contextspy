@@ -1,5 +1,5 @@
 import type { Request } from '../../api/client'
-import { formatRequestDuration } from '../../lib/format'
+import { formatRequestDuration, formatDateTime } from '../../lib/format'
 
 function statusTone(request: Request): string {
   if (request.invocation_outcome === 'completed' || (request.status_code != null && request.status_code >= 200 && request.status_code < 300)) return 'status-success'
@@ -24,7 +24,7 @@ export function RequestSummaryHeader({ request, onBack, onDirection }: {
             <h1 className="text-xl font-bold tracking-tight">Request detail</h1>
             <span className={`app-badge ${statusTone(request)}`}>{request.status_code ?? request.invocation_outcome}</span>
           </div>
-          <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">{request.provider} · {request.model ?? 'Unknown model'} · {new Date(request.timestamp).toLocaleString()}</p>
+          <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">{request.provider} · {request.model ?? 'Unknown model'} · {formatDateTime(request.timestamp)}</p>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5">

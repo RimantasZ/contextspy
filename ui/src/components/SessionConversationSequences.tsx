@@ -6,7 +6,7 @@ import type { SessionConversation, SessionConversationPage, SessionConversations
 import { ContextChangePanel } from './dashboard/ContextChangePanel'
 import { evidenceLabel, gapLabel } from './dashboard/ConversationFlows'
 import { RequestFlow } from './dashboard/RequestFlow'
-import { parseServerTimestamp } from './dashboard/dashboardFormat'
+import { formatDateTimeCompact } from '../lib/format'
 
 type Loaded = { segments: SessionConversationPage['segments']; nextCursor: string | null; continuesEarlier: boolean }
 
@@ -150,7 +150,7 @@ export function SessionConversationSequences({ data, initialGroupKey }: { data: 
                   <h3 className="section-title">{group.label}</h3>
                   <p className="mt-1 text-xs text-[var(--text-muted)]">{evidenceLabel(group)}</p>
                   <p className="mt-1 text-xs text-[var(--text-muted)]">
-                    {group.request_count} represented request{group.request_count === 1 ? '' : 's'} · latest {new Date(parseServerTimestamp(group.latest_activity)).toLocaleString()} · {group.segment_count} lineage segment{group.segment_count === 1 ? '' : 's'}
+                    {group.request_count} represented request{group.request_count === 1 ? '' : 's'} · latest {formatDateTimeCompact(group.latest_activity)} · {group.segment_count} lineage segment{group.segment_count === 1 ? '' : 's'}
                   </p>
                   {group.unassigned_request_count > 0 && <p className="mt-1 text-xs text-[var(--warning)]">{group.unassigned_request_count} request{group.unassigned_request_count === 1 ? '' : 's'} with uncertain stream membership</p>}
                 </div>

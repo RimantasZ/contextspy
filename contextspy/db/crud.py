@@ -708,7 +708,7 @@ def get_timeline(
     session_id: str | None = None,
     bucket: str = "hour",
 ) -> list[dict]:
-    bucket_map = {"minute": "%Y-%m-%dT%H:%M", "hour": "%Y-%m-%dT%H", "day": "%Y-%m-%d"}
+    bucket_map = {"minute": "%Y-%m-%dT%H:%M", "hour": "%Y-%m-%dT%H:00", "day": "%Y-%m-%d"}
     fmt = bucket_map.get(bucket, "%Y-%m-%dT%H")
 
     q = select(Request)

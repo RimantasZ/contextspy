@@ -18,7 +18,7 @@ import { SessionControls } from '../components/SessionControls';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import { ContextBar } from '../components/ContextBar';
 import type { SessionSummaryEntry } from '../api/client';
-import { formatElapsedDuration } from '../lib/format';
+import { formatElapsedDuration, formatDateTime } from '../lib/format';
 
 type SessionSortKey = 'name' | 'started_at' | 'duration' | 'status' | 'request_count' | 'tokens_in' | 'tokens_out';
 
@@ -169,7 +169,7 @@ export default function Sessions() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-[var(--text-muted)]">
-                    {new Date(s.started_at).toLocaleString()}
+                    {formatDateTime(s.started_at)}
                   </td>
                   <td className="px-4 py-3 text-[var(--text-muted)]">
                     {formatElapsedDuration(getDurationMs(s))}

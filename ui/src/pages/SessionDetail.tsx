@@ -34,7 +34,7 @@ type Bucket = 'minute' | 'hour' | 'day';
 function fmtTime(ts: string | null | undefined): string {
   if (!ts) return '—';
   const s = ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z';
-  return new Date(s).toLocaleString();
+  return new Date(s).toLocaleString(undefined, { hour12: false });
 }
 
 function fmtMs(ms: number | null | undefined): string {

@@ -207,7 +207,7 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
             {matchingPaths.slice(0, 50).map((path) => (
               <button key={path.key} type="button" aria-pressed={selectedPath?.key === path.key} className="app-button w-full text-left text-xs" onClick={() => { setSelectedPathKey(path.key); setSelectedPathRoot(path.root_request_id); setWindowOffset(0); setPathNotice('') }}>
                 #{path.root_session_seq ?? '—'} → #{path.leaf_session_seq ?? '—'} · {path.request_count} requests<br />
-                <span className="text-[var(--text-muted)]">{new Date(parseServerTimestamp(path.last_activity)).toLocaleString()} · starts: {stateLabel(path.start_parent_state)}</span>
+                <span className="text-[var(--text-muted)]">{new Date(parseServerTimestamp(path.last_activity)).toLocaleString(undefined, { hour12: false })} · starts: {stateLabel(path.start_parent_state)}</span>
               </button>
             ))}
             {matchingPaths.length === 0 && <p className="text-xs text-[var(--text-muted)]">No matching paths.</p>}
@@ -309,7 +309,7 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
                 <p className="mt-1 text-sm text-[var(--text-muted)]">{membershipLabel(selectedNode) || 'External parent'} · request depth {selectedNode.depth}</p>
                 {selectedNode.is_fork && <p className="mt-1 text-xs text-[var(--warning)]">{selectedNode.conversation_fork_status === 'confirmed' ? 'Confirmed conversation fork' : 'Graph branch · conversation split unconfirmed'}</p>}
                 <p className="mt-2 text-xs text-[var(--text-muted)]">
-                  Started {new Date(selectedNode.started_at).toLocaleString()}
+                  Started {new Date(parseServerTimestamp(selectedNode.started_at)).toLocaleString(undefined, { hour12: false })}
                   {selectedNode.started_at_source !== 'observed' && ` (${selectedNode.started_at_source.replace('_', ' ')})`}
                 </p>
                 {selectedNode.parent_state === 'unresolved_exact' && selectedNode.predecessor_response_id && (

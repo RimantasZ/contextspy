@@ -9,6 +9,7 @@ import { CaptureNotice } from '../components/request/CaptureNotice'
 import { RequestSummaryHeader } from '../components/request/RequestSummaryHeader'
 import { RequestWorkbench } from '../components/request/RequestWorkbench'
 import type { WorkbenchDirection } from '../components/request/RequestWorkbench'
+import { formatDateTime, normalizeServerTimestamp } from '../lib/format'
 
 function categoryData(request: {
   tokens_system_prompt: number; tokens_tool_definitions: number; tokens_tool_results: number
@@ -53,20 +54,21 @@ export default function RequestDetail() {
   const parentEdge = lineage.data?.edges.find((edge) => edge.target_request_id === request.id && edge.relation_type === 'context_continuation')
   const childEdges = lineage.data?.edges.filter((edge) => edge.source_request_id === request.id && edge.relation_type === 'context_continuation') ?? []
   const startedAt = request.started_at
-    ? new Date(request.started_at)
+    ? new Date(normalizeServerTimestamp(request.started_at))
     : request.duration_ms != null
-      ? new Date(new Date(request.timestamp).getTime() - request.duration_ms)
-      : new Date(request.timestamp)
+      ? new Date(new Date(normalizeServerTimestamp(request.timestamp)).getTime() - request.duration_ms)
+      : new Date(normalizeServerTimestamp(request.timestamp))
+  const startedAtLocale = startedAt.toLocaleString(undefined, { hour12: false })
   const startedLabel = request.started_at_source === 'observed'
-    ? startedAt.toLocaleString()
-    : `${startedAt.toLocaleString()} (${request.started_at_source === 'estimated' ? 'estimated' : 'completion fallback'})`
+    ? startedAtLocale
+    : `${startedAtLocale} (${request.started_at_source === 'estimated' ? 'estimated' : 'completion fallback'})`
   const metadata = [
     ['Provider', request.provider],
     ['Agent', request.agent ?? '—'],
     ['Model', request.model ?? '—'],
     ['Endpoint', request.endpoint],
     ['Started', startedLabel],
-    ['Completed', new Date(request.completed_at).toLocaleString()],
+    ['Completed', formatDateTime(request.completed_at)],
     ['Status', request.status_code ?? request.invocation_outcome],
     ['Transport', `${request.transport} / ${request.response_transport}`],
     ['Time to first token', request.ttft_ms != null ? `${request.ttft_ms}ms` : '—'],

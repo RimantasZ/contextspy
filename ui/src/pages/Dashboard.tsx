@@ -21,7 +21,7 @@ import { LiveSessionSection } from '../components/dashboard/LiveSessionSection';
 import { ToolBreakdownSection } from '../components/ToolBreakdown';
 import { OutputSplit } from '../components/OutputSplit';
 import type { SessionSummaryEntry, LatencyStats } from '../api/client';
-import { formatElapsedDuration } from '../lib/format';
+import { formatElapsedDuration, formatDateTimeCompact } from '../lib/format';
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: ReactNode }) {
   return (
@@ -39,14 +39,6 @@ function fmtMs(ms: number | null): string {
   if (ms === null) return '—';
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function formatStart(ts: string): string {
-  const d = new Date(ts);
-  return d.toLocaleString(undefined, {
-    month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
 }
 
 const SESSIONS_PAGE_SIZE = 5;
@@ -106,7 +98,7 @@ function SessionsTable({ entries, onSessionClick }: {
                   )}
                 </td>
                 <td className="whitespace-nowrap py-2 pr-4 text-[var(--text-muted)]">
-                  {formatStart(entry.started_at)}
+                  {formatDateTimeCompact(entry.started_at)}
                 </td>
                 <td className="whitespace-nowrap py-2 pr-4 text-[var(--text-muted)]">
                   {formatElapsedDuration(entry.duration_ms, 'active')}

@@ -16,8 +16,8 @@ import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { DashboardRequestFlowItem, DashboardConversation } from '../../api/client'
-import { formatRequestDuration } from '../../lib/format'
-import { parseServerTimestamp, requestLabel } from './dashboardFormat'
+import { formatRequestDuration, formatTimeShort } from '../../lib/format'
+import { requestLabel } from './dashboardFormat'
 
 function statusOf(item: DashboardRequestFlowItem): { text: string; className: string } | null {
   if (item.invocation_outcome === 'failed' || (item.status_code != null && item.status_code >= 400)) {
@@ -110,7 +110,7 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
           >
             {items.map((item) => {
             const label = requestLabel(item.session_seq, item.id)
-            const time = new Date(parseServerTimestamp(item.timestamp)).toLocaleTimeString()
+            const time = formatTimeShort(item.timestamp)
             const status = statusOf(item)
             const marker = item.lineage_relation ? lineageMarker[item.lineage_relation] : null
             const meta = [item.model, item.duration_ms != null ? formatRequestDuration(item.duration_ms) : null]
