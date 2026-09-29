@@ -525,6 +525,32 @@ def test_lineage_snapshots_do_not_load_unused_block_attrs(db):
     assert "blocks.attrs" not in block_selects[0]
 
 
+def test_dashboard_display_reads_skip_retained_request_bodies(db):
+    _session(db)
+    first = _req(db, "first", seq=1)
+    second = _req(db, "second", seq=2, parent="first")
+    first.raw_request_body = second.raw_request_body = "large retained body"
+    db.flush()
+    db.expunge_all()  # Exercise fresh ORM reads, not rows already present in the identity map.
+    request_selects = []
+    def record(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT") and "FROM requests" in statement:
+            request_selects.append(statement)
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        dashboard = crud.get_dashboard_live(db)
+        crud.get_session_request_context(db, "s1", "second")
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert dashboard["context_change"]["parent_request_id"] == "first"
+    assert request_selects
+    assert all("raw_request_body" not in statement and
+               "canonical_request_body" not in statement and
+               "canonical_response_body" not in statement
+               for statement in request_selects)
+
+
 def test_oversized_lineage_graph_is_not_retained(db, monkeypatch):
     _session(db)
     _req(db, "first", seq=1)

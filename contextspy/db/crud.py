@@ -899,6 +899,18 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
 
 _LIVE_ACTIVITY_LIMIT = 10
 _CONVERSATION_PREVIEW_LIMIT = 15
+_DISPLAY_REQUEST_COLUMNS = (
+    Request.id, Request.session_id, Request.session_seq, Request.timestamp,
+    Request.model, Request.duration_ms, Request.status_code,
+    Request.invocation_outcome, Request.context_fidelity,
+    Request.tokens_total_input, Request.tokens_total_output,
+    Request.provider_input_tokens,
+)
+
+
+def _display_requests():
+    """Request metadata needed by cards, activity and context comparisons."""
+    return select(Request).options(load_only(*_DISPLAY_REQUEST_COLUMNS, raiseload=True))
 
 
 def _session_lineage_revision(db: OrmSession, session_id: str, session_count: int) -> str:
@@ -1055,7 +1067,9 @@ def _session_sequence_projection(db: OrmSession, graph: dict, *, limit: int,
         raise ValueError("Request cursor does not belong to this session")
     eligible = [node for node in ordered if after is None or _sequence_order(node) < after]
     selected = eligible[:limit]
-    rows = db.execute(select(Request).where(Request.id.in_(node["request_id"] for node in selected))).scalars().all() if selected else []
+    rows = db.execute(_display_requests().where(Request.id.in_(
+        node["request_id"] for node in selected
+    ))).scalars().all() if selected else []
     row_by_id = {row.id: row for row in rows}
     edges = {edge["target_request_id"]: edge for edge in graph["edges"]
              if edge["relation_type"] == "context_continuation"}
@@ -1085,7 +1099,7 @@ def _session_sequence_projection(db: OrmSession, graph: dict, *, limit: int,
 
 def _session_activity(db: OrmSession, session_id: str) -> list[dict]:
     recent = db.execute(
-        select(Request).where(Request.session_id == session_id)
+        _display_requests().where(Request.session_id == session_id)
         .order_by(Request.session_seq.desc(), Request.timestamp.desc(), Request.id.desc())
         .limit(_LIVE_ACTIVITY_LIMIT)
     ).scalars().all()
@@ -1106,7 +1120,7 @@ def _selected_context_change(db: OrmSession, graph: dict, request_id: str) -> di
                  item["relation_type"] == "context_continuation"), None)
     parent_id = edge["source_request_id"] if edge else None
     ids = [request_id] + ([parent_id] if parent_id else [])
-    rows = db.execute(select(Request).where(Request.id.in_(ids))).scalars().all()
+    rows = db.execute(_display_requests().where(Request.id.in_(ids))).scalars().all()
     by_id = {row.id: row for row in rows}
     block_counts, opaque_counts = _block_counts(db, ids)
     return _context_change(
@@ -1256,7 +1270,7 @@ def _conversation_projection_view(
         if edge:
             comparison_ids.add(edge["source_request_id"])
     row_ids = set(visible_ids) | comparison_ids
-    rows = list(db.execute(select(Request).where(Request.id.in_(row_ids))).scalars().all()) if row_ids else []
+    rows = list(db.execute(_display_requests().where(Request.id.in_(row_ids))).scalars().all()) if row_ids else []
     row_by_id = {row.id: row for row in rows}
     block_counts, opaque_counts = _block_counts(db, list(comparison_ids)) if comparison_ids else ({}, {})
     views = []

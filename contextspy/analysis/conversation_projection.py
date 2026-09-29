@@ -8,7 +8,6 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Mapping
 
-from contextspy.analysis.blocks import Direction
 from contextspy.analysis.context_diff import semantic_key
 from contextspy.analysis.lineage_types import (
     LineageEdge, RequestSnapshot, input_blocks as _input_blocks,
@@ -17,6 +16,21 @@ from contextspy.analysis.lineage_types import (
 
 MAX_AFFINITY_CANDIDATES = 32
 MAX_AFFINITY_POSTINGS = 64
+
+
+def _meaningful_input_weights(internal: list[RequestSnapshot]) -> dict[str, dict[tuple, int]]:
+    """Prepare the same non-configuration evidence for both grouping phases."""
+    weights: dict[str, dict[tuple, int]] = {}
+    for request in internal:
+        values: dict[tuple, int] = {}
+        for block in _input_blocks(request):
+            if block.is_configuration:
+                continue
+            key = semantic_key(block)
+            if key is not None:
+                values[key] = max(values.get(key, 0), max(1, block.token_count))
+        weights[request.id] = values
+    return weights
 
 
 def _strong_stream_context(
@@ -52,6 +66,7 @@ def _compacted_stream_context(
 def _stream_affinity_groups(
     internal: list[RequestSnapshot], edges: list[LineageEdge],
     primary_path: list[str], primary_ids: set[str], next_number: int,
+    weights: dict[str, dict[tuple, int]],
 ) -> tuple[list[dict[str, Any]], set[str], dict[str, dict[str, Any]]]:
     """Promote corroborated Codex streams without modifying lineage edges.
 
@@ -105,17 +120,6 @@ def _stream_affinity_groups(
                 join_hints(first, value)
     canonical_hint = {rid: find_hint(value) if value else None
                       for rid, value in hint.items()}
-
-    weights: dict[str, dict[tuple, int]] = {}
-    for request in internal:
-        values: dict[tuple, int] = {}
-        for block in request.blocks:
-            if block.direction != Direction.INPUT or block.is_configuration:
-                continue
-            key = semantic_key(block)
-            if key is not None:
-                values[key] = max(values.get(key, 0), max(1, block.token_count))
-        weights[request.id] = values
 
     postings: dict[tuple, list[str]] = defaultdict(list)
     bridges: dict[str, dict[str, Any]] = {}
@@ -205,6 +209,7 @@ def _stream_affinity_groups(
 def _finalize_activity_groups(
     internal: list[RequestSnapshot], edges: list[LineageEdge],
     groups: list[dict[str, Any]], bridges: dict[str, dict[str, Any]],
+    weights: dict[str, dict[tuple, int]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Separate supported streams from provisional requests after graph analysis.
 
@@ -239,17 +244,6 @@ def _finalize_activity_groups(
         components[find(rid)].add(rid)
     if not components:
         return groups[1:], None
-
-    weights: dict[str, dict[tuple, int]] = {}
-    for request in internal:
-        values: dict[tuple, int] = {}
-        for block in _input_blocks(request):
-            if block.is_configuration:
-                continue
-            key = semantic_key(block)
-            if key is not None:
-                values[key] = max(values.get(key, 0), max(1, block.token_count))
-        weights[request.id] = values
 
     def ordered_ids(ids: set[str]) -> list[str]:
         return sorted(ids, key=lambda rid: _request_order(by_id[rid]))
@@ -470,6 +464,7 @@ def _conversation_projection(
                 "membership": {}, "stream_bridges": {}}
 
     by_id = {request.id: request for request in internal}
+    weights = _meaningful_input_weights(internal)
     parent_edge = {edge.target_request_id: edge for edge in edges
                    if edge.relation_type == "context_continuation"}
     children: dict[str, list[str]] = defaultdict(list)
@@ -615,7 +610,7 @@ def _conversation_projection(
             "confirmed_request_ids": paths[index],
         })
     affinity_groups, primary_confirmed, bridges = _stream_affinity_groups(
-        internal, edges, primary_path, primary_ids, len(groups) + 1,
+        internal, edges, primary_path, primary_ids, len(groups) + 1, weights,
     )
     if affinity_groups:
         promoted_ids = set().union(*(set(group["request_ids"]) for group in affinity_groups))
@@ -626,7 +621,7 @@ def _conversation_projection(
         primary_confirmed & set(groups[0]["request_ids"]),
         key=lambda rid: _request_order(by_id[rid]),
     )
-    groups, auxiliary = _finalize_activity_groups(internal, edges, groups, bridges)
+    groups, auxiliary = _finalize_activity_groups(internal, edges, groups, bridges, weights)
     membership: dict[str, list[dict[str, str]]] = defaultdict(list)
     for group in groups:
         confirmed_ids = set(group["confirmed_request_ids"])
