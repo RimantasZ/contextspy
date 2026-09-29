@@ -39,6 +39,9 @@ export function SessionConversationSequences({ data, initialGroupKey, layout = '
   const [loadingKey, setLoadingKey] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const [loadedRevision, setLoadedRevision] = useState(data.revision)
+  const linkedGroupPresent = !initialGroupKey || initialGroupKey === data.auxiliary?.key ||
+    data.conversations.some((group) => group.key === initialGroupKey) ||
+    (loadedRevision === data.revision && extraGroups.some((group) => group.key === initialGroupKey))
 
   useEffect(() => {
     if (sequence.data && sequenceRevision !== sequence.data.revision) {
@@ -57,8 +60,7 @@ export function SessionConversationSequences({ data, initialGroupKey, layout = '
   }, [context.error, newestId, selectedId, setSelectedId])
 
   useEffect(() => {
-    if (!initialGroupKey || initialGroupKey === data.auxiliary?.key ||
-        data.conversations.some((group) => group.key === initialGroupKey)) return
+    if (linkedGroupPresent || !initialGroupKey) return
     let active = true
     sessionsApi.conversations(data.session_id, 0, data.revision, initialGroupKey).then((page) => {
       if (active) setExtraGroups((previous) => {
@@ -69,7 +71,7 @@ export function SessionConversationSequences({ data, initialGroupKey, layout = '
       if (active) loadFailed(error, 'Linked conversation could not be loaded.')
     })
     return () => { active = false }
-  }, [initialGroupKey, data.session_id, data.revision, data.conversations, data.auxiliary?.key])
+  }, [linkedGroupPresent, initialGroupKey, data.session_id, data.revision])
 
   useEffect(() => {
     if (loadedRevision !== data.revision) {

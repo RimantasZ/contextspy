@@ -30,7 +30,6 @@ class ContextBlock:
     token_count: int
     tool_name: str | None = None
     tool_call_id: str | None = None
-    attrs: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def is_configuration(self) -> bool:

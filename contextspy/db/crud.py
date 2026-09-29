@@ -180,6 +180,14 @@ def _lineage_snapshots_for_requests(
     if request_ids:
         rows = db.execute(
             select(BlockRecord)
+            .options(load_only(
+                BlockRecord.id, BlockRecord.request_id, BlockRecord.direction,
+                BlockRecord.position, BlockRecord.message_index,
+                BlockRecord.block_type, BlockRecord.category,
+                BlockRecord.content_hash, BlockRecord.token_count,
+                BlockRecord.tool_name, BlockRecord.tool_call_id,
+                raiseload=True,
+            ))
             .where(BlockRecord.request_id.in_(request_ids))
             .order_by(
                 BlockRecord.request_id.asc(),
@@ -189,10 +197,6 @@ def _lineage_snapshots_for_requests(
             )
         ).scalars().all()
         for block in rows:
-            try:
-                attrs = json.loads(block.attrs) if block.attrs else {}
-            except (json.JSONDecodeError, TypeError):
-                attrs = {}
             blocks_by_request[block.request_id].append(ContextBlock(
                 id=block.id,
                 request_id=block.request_id,
@@ -205,7 +209,6 @@ def _lineage_snapshots_for_requests(
                 token_count=block.token_count,
                 tool_name=block.tool_name,
                 tool_call_id=block.tool_call_id,
-                attrs=attrs,
             ))
 
     return [RequestSnapshot(
@@ -907,11 +910,6 @@ def _session_lineage_graph(db: OrmSession, session_id: str, session_count: int) 
     return session_lineage_service.graph_for_session(
         db, session_id, session_count, get_session_lineage_snapshots,
     )
-
-
-def _live_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> dict:
-    """Compatibility wrapper for the dashboard's shared session graph."""
-    return _session_lineage_graph(db, session_id, session_count)[0]
 
 
 def get_session_lineage_graph(db: OrmSession, session_id: str) -> dict:

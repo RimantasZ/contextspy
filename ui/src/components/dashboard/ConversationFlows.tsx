@@ -4,7 +4,6 @@ import { ConversationGroupRow } from './ConversationGroupRow'
 import { RequestFlow } from './RequestFlow'
 import { RequestViewControls } from './RequestViewControls'
 import { useConversationCardDensity } from './requestViewState'
-export { evidenceLabel, gapLabel } from './conversationPresentation'
 
 export function ConversationFlows({ data, selectedId, onSelect, compact, onShowSequence }: {
   data: DashboardLiveData

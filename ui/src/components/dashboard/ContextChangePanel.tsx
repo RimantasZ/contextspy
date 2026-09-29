@@ -21,8 +21,8 @@ function tokenGlyph(delta: number): string {
   return '•'
 }
 
-export function ContextChangePanel({ change, unavailable = false, pending = false, failed = false, onOpenRequest, actions }: {
-  change: DashboardContextChange | null; unavailable?: boolean; pending?: boolean; failed?: boolean
+export function ContextChangePanel({ change, pending = false, failed = false, onOpenRequest, actions }: {
+  change: DashboardContextChange | null; pending?: boolean; failed?: boolean
   onOpenRequest?: (id: string) => void
   actions?: ReactNode
 }) {
@@ -32,7 +32,7 @@ export function ContextChangePanel({ change, unavailable = false, pending = fals
         <h2 className="section-title">Context size</h2>
         <p className="py-6 text-center text-sm text-[var(--text-muted)]">
           {pending ? 'Loading request context…' : failed ? 'Request context could not be loaded.' :
-            unavailable ? 'Parent comparison unavailable for this request.' : 'No requests captured in this session yet.'}
+            'No requests captured in this session yet.'}
         </p>
       </div>
     )

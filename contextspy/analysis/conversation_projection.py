@@ -180,8 +180,7 @@ def _stream_affinity_groups(
         if (len(weights[latest]) < 3
                 or sum(weights[latest].values()) < 128):
             continue
-        if (_strong_stream_context(weights[anchor_latest], weights[latest])
-                or _strong_stream_context(weights[latest], weights[anchor_latest])):
+        if _strong_stream_context(weights[anchor_latest], weights[latest]):
             continue
         candidates_by_hint[value].append((root, ids))
 

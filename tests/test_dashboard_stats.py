@@ -504,6 +504,27 @@ def test_lineage_revision_tracks_relevant_edits_without_unrelated_invalidations(
     assert crud.get_session_lineage_revision(db, "s1") != with_parent
 
 
+def test_lineage_snapshots_do_not_load_unused_block_attrs(db):
+    _session(db)
+    _req(db, "first")
+    _blocks(db, "first", "user_message", 1, content_hash="visible", attrs="not JSON")
+    block_selects = []
+    def record(_connection, _cursor, statement, _parameters, _context, _many):
+        if "FROM blocks" in statement:
+            block_selects.append(statement)
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        snapshots, external = crud.get_session_lineage_snapshots(db, "s1")
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert external == []
+    assert snapshots[0].blocks[0].content_hash == "visible"
+    assert not hasattr(snapshots[0].blocks[0], "attrs")
+    assert len(block_selects) == 1
+    assert "blocks.attrs" not in block_selects[0]
+
+
 def test_oversized_lineage_graph_is_not_retained(db, monkeypatch):
     _session(db)
     _req(db, "first", seq=1)

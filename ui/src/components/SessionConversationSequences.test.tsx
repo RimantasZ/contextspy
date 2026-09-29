@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -101,6 +101,31 @@ describe('session conversation sequences', () => {
     expect(extra).toHaveBeenCalledWith('s1', 1, 'v1')
     earlier.mockRestore()
     extra.mockRestore()
+  })
+
+  it('loads a linked group once per revision, not on every first-page poll', async () => {
+    const linked = vi.spyOn(sessionsApi, 'conversations').mockImplementation(
+      async (_sessionId, _offset, revision) => ({
+        ...base, revision: revision ?? base.revision,
+        conversations: [group('linked', 8)],
+      }),
+    )
+    const queryClient = new QueryClient()
+    const renderView = (data: SessionConversationsData) => (
+      <QueryClientProvider client={queryClient}><MemoryRouter>
+        <SessionConversationSequences data={data} initialGroupKey="linked" />
+      </MemoryRouter></QueryClientProvider>
+    )
+    const view = render(renderView(base))
+    expect(await screen.findByRole('region', { name: 'linked' })).toBeTruthy()
+    expect(linked).toHaveBeenCalledTimes(1)
+
+    view.rerender(renderView({ ...base, conversations: [...base.conversations] }))
+    expect(linked).toHaveBeenCalledTimes(1)
+
+    view.rerender(renderView({ ...base, revision: 'v2', conversations: [...base.conversations] }))
+    await waitFor(() => expect(linked).toHaveBeenCalledTimes(2))
+    linked.mockRestore()
   })
 
   it('selects a request card in the grouped view', async () => {
