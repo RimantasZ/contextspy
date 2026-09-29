@@ -398,6 +398,19 @@ export const sessionsApi = {
     if (cursor) q.set('cursor', cursor)
     return apiFetch<SessionConversationPage>(`/sessions/${id}/conversations/requests?${q}`)
   },
+  sequence: (id: string, revision?: string, cursor?: string | null) => {
+    const q = new URLSearchParams({ limit: '15' })
+    if (revision) q.set('revision', revision)
+    if (cursor) q.set('cursor', cursor)
+    return apiFetch<SessionSequencePage>(`/sessions/${id}/sequence?${q}`)
+  },
+  requestContext: (id: string, requestId: string, revision?: string) => {
+    const q = new URLSearchParams()
+    if (revision) q.set('revision', revision)
+    return apiFetch<{ session_id: string; revision: string; context_change: DashboardContextChange }>(
+      `/sessions/${id}/sequence/${requestId}/context?${q}`,
+    )
+  },
 }
 
 // ---- Requests API ---------------------------------------------------------
@@ -437,6 +450,7 @@ export interface DashboardActiveSession {
 
 export interface DashboardRequestFlowItem {
   id: string
+  conversation_code?: string
   session_seq: number | null
   timestamp: string
   model: string | null
@@ -445,6 +459,17 @@ export interface DashboardRequestFlowItem {
   invocation_outcome: Request['invocation_outcome']
   tokens_total_input: number
   tokens_total_output: number
+}
+
+export type LineageRequestFlowItem = DashboardConversation['recent_segments'][number]['request_flow'][number]
+
+export interface SessionSequencePage {
+  session_id: string
+  revision: string
+  request_flow: LineageRequestFlowItem[]
+  request_count: number
+  next_cursor: string | null
+  activity: DashboardActivityPoint[]
 }
 
 export interface DashboardActivityPoint {
@@ -473,8 +498,9 @@ export interface DashboardContextChange {
   external_parent: boolean
   first_conversation: boolean
   token_delta: number | null
-  comparison_fidelity: 'complete' | 'partial' | 'unavailable'
+  comparison_fidelity: 'complete' | 'partial' | 'observed_only' | 'unavailable'
   block_changes: DashboardBlockChange[]
+  opaque_changes?: number | null
 }
 
 export interface DashboardConversation {
@@ -555,7 +581,9 @@ export interface SessionConversationPage {
 
 export interface DashboardLiveData {
   active_session: DashboardActiveSession | null
-  request_flow: DashboardRequestFlowItem[]
+  request_flow: LineageRequestFlowItem[]
+  sequence_next_cursor?: string | null
+  sequence_revision?: string
   activity: DashboardActivityPoint[]
   context_change: DashboardContextChange | null
   conversations: DashboardConversation[]

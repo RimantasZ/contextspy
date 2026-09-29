@@ -20,13 +20,16 @@ function tokenGlyph(delta: number): string {
   return '•'
 }
 
-export function ContextChangePanel({ change, unavailable = false }: { change: DashboardContextChange | null; unavailable?: boolean }) {
+export function ContextChangePanel({ change, unavailable = false, pending = false, failed = false }: {
+  change: DashboardContextChange | null; unavailable?: boolean; pending?: boolean; failed?: boolean
+}) {
   if (!change) {
     return (
       <div className="panel">
         <h2 className="section-title">Context size</h2>
         <p className="py-6 text-center text-sm text-[var(--text-muted)]">
-          {unavailable ? 'Parent comparisons unavailable for the ungrouped session requests.' : 'No requests captured in this session yet.'}
+          {pending ? 'Loading request context…' : failed ? 'Request context could not be loaded.' :
+            unavailable ? 'Parent comparison unavailable for this request.' : 'No requests captured in this session yet.'}
         </p>
       </div>
     )
@@ -46,10 +49,13 @@ export function ContextChangePanel({ change, unavailable = false }: { change: Da
 
   return (
     <div className="panel">
-      <h2 className="section-title">Context size</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="section-title">Context size · {requestLabel(change.session_seq, change.request_id)}</h2>
+        <a className="app-button min-h-7 py-1 text-xs" href={`/requests/${change.request_id}`}>Open request</a>
+      </div>
       <p className="mb-3 text-xs text-[var(--text-muted)]">
         {hasParent
-          ? `Latest request · compared with ${parentLabel}${change.external_parent ? ' (another session)' : ''}${change.parent_state === 'inferred' ? ` · inferred ${Math.round((change.parent_confidence ?? 0) * 100)}%` : ''}`
+          ? `Compared with ${parentLabel}${change.external_parent ? ' (another session)' : ''}${change.parent_state === 'inferred' ? ` · inferred ${Math.round((change.parent_confidence ?? 0) * 100)}%` : ''}`
           : noParentText}
       </p>
       <p className="text-2xl font-semibold tabular-nums text-[var(--text)]">
@@ -70,7 +76,7 @@ export function ContextChangePanel({ change, unavailable = false }: { change: Da
             <p className="text-xs text-[var(--text-muted)]">Block comparison unavailable.</p>
           ) : (
             <>
-              {rows.length === 0 ? (
+              {rows.length === 0 && change.comparison_fidelity !== 'observed_only' ? (
                 <p className="text-xs text-[var(--text-muted)]">No block-count changes. Content may still have changed.</p>
               ) : (
                 <ul className="space-y-1 text-sm">
@@ -90,7 +96,16 @@ export function ContextChangePanel({ change, unavailable = false }: { change: Da
                       {hiddenCount} other block type{hiddenCount === 1 ? '' : 's'} changed
                     </li>
                   )}
+                  {change.comparison_fidelity === 'observed_only' && (
+                    <li className="flex items-center justify-between gap-2">
+                      <span className="text-[var(--text)]">Opaque changes:</span>
+                      <span className="font-medium tabular-nums text-[var(--text)]">{change.opaque_changes ?? 0}</span>
+                    </li>
+                  )}
                 </ul>
+              )}
+              {change.comparison_fidelity === 'observed_only' && (
+                <p className="mt-2 text-xs text-[var(--text-muted)]">Observed counts only; opaque contents not compared.</p>
               )}
               {change.comparison_fidelity === 'partial' && (
                 <p className="mt-2 text-xs text-[var(--text-muted)]">Partial capture</p>

@@ -26,6 +26,7 @@ vi.mock('../api/hooks', () => ({
   useSessions: () => idle,
   useSessionsSummary: () => idle,
   useDashboardLive: () => live,
+  useRequestContext: () => ({ data: undefined, isLoading: false }),
   useEndSession: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
   useCreateSession: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }))

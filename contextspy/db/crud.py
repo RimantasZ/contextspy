@@ -886,7 +886,6 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
 # Live dashboard (active session)
 # ---------------------------------------------------------------------------
 
-_LIVE_FLOW_LIMIT = 5
 _LIVE_ACTIVITY_LIMIT = 10
 _CONVERSATION_PREVIEW_LIMIT = 15
 _LIVE_GRAPH_CACHE_LIMIT = 4
@@ -935,29 +934,37 @@ def _live_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> 
     return _session_lineage_graph(db, session_id, session_count)[0]
 
 
-def _block_counts(db: OrmSession, request_ids: list[str]) -> dict[str, dict[str, int]]:
+def _block_counts(
+    db: OrmSession, request_ids: list[str],
+) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
+    opaque = func.coalesce(func.json_extract(BlockRecord.attrs, "$.opaque"), 0)
     rows = db.execute(
         select(
             BlockRecord.request_id,
             BlockRecord.block_type,
+            opaque.label("opaque"),
             func.count().label("block_count"),
         )
         .where(
             BlockRecord.request_id.in_(request_ids),
             BlockRecord.direction == Direction.INPUT,
         )
-        .group_by(BlockRecord.request_id, BlockRecord.block_type)
+        .group_by(BlockRecord.request_id, BlockRecord.block_type, opaque)
     ).all()
     counts: dict[str, dict[str, int]] = {rid: {} for rid in request_ids}
+    opaque_counts: dict[str, int] = {rid: 0 for rid in request_ids}
     for row in rows:
-        counts[row.request_id][row.block_type] = row.block_count
-    return counts
+        if row.opaque:
+            opaque_counts[row.request_id] += row.block_count
+        else:
+            counts[row.request_id][row.block_type] = row.block_count
+    return counts, opaque_counts
 
 
 def _comparison_fidelity(latest: Request, previous: Request) -> str:
     pair = {latest.context_fidelity, previous.context_fidelity}
     if "opaque" in pair:
-        return "unavailable"
+        return "observed_only"
     if "partial" in pair:
         return "partial"
     return "complete"
@@ -966,6 +973,7 @@ def _comparison_fidelity(latest: Request, previous: Request) -> str:
 def _context_change(
     latest: Request, parent: Request | None, *, parent_state: str,
     confidence: float | None, block_counts: dict[str, dict[str, int]],
+    opaque_counts: dict[str, int],
     first_conversation: bool = False,
 ) -> dict:
     change: dict[str, Any] = {
@@ -981,6 +989,7 @@ def _context_change(
         "token_delta": None,
         "comparison_fidelity": "unavailable",
         "block_changes": [],
+        "opaque_changes": None,
     }
     if parent is None:
         return change
@@ -988,8 +997,10 @@ def _context_change(
     change["token_delta"] = latest.tokens_total_input - parent.tokens_total_input
     fidelity = _comparison_fidelity(latest, parent)
     change["comparison_fidelity"] = fidelity
-    if fidelity == "unavailable":
-        return change
+    if fidelity == "observed_only":
+        change["opaque_changes"] = abs(
+            opaque_counts.get(latest.id, 0) - opaque_counts.get(parent.id, 0)
+        )
 
     current = block_counts.get(latest.id, {})
     prior = block_counts.get(parent.id, {})
@@ -1013,6 +1024,137 @@ def _flow_item(r: Request) -> dict:
         "tokens_total_input": r.tokens_total_input,
         "tokens_total_output": r.tokens_total_output,
     }
+
+
+def _lineage_flow_item(row: Request, node: dict, edge: dict | None,
+                       stream_bridges: dict, auxiliary_ids: set[str],
+                       conversation_code: str) -> dict:
+    rid = row.id
+    return {
+        **_flow_item(row),
+        "conversation_code": conversation_code,
+        "parent_request_id": edge["source_request_id"] if edge else None,
+        "parent_state": node["parent_state"],
+        "certainty": edge["certainty"] if edge else None,
+        "confidence": edge["confidence"] if edge else None,
+        "lineage_relation": (
+            stream_bridges[rid]["evidence"] if rid in stream_bridges else
+            "external" if edge and edge["external_source"] else
+            edge["certainty"] if edge else node["parent_state"]
+        ),
+        "membership_state": (
+            "provisional_unassigned" if rid in auxiliary_ids else
+            "confirmed" if node["conversation_membership"] else "unassigned"
+        ),
+        "shared_history": len(node["conversation_membership"]) > 1,
+        "fork_status": node["conversation_fork_status"],
+    }
+
+
+def _sequence_order(node: dict) -> tuple:
+    return (node["session_seq"] if node["session_seq"] is not None else -1,
+            node["completed_at"], node["request_id"])
+
+
+def _session_sequence_projection(db: OrmSession, graph: dict, *, limit: int,
+                                 cursor: str | None = None) -> dict:
+    nodes = [node for node in graph["nodes"] if not node["external"]]
+    ordered = sorted(nodes, key=_sequence_order, reverse=True)
+    after = _cursor_decode(cursor) if cursor else None
+    if after is not None and after not in {_sequence_order(node) for node in ordered}:
+        raise ValueError("Request cursor does not belong to this session")
+    eligible = [node for node in ordered if after is None or _sequence_order(node) < after]
+    selected = eligible[:limit]
+    rows = db.execute(select(Request).where(Request.id.in_(node["request_id"] for node in selected))).scalars().all() if selected else []
+    row_by_id = {row.id: row for row in rows}
+    edges = {edge["target_request_id"]: edge for edge in graph["edges"]
+             if edge["relation_type"] == "context_continuation"}
+    auxiliary_ids = set((graph.get("auxiliary") or {}).get("request_ids", []))
+    codes = {group["key"]: f"C{index}" for index, group in enumerate(graph["conversations"], 1)}
+
+    def code_for(node: dict) -> str:
+        if node["request_id"] in auxiliary_ids:
+            return "AUX"
+        memberships = node["conversation_membership"]
+        confirmed = next((item["key"] for item in memberships if item["state"] == "confirmed"), None)
+        return codes.get(confirmed or (memberships[0]["key"] if memberships else ""), "AUX")
+
+    return {
+        "request_flow": [
+            _lineage_flow_item(row_by_id[node["request_id"]], node,
+                               edges.get(node["request_id"]),
+                               graph.get("stream_bridges", {}), auxiliary_ids,
+                               code_for(node))
+            for node in selected
+        ],
+        "request_count": len(ordered),
+        "next_cursor": (_cursor_encode(_sequence_order(selected[-1]))
+                        if len(eligible) > limit and selected else None),
+    }
+
+
+def _session_activity(db: OrmSession, session_id: str) -> list[dict]:
+    recent = db.execute(
+        select(Request).where(Request.session_id == session_id)
+        .order_by(Request.session_seq.desc(), Request.timestamp.desc(), Request.id.desc())
+        .limit(_LIVE_ACTIVITY_LIMIT)
+    ).scalars().all()
+    return [{"id": row.id, "session_seq": row.session_seq,
+             "timestamp": row.timestamp.isoformat(),
+             "tokens_total_input": row.tokens_total_input,
+             "tokens_total_output": row.tokens_total_output}
+            for row in reversed(recent)]
+
+
+def _selected_context_change(db: OrmSession, graph: dict, request_id: str) -> dict:
+    nodes = {node["request_id"]: node for node in graph["nodes"]}
+    node = nodes.get(request_id)
+    if node is None or node["external"]:
+        raise KeyError("Request not found in session")
+    edge = next((item for item in graph["edges"]
+                 if item["target_request_id"] == request_id and
+                 item["relation_type"] == "context_continuation"), None)
+    parent_id = edge["source_request_id"] if edge else None
+    ids = [request_id] + ([parent_id] if parent_id else [])
+    rows = db.execute(select(Request).where(Request.id.in_(ids))).scalars().all()
+    by_id = {row.id: row for row in rows}
+    block_counts, opaque_counts = _block_counts(db, ids)
+    return _context_change(
+        by_id[request_id], by_id.get(parent_id), parent_state=node["parent_state"],
+        confidence=edge["confidence"] if edge else None,
+        block_counts=block_counts, opaque_counts=opaque_counts,
+        first_conversation=any(
+            request_id in group["request_ids"] and group["evidence"] == "parallel_chains"
+            for group in graph["conversations"]
+        ) and edge is None,
+    )
+
+
+def get_session_sequence(db: OrmSession, session_id: str, *, revision: str | None = None,
+                         cursor: str | None = None, limit: int = 15) -> dict:
+    with db.begin_nested():
+        if not get_session(db, session_id):
+            raise KeyError("Session not found")
+        count = db.scalar(select(func.count()).where(Request.session_id == session_id)) or 0
+        graph, current_revision = _session_lineage_graph(db, session_id, count)
+        if revision is not None and revision != current_revision:
+            raise ValueError("Sequence revision changed; refresh and try again")
+        page = _session_sequence_projection(db, graph, limit=limit, cursor=cursor)
+        return {"session_id": session_id, "revision": current_revision,
+                **page, "activity": _session_activity(db, session_id)}
+
+
+def get_session_request_context(db: OrmSession, session_id: str, request_id: str,
+                                *, revision: str | None = None) -> dict:
+    with db.begin_nested():
+        if not get_session(db, session_id):
+            raise KeyError("Session not found")
+        count = db.scalar(select(func.count()).where(Request.session_id == session_id)) or 0
+        graph, current_revision = _session_lineage_graph(db, session_id, count)
+        if revision is not None and revision != current_revision:
+            raise ValueError("Sequence revision changed; refresh and try again")
+        return {"session_id": session_id, "revision": current_revision,
+                "context_change": _selected_context_change(db, graph, request_id)}
 
 
 def _conversation_order(graph: dict) -> list[dict]:
@@ -1054,6 +1196,7 @@ def _conversation_projection_view(
     block counts are hydrated in batches after graph-wide classification.
     """
     nodes = {node["request_id"]: node for node in graph["nodes"]}
+    conversation_codes = {group["key"]: f"C{index}" for index, group in enumerate(graph["conversations"], 1)}
     stream_bridges = graph.get("stream_bridges", {})
     parent_edges = {edge["target_request_id"]: edge for edge in graph["edges"]
                     if edge["relation_type"] == "context_continuation"}
@@ -1124,7 +1267,7 @@ def _conversation_projection_view(
             comparison_ids.add(edge["source_request_id"])
     rows = list(db.execute(select(Request).where(Request.id.in_(comparison_ids))).scalars().all()) if comparison_ids else []
     row_by_id = {row.id: row for row in rows}
-    block_counts = _block_counts(db, list(comparison_ids)) if comparison_ids else {}
+    block_counts, opaque_counts = _block_counts(db, list(comparison_ids)) if comparison_ids else ({}, {})
     views = []
     page = None
     for group, ordered, selected, has_more, segment_by_id, starts in prepared:
@@ -1138,6 +1281,7 @@ def _conversation_projection_view(
             node = nodes[rid]
             segment_slices[-1]["request_flow"].append({
                 **_flow_item(row_by_id[rid]),
+                "conversation_code": conversation_codes.get(group["key"], "AUX"),
                 "parent_request_id": edge["source_request_id"] if edge else None,
                 "parent_state": node["parent_state"],
                 "certainty": edge["certainty"] if edge else None,
@@ -1167,7 +1311,7 @@ def _conversation_projection_view(
             row_by_id[latest_id], row_by_id.get(parent_id),
             parent_state=nodes[latest_id]["parent_state"],
             confidence=edge["confidence"] if edge else None,
-            block_counts=block_counts,
+            block_counts=block_counts, opaque_counts=opaque_counts,
             first_conversation=group["evidence"] == "parallel_chains" and edge is None,
         )
         next_cursor = _cursor_encode(order(selected[-1])) if has_more and selected else None
@@ -1303,29 +1447,9 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
         "tokens_total_output": totals.tok_out,
     }
 
-    # Newest first. SQLite sorts NULL lowest, so null-seq rows fall after sequenced ones.
-    recent = list(
-        db.execute(
-            select(Request)
-            .where(Request.session_id == session.id)
-            .order_by(Request.session_seq.desc(), Request.timestamp.desc(), Request.id.desc())
-            .limit(_LIVE_ACTIVITY_LIMIT)
-        ).scalars().all()
-    )
-
-    request_flow = [_flow_item(r) for r in recent[:_LIVE_FLOW_LIMIT]]
-    activity = [
-        {
-            "id": r.id,
-            "session_seq": r.session_seq,
-            "timestamp": r.timestamp.isoformat(),
-            "tokens_total_input": r.tokens_total_input,
-            "tokens_total_output": r.tokens_total_output,
-        }
-        for r in reversed(recent)
-    ]
-
-    graph = _live_lineage_graph(db, session.id, totals.n)
+    graph, sequence_revision = _session_lineage_graph(db, session.id, totals.n)
+    sequence = _session_sequence_projection(db, graph, limit=_CONVERSATION_PREVIEW_LIMIT)
+    activity = _session_activity(db, session.id)
     groups = _conversation_order(graph)[:4]
     auxiliary_group = graph.get("auxiliary")
     display_groups = groups + ([auxiliary_group] if auxiliary_group else [])
@@ -1336,11 +1460,14 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
     auxiliary = views[-1] if auxiliary_group else None
 
     most_recent = conversations[0] if conversations else auxiliary
-    context_change = most_recent["context_change"] if most_recent else None
+    context_change = (_selected_context_change(db, graph, sequence["request_flow"][0]["id"])
+                      if sequence["request_flow"] else None)
 
     return {
         "active_session": active_session,
-        "request_flow": request_flow,
+        "request_flow": sequence["request_flow"],
+        "sequence_next_cursor": sequence["next_cursor"],
+        "sequence_revision": sequence_revision,
         "activity": activity,
         "context_change": context_change,
         "conversations": conversations,

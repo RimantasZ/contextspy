@@ -126,6 +126,34 @@ def get_session_conversation_requests(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/sessions/{session_id}/sequence")
+def get_session_sequence(
+    session_id: str, revision: str | None = None,
+    cursor: str | None = None, limit: int = Query(15, ge=1, le=100),
+):
+    try:
+        with get_db() as db:
+            return crud.get_session_sequence(db, session_id, revision=revision,
+                                             cursor=cursor, limit=limit)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/sequence/{request_id}/context")
+def get_session_request_context(session_id: str, request_id: str,
+                                revision: str | None = None):
+    try:
+        with get_db() as db:
+            return crud.get_session_request_context(db, session_id, request_id,
+                                                    revision=revision)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post("/sessions/{session_id}/end")
 def end_session(session_id: str):
     with get_db() as db:

@@ -22,6 +22,10 @@ export function requestLabel(sessionSeq: number | null, id: string): string {
   return sessionSeq != null ? `#${sessionSeq}` : id.slice(0, 8)
 }
 
+export function conversationRequestLabel(sessionSeq: number | null, id: string, code?: string): string {
+  return code ? `#${code}-${sessionSeq ?? id.slice(0, 8)}` : requestLabel(sessionSeq, id)
+}
+
 export function formatCompactTokens(value: number): string {
   const abs = Math.abs(value)
   if (abs >= 1_000_000) return `${trimFraction(value / 1_000_000)}M`

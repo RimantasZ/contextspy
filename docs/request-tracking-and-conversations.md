@@ -180,18 +180,36 @@ calculate session totals.
 
 ## Reading the screens
 
-- **Overview → Active session:** shows only the currently active session, up to four recently
-  active supported conversation rows, plus Auxiliary requests when nonempty, and up to 15
-  recent request cards per row. Each row has its own “More” link to Session Detail. The
-  numbered-conversation count excludes the auxiliary block. The session activity chart shows recent traffic for the
-  *whole session*, not one conversation. The separate global **Recent requests** table is a
-  chronological audit list and is not grouped by conversation.
-- **Session Detail → Conversations → Conversation sequences:** uses the same backend grouping
-  for active or ended sessions. Numbered rows are ordered by latest activity, with Auxiliary
-  requests last; it remains visible even when there are no confirmed rows. You can load more
-  conversations or older cards, including older auxiliary cards. The “More (N total)” count is
-  the represented request count for that row. The segment index helps find lineage breaks in a
-  long row. The separate auxiliary-request count is not a conversation count.
+- **Overview → Active session:** defaults to a single chronological **Sequence** row for the
+  currently active session. It shows each stored request once, newest first, including auxiliary
+  requests and any shared history. If there are multiple display groups, the “N conversations”
+  button switches to separate conversation rows. Here `N` includes Auxiliary requests when
+  present; the numbered-conversation count shown elsewhere excludes it. The dashboard previews
+  up to 15 cards per row; “More” opens Session Detail. The activity chart above the rows shows
+  the last 10 requests from the *whole session*, not one conversation. The separate global
+  **Recent requests** table remains a chronological audit list.
+- **Session Detail → Conversations:** also defaults to **Sequence**, with “More” loading older
+  cards. Switch to conversation rows to see backend-supported streams, their evidence, segment
+  boundaries, and Auxiliary requests. Numbered rows are ordered by latest activity, with
+  Auxiliary requests last. You can load more conversations or older cards in each row. “More
+  (N total)” counts the represented requests in that row; grouped rows may repeat shared
+  history. The segment index helps find lineage breaks in a long row. The activity chart above
+  the rows again shows only the last 10 session requests.
+- **Request cards and context:** compact cards are the default. The first line shows a label
+  such as `#C1-128` (request 128 in Conversation 1) or `#AUX-345` (Auxiliary requests) and the
+  lineage icon. The second shows time and duration in seconds; the third shows `↑` input-context
+  tokens and `↓` output tokens. In a grouped view, shared-history cards carry that row's
+  conversation code. In the chronological row, shared history uses its first confirmed
+  conversation. A selected card has a darker background. The Request flow header contains the
+  conversation switch and a Compact/Detailed toggle. Grouped conversations share one section,
+  with an independent toggle on each row (including Auxiliary requests), so one can be expanded
+  without expanding the others. Sequence and each conversation default to Compact independently;
+  explicit card-density choices are kept only for that session until the page is reloaded.
+  A fresh load returns to Compact. Detailed cards
+  show additional metadata and icon tooltips.
+  Click a card once to select it and update the context panel; click it again, or use “Open
+  request” in the panel, for Request Detail. As new requests arrive, selection follows the
+  newest request automatically. The panel can grow to include request actions in the future.
 - **Session Detail → Conversations → Lineage diagnostics:** shows the accepted exact and
   inferred parent edges, uncertain candidates, missing/external parents, structural branches,
   and root-to-leaf diagnostic paths. This is the place to inspect *why* a row has gaps. A
@@ -199,24 +217,29 @@ calculate session totals.
   only a structural split; a “confirmed fork” badge means the stricter conversation rule passed.
   Selecting an edge shows which input blocks persisted, which parent output was carried into
   child input, and which blocks were added, removed, or replaced relative to that parent.
-- **Context size:** selecting a row compares its latest request with its **resolved direct
-  parent**, not the preceding session request number or the nearest card in the row. If the
+- **Context size:** selecting a card compares that request with its **resolved direct parent**,
+  not the preceding session request number or the nearest card in the row. If the
   parent is missing or uncertain, there is no token delta. An exact parent from another session
   may be used for comparison but is excluded from this session's cards and totals. The input
   token delta is a difference between locally analyzed input sizes; “Block changes” are net
   counts of input block types, not a proof that content was added or removed. A zero block-count
   delta can still hide replaced content. Block comparison is marked partial when either context
-  is partial and unavailable when either is opaque; a parent-relative token delta may still be
-  shown when block comparison is unavailable.
+  is partial. When either context is opaque, ContextSpy shows observed-only counts for visible
+  block types and **Opaque changes: x** for the absolute difference in opaque input-item counts.
+  It does not compare encrypted contents: `0` does not mean the hidden state stayed the same.
+  A parent-relative token delta can still be shown for an opaque comparison.
 
-The `?view=lineage` URL opens **Conversation sequences** for compatibility with existing links;
-`?view=lineage&mode=fragments` opens **Lineage diagnostics**.
+The `?view=lineage` URL opens the default **Sequence** layout;
+`?view=lineage&layout=conversations` opens grouped conversations. Older links with a
+`conversation` parameter still open the requested grouped view. `?view=lineage&mode=fragments`
+opens **Lineage diagnostics**.
 
 ## Request-card corner icons
 
-Hover over a request card's top-right icon for its full explanation. The text is also included
-in the card's accessible label. The same glyph may represent two related states, so read the
-tooltip rather than interpreting the shape alone.
+In detailed mode, hover over a request card's top-right icon for its full explanation. Compact
+mode intentionally has no icon hover tooltip; switch to detailed mode to read one. The
+explanation is also included in the card's accessible label. The same glyph may represent two
+related states, so read the detailed explanation rather than interpreting the shape alone.
 
 | Icon | Tooltip heading and explanation | What it means |
 | --- | --- | --- |

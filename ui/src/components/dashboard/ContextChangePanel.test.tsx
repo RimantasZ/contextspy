@@ -32,7 +32,8 @@ describe('ContextChangePanel', () => {
   it('shows size, comparison sequence and positive delta', () => {
     render(<ContextChangePanel change={change()} />)
     expect(screen.getByText('87,412')).toBeTruthy()
-    expect(screen.getByText('Latest request · compared with #17')).toBeTruthy()
+    expect(screen.getByText('Compared with #17')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Open request' }).getAttribute('href')).toBe('/requests/r18')
     expect(screen.getByText(/\+5,612 tokens/)).toBeTruthy()
   })
 
@@ -80,6 +81,24 @@ describe('ContextChangePanel', () => {
     })} />)
     expect(screen.getByText('First request in this conversation.')).toBeTruthy()
     expect(screen.queryByText('Block changes')).toBeNull()
+  })
+
+  it('shows observed-only visible deltas and opaque item count without implying content comparison', () => {
+    const { unmount } = render(<ContextChangePanel change={change({
+      comparison_fidelity: 'observed_only', opaque_changes: 2,
+      block_changes: [bc('tool_call', 1)],
+    })} />)
+    expect(screen.getByText('Opaque changes:')).toBeTruthy()
+    expect(screen.getByText('2')).toBeTruthy()
+    expect(screen.getByText('Tool calls')).toBeTruthy()
+    expect(screen.getByText('Observed counts only; opaque contents not compared.')).toBeTruthy()
+    unmount()
+
+    render(<ContextChangePanel change={change({
+      comparison_fidelity: 'observed_only', opaque_changes: 0,
+    })} />)
+    expect(screen.getByText('0')).toBeTruthy()
+    expect(screen.queryByText('Block comparison unavailable.')).toBeNull()
   })
 
   it('never shows a limit, percentage or progress bar', () => {

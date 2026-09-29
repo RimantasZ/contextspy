@@ -9,11 +9,13 @@ export function SegmentedControl<T extends string>({
   value,
   options,
   onChange,
+  size = 'default',
 }: {
   label: string
   value: T
   options: Segment<T>[]
   onChange: (value: T) => void
+  size?: 'default' | 'short'
 }) {
   return (
     <div className="inline-flex min-w-0 rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-0.5" role="group" aria-label={label}>
@@ -23,7 +25,7 @@ export function SegmentedControl<T extends string>({
           type="button"
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
-          className={`min-h-8 rounded px-2.5 text-xs font-medium transition-colors sm:px-3 ${
+          className={`${size === 'short' ? 'min-h-7' : 'min-h-8'} rounded px-2.5 text-xs font-medium transition-colors sm:px-3 ${
             value === option.value ? 'bg-[var(--surface-elevated)] text-[var(--text)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]'
           }`}
         >

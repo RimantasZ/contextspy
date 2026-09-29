@@ -51,11 +51,12 @@ def _req(db, rid, *, sid="s1", seq=1, tin=100, tout=10, minutes=None, fidelity="
     return r
 
 
-def _blocks(db, rid, block_type, n, direction="input", content_hash=None):
+def _blocks(db, rid, block_type, n, direction="input", content_hash=None, attrs=None):
     for i in range(n):
         db.add(BlockRecord(
             request_id=rid, direction=direction, position=i,
             block_type=block_type, content_hash=content_hash, token_count=0,
+            attrs=attrs,
         ))
     db.flush()
 
@@ -109,13 +110,14 @@ def test_flow_limit_and_order_and_activity_limit_and_order(db):
     for i in range(1, 13):
         _req(db, f"r{i}", seq=i)
     out = crud.get_dashboard_live(db)
-    assert [r["session_seq"] for r in out["request_flow"]] == [12, 11, 10, 9, 8]
+    assert [r["session_seq"] for r in out["request_flow"]] == list(range(12, 0, -1))
     assert [r["session_seq"] for r in out["activity"]] == list(range(3, 13))
     assert out["active_session"]["request_count"] == 12
-    assert set(out["request_flow"][0]) == {
+    assert {
         "id", "session_seq", "timestamp", "model", "duration_ms",
         "status_code", "invocation_outcome", "tokens_total_input", "tokens_total_output",
-    }
+    } <= set(out["request_flow"][0])
+    assert "lineage_relation" in out["request_flow"][0]
 
 
 def test_dashboard_conversation_preview_has_fifteen_cards_and_total_count(db):
@@ -219,9 +221,9 @@ def test_purged_content_still_counted(db):
     ("partial", "complete", "partial"),
     ("complete", "partial", "partial"),
     ("partial", "partial", "partial"),
-    ("opaque", "complete", "unavailable"),
-    ("complete", "opaque", "unavailable"),
-    ("opaque", "partial", "unavailable"),
+    ("opaque", "complete", "observed_only"),
+    ("complete", "opaque", "observed_only"),
+    ("opaque", "partial", "observed_only"),
 ])
 def test_fidelity(db, prev, cur, expected):
     _session(db)
@@ -232,7 +234,37 @@ def test_fidelity(db, prev, cur, expected):
     cc = crud.get_dashboard_live(db)["context_change"]
     assert cc["comparison_fidelity"] == expected
     assert cc["token_delta"] == 15
-    assert bool(cc["block_changes"]) == (expected != "unavailable")
+    assert bool(cc["block_changes"])
+    assert cc["opaque_changes"] == (0 if expected == "observed_only" else None)
+
+
+def test_opaque_changes_are_count_only_and_visible_changes_remain_observable(db):
+    _session(db)
+    _req(db, "p", seq=1, fidelity="opaque")
+    _req(db, "c", seq=2, fidelity="opaque", parent="p")
+    _blocks(db, "p", "thinking", 2, attrs='{"opaque": true}')
+    _blocks(db, "c", "thinking", 3, attrs='{"opaque": true}')
+    _blocks(db, "p", "tool_call", 1)
+    _blocks(db, "c", "tool_call", 2)
+    cc = crud.get_dashboard_live(db)["context_change"]
+    assert cc["comparison_fidelity"] == "observed_only"
+    assert cc["opaque_changes"] == 1
+    assert cc["block_changes"] == [
+        {"block_type": "tool_call", "current_count": 2, "previous_count": 1, "delta": 1},
+    ]
+    assert crud.get_session_request_context(db, "s1", "c")["context_change"] == cc
+
+
+def test_opaque_changes_do_not_compare_content_or_count_output(db):
+    _session(db)
+    _req(db, "p", seq=1, fidelity="opaque")
+    _req(db, "c", seq=2, fidelity="opaque", parent="p")
+    _blocks(db, "p", "thinking", 1, content_hash="old", attrs='{"opaque": true}')
+    _blocks(db, "c", "thinking", 1, content_hash="new", attrs='{"opaque": true}')
+    _blocks(db, "c", "thinking", 2, direction="output", attrs='{"opaque": true}')
+    cc = crud.get_dashboard_live(db)["context_change"]
+    assert cc["opaque_changes"] == 0
+    assert cc["block_changes"] == []
 
 
 def test_null_session_seq_is_deterministic(db):
@@ -401,7 +433,7 @@ def test_dashboard_batches_card_and_parent_queries(db):
         assert crud.get_dashboard_live(db)["conversation_count"] == 2
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    assert len(statements) <= 9
+    assert len(statements) <= 12
 
 
 def test_dashboard_reuses_analysis_until_request_revision_changes(db, monkeypatch):
@@ -452,6 +484,41 @@ def test_session_conversations_page_all_requests_and_reject_stale_cursor(db):
         crud.get_session_conversation_requests(db, "s1", group["key"], revision=first["revision"])
 
 
+def test_session_sequence_is_unique_paged_and_excludes_external_parent(db):
+    _session(db, active=False)
+    _session(db, "old", active=False)
+    _req(db, "external", sid="old", seq=1)
+    for seq in range(1, 19):
+        _req(db, f"r{seq}", seq=seq, parent="external" if seq == 1 else f"r{seq - 1}")
+    first = crud.get_session_sequence(db, "s1")
+    assert first["request_count"] == 18
+    assert [card["id"] for card in first["request_flow"]] == [f"r{seq}" for seq in range(18, 3, -1)]
+    assert [point["id"] for point in first["activity"]] == [f"r{seq}" for seq in range(9, 19)]
+    second = crud.get_session_sequence(db, "s1", revision=first["revision"], cursor=first["next_cursor"])
+    assert [card["id"] for card in second["request_flow"]] == ["r3", "r2", "r1"]
+    assert second["next_cursor"] is None
+    assert second["request_flow"][-1]["lineage_relation"] == "external"
+    with pytest.raises(ValueError, match="cursor does not belong"):
+        crud.get_session_sequence(db, "s1", cursor="WzAsIm5vdC1oZXJlIiwibm9wZSJd")
+    _req(db, "r19", seq=19, parent="r18")
+    with pytest.raises(ValueError, match="revision changed"):
+        crud.get_session_sequence(db, "s1", revision=first["revision"], cursor=first["next_cursor"])
+
+
+def test_selected_context_uses_accepted_parent_not_chronological_neighbor(db):
+    _session(db, active=False)
+    _req(db, "root", seq=1, tin=100)
+    _req(db, "other", seq=2, tin=900)
+    _req(db, "child", seq=3, tin=140, parent="root")
+    revision = crud.get_session_sequence(db, "s1")["revision"]
+    change = crud.get_session_request_context(db, "s1", "child", revision=revision)["context_change"]
+    assert change["parent_request_id"] == "root"
+    assert change["token_delta"] == 40
+    assert crud.get_session_request_context(db, "s1", "other")["context_change"]["parent_request_id"] is None
+    with pytest.raises(KeyError, match="Request not found"):
+        crud.get_session_request_context(db, "s1", "missing")
+
+
 def test_session_projection_matches_dashboard_and_marks_unconfirmed_branch(db):
     _session(db)
     _req(db, "root", seq=1)
@@ -488,6 +555,9 @@ def test_stream_groups_match_dashboard_order_and_preserve_gap_provenance(db):
     assert dashboard["conversation_count"] == session["conversation_count"] == 2
     assert dashboard["conversations"] == session["conversations"]
     assert [group["latest_request_id"] for group in session["conversations"]] == ["r410", "r406"]
+    codes = {card["id"]: card["conversation_code"] for card in dashboard["request_flow"]}
+    assert codes["r410"] == "C1"
+    assert codes["r406"] == "C2"
     assert dashboard["most_recent_conversation_key"] == session["conversations"][0]["key"]
     assert session["primary_key"] == session["conversations"][0]["key"]
     main, other = session["conversations"]
@@ -592,6 +662,7 @@ def test_auxiliary_block_matches_dashboard_and_promotes_on_third_link(db):
     assert before["conversation_count"] == live["conversation_count"] == 0
     assert before["auxiliary_request_count"] == live["auxiliary_request_count"] == 2
     assert before["auxiliary"] == live["auxiliary"]
+    assert {card["conversation_code"] for card in live["request_flow"]} == {"AUX"}
     assert all(card["membership_state"] == "provisional_unassigned"
                for segment in before["auxiliary"]["recent_segments"]
                for card in segment["request_flow"])
@@ -604,6 +675,7 @@ def test_auxiliary_block_matches_dashboard_and_promotes_on_third_link(db):
     after = crud.get_session_conversations(db, "s1")
     assert after["conversation_count"] == 1
     assert after["auxiliary"] is None
+    assert {card["conversation_code"] for card in crud.get_dashboard_live(db)["request_flow"]} == {"C1"}
     assert after["auxiliary_request_count"] == 0
     assert {"root", "second", "third"} == {
         card["id"] for segment in after["conversations"][0]["recent_segments"] for card in segment["request_flow"]
@@ -626,6 +698,12 @@ def test_session_conversation_group_pagination_and_cursor_validation(db):
     second = crud.get_session_conversations(db, "s1", group_offset=4, revision=first["revision"])
     assert len(second["conversations"]) == 1
     assert second["next_group_offset"] is None
+    for group in first["conversations"] + second["conversations"]:
+        root = next(card for segment in group["recent_segments"]
+                    for card in segment["request_flow"] if card["id"] == "root")
+        assert root["conversation_code"] == "C" + group["label"].split()[-1]
+    assert next(card for card in crud.get_session_sequence(db, "s1")["request_flow"]
+                if card["id"] == "root")["conversation_code"] == "C1"
     assert len({group["key"] for group in first["conversations"] + second["conversations"]}) == 5
     pinned = crud.get_session_conversations(
         db, "s1", revision=first["revision"], group_key=second["conversations"][0]["key"],

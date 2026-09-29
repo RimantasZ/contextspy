@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom'
 import type { DashboardConversation, DashboardLiveData } from '../../api/client'
 import { RequestFlow } from './RequestFlow'
+import { RequestDensityToggle, RequestViewControls } from './RequestViewControls'
+import { useConversationCardDensity } from './requestViewState'
 
 export function evidenceLabel(group: DashboardConversation): string {
   if (group.evidence === 'fork') return `Confirmed fork from ${group.fork_parent_request_id?.slice(0, 8) ?? 'request'}`
@@ -26,55 +28,62 @@ export function gapLabel(reason: string | null): string | null {
   return null
 }
 
-export function ConversationFlows({ data, selectedKey, onSelect }: {
+export function ConversationFlows({ data, selectedId, onSelect, compact, onShowSequence }: {
   data: DashboardLiveData
-  selectedKey: string | null
-  onSelect: (key: string) => void
+  selectedId: string | null
+  onSelect: (id: string) => void
+  compact: boolean
+  onShowSequence: () => void
 }) {
   const groups = [...(data.conversations ?? []), ...(data.auxiliary ? [data.auxiliary] : [])]
+  const [groupCompact, setGroupCompact] = useConversationCardDensity(data.active_session?.id ?? '')
   if (groups.length === 0) {
     return <div className="space-y-2">
       {data.request_flow.length > 0 && <p className="text-xs text-[var(--warning)]">Grouping unavailable; showing ungrouped session requests. Parent comparisons are unavailable.</p>}
-      <RequestFlow items={data.request_flow} />
+      <RequestFlow items={data.request_flow} selectedId={selectedId} onSelect={onSelect} compact={compact}
+        headerActions={<RequestViewControls layout="conversations" onLayoutChange={onShowSequence} groupCount={0} />} />
     </div>
   }
   return (
-    <div className="space-y-4" aria-label="Session request sequences">
+    <div className="panel min-w-0" aria-label="Session request sequences">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="section-title">Conversations</h2>
+        <RequestViewControls layout="conversations" onLayoutChange={onShowSequence}
+          groupCount={data.conversation_count + (data.auxiliary ? 1 : 0)} />
+      </div>
+      <div className="divide-y divide-[var(--border)]">
       {groups.map((group) => (
-        <section key={group.key} className="panel min-w-0" aria-label={group.label}>
-          <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 className="section-title">{group.label}</h2>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">{evidenceLabel(group)}</p>
+        <section key={group.key} className="min-w-0 py-4 first:pt-0 last:pb-0" aria-label={group.label}>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+              <h3 className="section-title">{group.label}</h3>
+              <p className="text-xs text-[var(--text-muted)]">{evidenceLabel(group)}</p>
               {group.unlinked_segment_count > 0 && (
-                <p className="mt-1 text-xs text-[var(--warning)]">
+                <p className="text-xs text-[var(--warning)]">
                   {group.unlinked_segment_count} unlinked lineage segment{group.unlinked_segment_count === 1 ? '' : 's'}
                 </p>
               )}
             </div>
-            <button
-              type="button"
-              aria-pressed={selectedKey === group.key}
-              onClick={() => onSelect(group.key)}
-              className="app-button"
-            >
-              {selectedKey === group.key ? 'Showing context' : 'Show context'}
-            </button>
+            <RequestDensityToggle compact={groupCompact(group.key)} onChange={(value) => setGroupCompact(group.key, value)}
+              label={`${group.label} card detail`} />
           </div>
           <RequestFlow
             items={group.recent_segments.flatMap((segment) => segment.request_flow)}
             bare
+            selectedId={selectedId}
+            onSelect={onSelect}
+            compact={groupCompact(group.key)}
             trailingAction={group.has_older_requests && data.active_session ? (
               <Link className="app-button h-full w-full text-center" to={`/sessions/${data.active_session.id}?view=lineage&conversation=${encodeURIComponent(group.key)}`}>
                 More ({group.request_count} total) →
               </Link>
             ) : null}
           />
-          {group.has_older_requests && <p className="mt-1 text-xs text-[var(--text-muted)]">Scroll right for older requests.</p>}
         </section>
       ))}
+      </div>
       {data.has_more_conversations && data.active_session && (
-        <Link className="text-sm text-[var(--accent-soft-text)]" to={`/sessions/${data.active_session.id}?view=lineage`}>
+        <Link className="mt-4 inline-block text-sm text-[var(--accent-soft-text)]" to={`/sessions/${data.active_session.id}?view=lineage&layout=conversations`}>
           View all {data.conversation_count} conversations
         </Link>
       )}

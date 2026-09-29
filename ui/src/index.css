@@ -19,6 +19,7 @@
   --surface-elevated: #fffefa;
   --surface-muted: #f0f1ee;
   --surface-hover: #e9ece7;
+  --surface-selected: #dce5dc;
   --surface-inset: #fafaf8;
   --surface-code: #f3f4f1;
   --overlay: rgb(20 24 21 / 48%);
@@ -133,6 +134,7 @@
   --surface-elevated: #202521;
   --surface-muted: #282e29;
   --surface-hover: #323a33;
+  --surface-selected: #3b473d;
   --surface-inset: #151815;
   --surface-code: #101310;
   --overlay: rgb(0 0 0 / 68%);

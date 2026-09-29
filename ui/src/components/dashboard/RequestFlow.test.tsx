@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { useState } from 'react'
 import { describe, expect, it } from 'vitest'
 import type { DashboardRequestFlowItem } from '../../api/client'
 import { RequestFlow } from './RequestFlow'
@@ -32,7 +33,7 @@ function renderFlow(items: Parameters<typeof RequestFlow>[0]['items']) {
 describe('RequestFlow', () => {
   it('keeps API order (newest first) and shows key values', () => {
     renderFlow([item(), item({ id: 'request-17', session_seq: 17, model: 'gpt-4' })])
-    const cards = within(screen.getByRole('list')).getAllByRole('link')
+    const cards = within(screen.getByRole('list')).getAllByRole('button')
     expect(cards[0].textContent).toContain('#18')
     expect(cards[1].textContent).toContain('#17')
     expect(cards[0].textContent).toContain('gpt-5.2 · 1.8s')
@@ -42,15 +43,15 @@ describe('RequestFlow', () => {
     expect(screen.getByRole('list').parentElement?.className).toContain('overflow-x-auto')
   })
 
-  it('omits endpoint and HTTP method and links to the request', () => {
+  it('omits endpoint and HTTP method from the card', () => {
     renderFlow([item()])
     expect(screen.queryByText(/POST|GET|\/v1\//)).toBeNull()
-    expect(screen.getByRole('link').getAttribute('href')).toBe('/requests/request-18')
+    expect(screen.getByRole('button', { name: /Request #18/ })).toBeTruthy()
   })
 
   it('falls back to a short id when the sequence is null', () => {
     renderFlow([item({ id: 'abcdef1234567890', session_seq: null })])
-    expect(screen.getByRole('link').textContent).toContain('abcdef12')
+    expect(screen.getByRole('button').textContent).toContain('abcdef12')
   })
 
   it('exposes failed and incomplete states as text', () => {
@@ -58,7 +59,7 @@ describe('RequestFlow', () => {
       item({ id: 'a', invocation_outcome: 'failed', status_code: 500 }),
       item({ id: 'b', invocation_outcome: 'incomplete', status_code: null }),
     ])
-    const [failed, incomplete] = screen.getAllByRole('link')
+    const [failed, incomplete] = screen.getAllByRole('button')
     expect(failed.getAttribute('aria-label')).toContain('Failed (500)')
     expect(incomplete.getAttribute('aria-label')).toContain('Incomplete')
   })
@@ -78,14 +79,14 @@ describe('RequestFlow', () => {
 
     fireEvent.mouseEnter(screen.getByText('⋯'))
     expect(screen.getByRole('tooltip').textContent).toContain('its direct predecessor is unknown')
-    expect(screen.getAllByRole('link')[1].getAttribute('aria-label')).toContain('Same stream; direct predecessor not established')
+    expect(screen.getAllByRole('button')[1].getAttribute('aria-label')).toContain('Same stream; direct predecessor not established')
   })
 
   it('explains a display-only context-reset bridge without claiming a parent', () => {
     renderFlow([{ ...item(), lineage_relation: 'compaction_affinity', parent_state: 'ambiguous', parent_request_id: null }])
     fireEvent.mouseEnter(screen.getByText('⋯'))
     expect(screen.getByRole('tooltip').textContent).toContain('matching stream hint')
-    const card = screen.getByRole('link', { name: /Same stream after context reset/ })
+    const card = screen.getByRole('button', { name: /Same stream after context reset/ })
     expect(card.textContent).toContain('Same stream · direct predecessor not established')
     expect(card.textContent).not.toContain('Exact parent')
   })
@@ -93,5 +94,50 @@ describe('RequestFlow', () => {
   it('shows an empty state', () => {
     renderFlow([])
     expect(screen.getByText(/No requests captured/)).toBeTruthy()
+  })
+
+  it('selects on first activation and opens Request Detail on the second', () => {
+    function Selectable() {
+      const [selected, setSelected] = useState<string | null>(null)
+      return <RequestFlow items={[item()]} selectedId={selected} onSelect={setSelected} />
+    }
+    render(<MemoryRouter initialEntries={['/']}><Routes>
+      <Route path="/" element={<Selectable />} />
+      <Route path="/requests/:id" element={<p>Request detail reached</p>} />
+    </Routes></MemoryRouter>)
+    const card = screen.getByRole('button', { name: /Request #18/ })
+    fireEvent.click(card)
+    expect(card.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(card)
+    expect(screen.getByText('Request detail reached')).toBeTruthy()
+  })
+
+  it('keeps compact cards small and suppresses icon hover tooltips', () => {
+    render(<MemoryRouter><RequestFlow items={[{ ...item(), lineage_relation: 'exact' }]} compact /></MemoryRouter>)
+    expect(screen.getByRole('listitem').className).toContain('w-32')
+    fireEvent.mouseEnter(screen.getByText('↳'))
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('Exact predecessor')
+  })
+
+  it('shows conversation code, seconds, and corrected arrows in three compact rows', () => {
+    render(<MemoryRouter><RequestFlow items={[{ ...item({ conversation_code: 'C1', duration_ms: 250 }), lineage_relation: 'exact' }]}
+      compact selectedId="request-18" onSelect={() => {}} /></MemoryRouter>)
+    const card = screen.getByRole('button', { name: /Request #C1-18/ })
+    expect(card.className).toContain('bg-[var(--surface-selected)]')
+    expect(card.className).not.toContain('ring-2')
+    expect(card.firstElementChild?.textContent).toContain('#C1-18')
+    const rows = card.querySelectorAll('p')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toContain('0.3s')
+    expect(rows[1].textContent).toContain('↑ 87k')
+    expect(rows[1].textContent).toContain('↓ 612')
+  })
+
+  it('labels auxiliary cards and uses the corrected arrows in detailed mode', () => {
+    renderFlow([item({ conversation_code: 'AUX' })])
+    const card = screen.getByRole('button', { name: /Request #AUX-18/ })
+    expect(card.textContent).toContain('↑ 87,412 in')
+    expect(card.textContent).toContain('↓ 612 out')
   })
 })

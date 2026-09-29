@@ -3,6 +3,10 @@ export function formatRequestDuration(milliseconds: number | null): string {
   return milliseconds < 1000 ? `${milliseconds}ms` : `${(milliseconds / 1000).toFixed(1)}s`
 }
 
+export function formatDurationSeconds(milliseconds: number | null): string {
+  return milliseconds == null || milliseconds < 0 ? '—' : `${(milliseconds / 1000).toFixed(1)}s`
+}
+
 export function formatElapsedDuration(milliseconds: number | null, nullLabel = '—'): string {
   if (milliseconds == null) return nullLabel
   if (milliseconds < 0) return '—'

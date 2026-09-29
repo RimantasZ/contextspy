@@ -11,13 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { DashboardRequestFlowItem, DashboardConversation } from '../../api/client'
-import { formatRequestDuration, formatTimeShort, formatDateTimeFull } from '../../lib/format'
-import { requestLabel } from './dashboardFormat'
+import { formatDurationSeconds, formatTimeShort, formatDateTimeFull } from '../../lib/format'
+import { conversationRequestLabel, formatCompactTokens } from './dashboardFormat'
 
 function statusOf(item: DashboardRequestFlowItem): { text: string; className: string } | null {
   if (item.invocation_outcome === 'failed' || (item.status_code != null && item.status_code >= 400)) {
@@ -44,7 +44,7 @@ const lineageMarker: Record<NonNullable<FlowItem['lineage_relation']>, LineageMa
   external: { icon: '↗', label: 'Predecessor in another session', description: 'This request follows a predecessor captured in another session.', uncertain: false },
 }
 
-function LineageIcon({ marker }: { marker: LineageMarker }) {
+function LineageIcon({ marker, compact = false }: { marker: LineageMarker; compact?: boolean }) {
   const iconRef = useRef<HTMLSpanElement>(null)
   const [tooltip, setTooltip] = useState<{ left: number; top: number; above: boolean } | null>(null)
 
@@ -70,11 +70,13 @@ function LineageIcon({ marker }: { marker: LineageMarker }) {
     }
   }, [tooltip])
 
+  useEffect(() => { if (compact) setTooltip(null) }, [compact])
+
   return <>
     <span
       ref={iconRef}
       aria-hidden="true"
-      onMouseEnter={showTooltip}
+      onMouseEnter={compact ? undefined : showTooltip}
       onMouseLeave={() => setTooltip(null)}
       className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-semibold ${marker.uncertain ? 'border-[var(--warning)] text-[var(--warning)]' : 'border-[var(--border)] text-[var(--accent-soft-text)]'}`}
     >{marker.icon}</span>
@@ -92,12 +94,16 @@ function LineageIcon({ marker }: { marker: LineageMarker }) {
   </>
 }
 
-export function RequestFlow({ items, bare = false, trailingAction }: { items: FlowItem[]; bare?: boolean; trailingAction?: ReactNode }) {
+export function RequestFlow({ items, bare = false, trailingAction, headerActions, compact = false, selectedId, onSelect }: {
+  items: FlowItem[]; bare?: boolean; trailingAction?: ReactNode; headerActions?: ReactNode
+  compact?: boolean; selectedId?: string | null; onSelect?: (id: string) => void
+}) {
+  const navigate = useNavigate()
   return (
     <div className={bare ? 'min-w-0' : 'panel min-w-0'}>
-      {!bare && <div className="mb-3 flex items-baseline justify-between gap-2">
+      {!bare && <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 id="request-flow-title" className="section-title">Request flow</h2>
-        <span className="text-xs text-[var(--text-muted)]">Newest first</span>
+        {headerActions}
       </div>}
       {items.length === 0 ? (
         <p className="py-4 text-center text-sm text-[var(--text-muted)]">No requests captured in this session yet.</p>
@@ -109,25 +115,41 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
             className="flex w-max shrink-0 gap-2"
           >
             {items.map((item) => {
-            const label = requestLabel(item.session_seq, item.id)
+            const label = conversationRequestLabel(item.session_seq, item.id, item.conversation_code)
             const time = formatTimeShort(item.timestamp)
             const fullTime = formatDateTimeFull(item.timestamp)
             const status = statusOf(item)
             const marker = item.lineage_relation ? lineageMarker[item.lineage_relation] : null
-            const meta = [item.model, item.duration_ms != null ? formatRequestDuration(item.duration_ms) : null]
+            const meta = [item.model, item.duration_ms != null ? formatDurationSeconds(item.duration_ms) : null]
               .filter(Boolean)
               .join(' · ')
             return (
-              <li key={item.id} className="w-36 shrink-0">
-                <Link
-                  to={`/requests/${item.id}`}
+              <li key={item.id} className={`${compact ? 'w-32' : 'w-36'} shrink-0`}>
+                <button
+                  type="button"
+                  aria-pressed={onSelect ? selectedId === item.id : undefined}
+                  onClick={() => {
+                    if (onSelect && selectedId !== item.id) onSelect(item.id)
+                    else navigate(`/requests/${item.id}`)
+                  }}
                   aria-label={`Request ${label}, ${time}, input ${item.tokens_total_input.toLocaleString()} tokens, output ${item.tokens_total_output.toLocaleString()} tokens${marker ? `, ${marker.label}: ${marker.description}` : ''}${status ? `, ${status.text}` : ''}${item.shared_history ? ', shared history' : ''}${item.membership_state === 'provisional_unassigned' ? ', provisional stream membership' : item.membership_state === 'unassigned' ? ', stream membership uncertain' : ''}`}
-                  className="block h-full rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-2.5 transition-colors hover:bg-[var(--surface-hover)]"
+                  className={`block h-full w-full rounded-md border border-[var(--border)] text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)] ${compact ? 'p-1.5' : 'p-2.5'} ${onSelect && selectedId === item.id ? 'bg-[var(--surface-selected)] hover:bg-[var(--surface-selected)]' : 'bg-[var(--surface-muted)] hover:bg-[var(--surface-hover)]'}`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-[var(--text)]">{label}</span>
-                    {marker && <LineageIcon marker={marker} />}
+                    <span className={`${compact ? 'text-xs' : 'text-sm'} font-semibold text-[var(--text)]`}>{label}</span>
+                    {marker && <LineageIcon marker={marker} compact={compact} />}
                   </div>
+                  {compact ? (
+                    <>
+                      <p className="mt-1 flex justify-between gap-1 text-[11px] tabular-nums text-[var(--text-muted)]">
+                        <span>{time}</span><span>{formatDurationSeconds(item.duration_ms)}</span>
+                      </p>
+                      <p className="mt-1 flex justify-between gap-1 text-[11px] tabular-nums text-[var(--text)]" aria-hidden="true">
+                        <span>↑ {formatCompactTokens(item.tokens_total_input)}</span>
+                        <span>↓ {formatCompactTokens(item.tokens_total_output)}</span>
+                      </p>
+                    </>
+                  ) : <>
                   <span className="mt-0.5 block text-xs tabular-nums text-[var(--text-muted)]" title={fullTime}>{time}</span>
                   {(meta || status) && (
                     <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
@@ -136,10 +158,10 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
                     </p>
                   )}
                   <p className="mt-2 text-xs tabular-nums text-[var(--text)]">
-                    <span aria-hidden="true">↓ </span>{item.tokens_total_input.toLocaleString()} in
+                    <span aria-hidden="true">↑ </span>{item.tokens_total_input.toLocaleString()} in
                   </p>
                   <p className="text-xs tabular-nums text-[var(--text)]">
-                    <span aria-hidden="true">↑ </span>{item.tokens_total_output.toLocaleString()} out
+                    <span aria-hidden="true">↓ </span>{item.tokens_total_output.toLocaleString()} out
                   </p>
                   {item.parent_state && (
                     <p className="mt-2 text-[11px] text-[var(--text-muted)]">
@@ -152,7 +174,8 @@ export function RequestFlow({ items, bare = false, trailingAction }: { items: Fl
                       {item.membership_state === 'provisional_unassigned' ? ' · Provisional stream' : item.membership_state === 'unassigned' ? ' · Stream uncertain' : ''}
                     </p>
                   )}
-                </Link>
+                  </>}
+                </button>
               </li>
             )
             })}

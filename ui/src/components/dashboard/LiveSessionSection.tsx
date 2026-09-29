@@ -11,31 +11,34 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { useEffect, useMemo, useState } from 'react'
-import { useDashboardLive } from '../../api/hooks'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { useDashboardLive, useRequestContext } from '../../api/hooks'
 import { ActiveSessionPanel } from './ActiveSessionPanel'
 import { ConversationFlows } from './ConversationFlows'
 import { ContextChangePanel } from './ContextChangePanel'
 import { RequestActivityChart } from './RequestActivityChart'
+import { RequestFlow } from './RequestFlow'
+import { RequestViewControls } from './RequestViewControls'
+import { useCompactRequestCards, useSelectedRequest } from './requestViewState'
 
 export function LiveSessionSection() {
   const { data, isLoading, isError } = useDashboardLive()
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [layout, setLayout] = useState<'sequence' | 'conversations'>('sequence')
   const [selectionNotice, setSelectionNotice] = useState('')
-  const groups = useMemo(() => [
-    ...(data?.conversations ?? []),
-    ...(data?.auxiliary ? [data.auxiliary] : []),
-  ], [data])
-  const effectiveKey = selectedKey && groups.some((group) => group.key === selectedKey)
-    ? selectedKey : data?.most_recent_conversation_key ?? groups[0]?.key ?? null
-  const selectedGroup = groups.find((group) => group.key === effectiveKey)
+  const [compact, setCompact] = useCompactRequestCards(data?.active_session?.id ?? '')
+  const newestId = data?.request_flow[0]?.id ?? null
+  const [selectedId, setSelectedId] = useSelectedRequest(newestId)
+  const context = useRequestContext(data?.active_session?.id ?? '',
+    selectedId && selectedId !== newestId ? selectedId : null, data?.sequence_revision)
 
   useEffect(() => {
-    if (selectedKey && groups.length && !groups.some((group) => group.key === selectedKey)) {
-      setSelectedKey(groups[0].key)
-      setSelectionNotice('That conversation is no longer available; showing the latest conversation.')
+    if (selectedId && selectedId !== newestId && newestId &&
+        context.error instanceof Error && context.error.message.includes('API error 404')) {
+      setSelectedId(newestId)
+      setSelectionNotice('Selected request is no longer in this session; showing the newest request.')
     }
-  }, [groups, selectedKey])
+  }, [context.error, newestId, selectedId, setSelectedId])
 
   if (isLoading) {
     return (
@@ -60,14 +63,20 @@ export function LiveSessionSection() {
       {data.active_session && (
         <>
           {selectionNotice && <p role="status" className="text-xs text-[var(--text-muted)]">{selectionNotice}</p>}
-          <ConversationFlows data={data} selectedKey={effectiveKey} onSelect={(key) => { setSelectedKey(key); setSelectionNotice('') }} />
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(240px,.4fr)]">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,.6fr)]">
             <RequestActivityChart activity={data.activity} />
             <ContextChangePanel
-              change={groups.length ? selectedGroup?.context_change ?? data.context_change : null}
-              unavailable={!groups.length && data.request_flow.length > 0}
+              change={selectedId === newestId ? data.context_change : context.data?.context_change ?? null}
+              pending={!!selectedId && selectedId !== newestId && context.isLoading}
+              failed={!!selectedId && selectedId !== newestId && context.isError}
             />
           </div>
+          {layout === 'sequence' ? <RequestFlow items={data.request_flow} compact={compact} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setSelectionNotice('') }}
+            headerActions={<RequestViewControls compact={compact} onCompactChange={setCompact} layout={layout} onLayoutChange={setLayout}
+              groupCount={data.conversation_count + (data.auxiliary ? 1 : 0)} />}
+            trailingAction={data.sequence_next_cursor && <Link className="app-button h-full w-full text-center" to={`/sessions/${data.active_session.id}?view=lineage`}>More ({data.active_session.request_count} total) →</Link>} />
+            : <ConversationFlows data={data} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setSelectionNotice('') }} compact={compact}
+                onShowSequence={() => setLayout('sequence')} />}
         </>
       )}
     </section>
