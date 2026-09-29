@@ -114,7 +114,8 @@ as well as WebSocket traffic. Only explicit provider IDs authorize this provider
 the display graph may infer a parent from captured blocks without expanding provider state.
 
 The session lineage API also computes conservative display conversations. Its raw root-to-leaf
-paths are diagnostic fragments: absent or ambiguous parent IDs do not split a session into chats.
+paths are diagnostic paths (the older API field is `lineage_fragment_count`): absent or ambiguous
+parent IDs do not split a session into chats.
 Separate rows need evidence of a sustained fork with exact diverging predecessor edges, an
 overlapping fork with distinct meaningful context, or two disjoint, observed, interleaved chains
 with distinct meaningful context. For supported Codex Responses traffic, a source-labelled digest
@@ -122,7 +123,11 @@ of a cache hint may also support grouping when substantive context corroborates 
 a provider conversation ID. The persisted `agent` field identifies a product (for example,
 `codex`), not a task or subagent; captured requests currently have no reliable dedicated task or
 thread identifier. The live dashboard reads totals, lineage, cards, and parent comparisons from
-one SQLite snapshot, reusing a bounded analysis cache until the request set changes.
+one SQLite snapshot. Its bounded analysis cache is keyed by a fingerprint of relevant request
+and block metadata, including matching external provider predecessors; unrelated sessions do
+not invalidate it. Diagnostics polls the smaller revision endpoint before reloading a full
+graph. See [Conversation tracking architecture](conversation-tracking-architecture.md) for
+the phase contracts, cache semantics, and extension points.
 See [Request tracking and conversations](request-tracking-and-conversations.md) for the
 user-facing interpretation of these groups and their uncertainty markers.
 

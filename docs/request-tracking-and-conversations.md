@@ -20,7 +20,7 @@ should be compared as parent and child.
 | **Parent / predecessor** | The earlier request whose response or context is directly continued by a later request. A parent need not have the immediately preceding session request number; an explicitly referenced parent may even be in another session. |
 | **Lineage** | The graph of accepted direct parent-to-child continuation links. An **exact** link comes from a provider-issued predecessor response ID; an **inferred** link is ContextSpy's conservative conclusion from captured context. |
 | **Lineage segment** | A run of requests joined by accepted lineage links. A gap between segments means direct continuity was not established. |
-| **Diagnostic path** | One root-to-leaf route through the lineage graph. Paths can share ancestors, and several paths or disconnected segments can belong to one displayed conversation. A path count is not a chat or agent count. |
+| **Diagnostic path** | One root-to-leaf route through the lineage graph. Paths can share ancestors, and several paths or disconnected segments can belong to one displayed conversation. A path count is not a chat or agent count. Older API responses call this `lineage_fragment_count`; `diagnostic_path_count` is the clearer alias. |
 | **Conversation** or **request stream** | A supported backend display group. A long accepted chain can have a row even when its relationship to another row remains unresolved; the row's evidence label says so. A row can contain more than one lineage segment and does **not** prove one unbroken chat. |
 | **Auxiliary requests** | An unnumbered holding block for unclassified one-offs and short provisional chains (normally no more than three evidence-connected requests). It may contain unrelated calls and is **not** itself one conversation or proof of a subagent. |
 | **Fork** | Two or more children of the same parent. A structural branch in the graph is not automatically a confirmed split into separate conversations. |
@@ -74,8 +74,8 @@ parents or conversation membership itself.
    in the child's ordered input? If so, it discounts the older ancestor **for the comparison**.
    Sibling candidates are not discounted, so a real fork remains possible. Candidates scoring
    at least **0.45** but lacking a clear winner leave the parent **ambiguous**. A sole weak
-   candidate does not bypass the 0.80 floor. The displayed inferred percentage is the raw
-   heuristic score, **not** a calibrated probability of correctness.
+   candidate does not bypass the 0.80 floor. The detailed UI labels this an **inference score**
+   out of 100, **not** a calibrated probability of correctness.
 
 An accepted exact successor can later help reassess an earlier close heuristic boundary, within
 a small bounded look-ahead. It confirms that the successor continues its named parent; it does
@@ -88,7 +88,7 @@ For transparency, the current score weights retained input / child coverage / pr
 at 35% / 45% / 20% when parent output is available, or 45% / 55% for the first two signals
 otherwise. Common blocks are downweighted, configuration blocks are heavily discounted, and
 matching tool-call IDs are weighted more strongly. Boilerplate-only matches cannot reach the
-acceptance threshold. Partial or opaque child context reduces the score. Candidate search is
+   acceptance threshold. Partial or opaque child context reduces the score. Candidate search is
 bounded to 64 plausible earlier requests for performance, so this is evidence from what
 ContextSpy captured, not omniscient reconstruction of the agent's internal state.
 
@@ -217,7 +217,10 @@ calculate session totals.
   only a structural split; a “confirmed fork” badge means the stricter conversation rule passed.
   Selecting an edge shows which input blocks persisted, which parent output was carried into
   child input, and which blocks were added, removed, or replaced relative to that parent.
-- **Context size:** selecting a card compares that request with its **resolved direct parent**,
+- **Context size:** the primary number is **estimated visible input tokens** from local block
+  analysis, not necessarily the provider's complete context usage. When supplied, the
+  provider-reported input total appears separately. This distinction matters most for opaque
+  or partial captures. Selecting a card compares that request with its **resolved direct parent**,
   not the preceding session request number or the nearest card in the row. If the
   parent is missing or uncertain, there is no token delta. An exact parent from another session
   may be used for comparison but is excluded from this session's cards and totals. The input

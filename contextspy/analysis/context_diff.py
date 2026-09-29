@@ -138,6 +138,12 @@ def _lcs_mappings(
     # IDs deliberately do not participate in equality. Keeping them beside the
     # key makes the occurrence mapping explicit after SequenceMatcher selects
     # an order-preserving alignment, including duplicate content occurrences.
+    # The common unchanged-context case has the same occurrence order. The
+    # positional mapping is exactly SequenceMatcher's full-match result, while
+    # avoiding its index construction for every candidate in a dense session.
+    if [key for key, _ in parent_values] == [key for key, _ in child_values]:
+        return [BlockMapping(parent_block_id=left[1], child_block_id=right[1])
+                for left, right in zip(parent_values, child_values)]
     matcher = SequenceMatcher(
         a=[key for key, _ in parent_values],
         b=[key for key, _ in child_values],

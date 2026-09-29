@@ -121,6 +121,17 @@ def test_context_diff_keeps_unfingerprinted_blocks_out_of_change_claims():
     assert delta.unavailable_child_blocks == [2]
 
 
+def test_identical_repeated_context_maps_occurrences_positionally():
+    parent = [_block("p", index, Direction.INPUT, BlockType.USER_MESSAGE,
+                     "same text", position=index) for index in range(1, 4)]
+    child = [_block("c", index + 10, Direction.INPUT, BlockType.USER_MESSAGE,
+                    "same text", position=index) for index in range(1, 4)]
+    delta = diff_contexts(parent, child)
+    assert [(item.parent_block_id, item.child_block_id) for item in delta.persisted] == [
+        (1, 11), (2, 12), (3, 13),
+    ]
+
+
 def test_exact_predecessors_form_a_fork_without_using_capture_adjacency():
     root = _snapshot("root", 1, [], response_id="resp-root")
     unrelated = _snapshot("unrelated", 2, [], response_id="resp-other")
@@ -140,6 +151,26 @@ def test_exact_predecessors_form_a_fork_without_using_capture_adjacency():
     # Two one-off siblings are a diagnostic fork, not yet two conversations.
     assert graph["conversation_count"] == 1
     assert graph["lineage_fragment_count"] == 3
+
+
+def test_projection_covers_each_session_request_without_duplicate_direct_parents():
+    requests = [_snapshot("root", 1, [], response_id="response-root")]
+    requests.extend(_snapshot(
+        f"chain-{sequence}", sequence, [], response_id=f"response-{sequence}",
+        predecessor_id="response-root" if sequence == 2 else f"response-{sequence-1}",
+    ) for sequence in range(2, 30))
+    requests.append(_snapshot("one-off", 30, []))
+    graph = build_lineage_graph(requests)
+    grouped_ids = {
+        request_id for group in [*graph["conversations"], graph["auxiliary"]]
+        if group for request_id in group["request_ids"]
+    }
+    assert grouped_ids == {request.id for request in requests}
+    assert len(graph["nodes"]) == len(requests)
+    accepted_targets = [edge["target_request_id"] for edge in graph["edges"]
+                        if edge["relation_type"] == "context_continuation"]
+    assert len(accepted_targets) == len(set(accepted_targets))
+    assert graph["diagnostic_path_count"] == graph["lineage_fragment_count"]
 
 
 def test_many_unlinked_codex_requests_stay_in_auxiliary_block():
@@ -749,6 +780,7 @@ def test_capture_lineage_api_uses_persisted_requests_and_blocks(tmp_path):
         session_id = session.id
 
     graph = get_session_lineage(session_id)
+    assert graph["session"] == graph["capture"]
     edge = graph["edges"][0]
     assert edge["source_request_id"] == "api-root"
     assert edge["target_request_id"] == "api-child"

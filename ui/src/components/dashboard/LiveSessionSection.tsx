@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useDashboardLive, useRequestContext } from '../../api/hooks'
 import { ActiveSessionPanel } from './ActiveSessionPanel'
 import { ConversationFlows } from './ConversationFlows'
-import { ContextChangePanel } from './ContextChangePanel'
-import { RequestActivityChart } from './RequestActivityChart'
+import { RequestOverview } from './RequestOverview'
 import { RequestFlow } from './RequestFlow'
 import { RequestViewControls } from './RequestViewControls'
 import { useCompactRequestCards, useSelectedRequest } from './requestViewState'
 
 export function LiveSessionSection() {
+  const navigate = useNavigate()
   const { data, isLoading, isError } = useDashboardLive()
   const [layout, setLayout] = useState<'sequence' | 'conversations'>('sequence')
   const [selectionNotice, setSelectionNotice] = useState('')
@@ -63,14 +63,11 @@ export function LiveSessionSection() {
       {data.active_session && (
         <>
           {selectionNotice && <p role="status" className="text-xs text-[var(--text-muted)]">{selectionNotice}</p>}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,.6fr)]">
-            <RequestActivityChart activity={data.activity} />
-            <ContextChangePanel
+          <RequestOverview activity={data.activity} onOpenRequest={(id) => navigate(`/requests/${id}`)}
               change={selectedId === newestId ? data.context_change : context.data?.context_change ?? null}
               pending={!!selectedId && selectedId !== newestId && context.isLoading}
               failed={!!selectedId && selectedId !== newestId && context.isError}
             />
-          </div>
           {layout === 'sequence' ? <RequestFlow items={data.request_flow} compact={compact} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setSelectionNotice('') }}
             headerActions={<RequestViewControls compact={compact} onCompactChange={setCompact} layout={layout} onLayoutChange={setLayout}
               groupCount={data.conversation_count + (data.auxiliary ? 1 : 0)} />}

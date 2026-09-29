@@ -15,7 +15,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { useCreateSession, useRenameSession } from './hooks'
+import { sessionsApi } from './client'
+import type { LineageGraph } from './client'
+import { useCreateSession, useRenameSession, useSessionLineage } from './hooks'
 
 vi.mock('./client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./client')>()
@@ -25,6 +27,8 @@ vi.mock('./client', async (importOriginal) => {
       ...actual.sessionsApi,
       create: vi.fn().mockResolvedValue({}),
       rename: vi.fn().mockResolvedValue({}),
+      lineageRevision: vi.fn().mockResolvedValue({ revision: 'v1' }),
+      lineage: vi.fn().mockResolvedValue({ analysis_version: 'test' }),
     },
   }
 })
@@ -56,5 +60,23 @@ describe('session mutation invalidation', () => {
     const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey)
     expect(keys).toContainEqual(['stats', 'dashboard-live'])
     expect(keys).toContainEqual(['session', 's1'])
+  })
+})
+
+describe('revision-bound diagnostics loading', () => {
+  it('reuses the full graph until its lightweight revision changes', async () => {
+    const qc = new QueryClient()
+    const ownWrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    vi.mocked(sessionsApi.lineageRevision).mockResolvedValue({ revision: 'v1' })
+    vi.mocked(sessionsApi.lineage).mockResolvedValue({ analysis_version: 'test' } as LineageGraph)
+    vi.mocked(sessionsApi.lineage).mockClear()
+    const { result } = renderHook(() => useSessionLineage('s1'), { wrapper: ownWrapper })
+    await waitFor(() => expect(result.current.data?.analysis_version).toBe('test'))
+    expect(sessionsApi.lineage).toHaveBeenCalledTimes(1)
+    await qc.invalidateQueries({ queryKey: ['lineage-revision', 's1'] })
+    expect(sessionsApi.lineage).toHaveBeenCalledTimes(1)
+    vi.mocked(sessionsApi.lineageRevision).mockResolvedValue({ revision: 'v2' })
+    await qc.invalidateQueries({ queryKey: ['lineage-revision', 's1'] })
+    await waitFor(() => expect(sessionsApi.lineage).toHaveBeenCalledTimes(2))
   })
 })

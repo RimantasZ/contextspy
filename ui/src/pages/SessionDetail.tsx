@@ -26,8 +26,7 @@ import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import { SessionLineage } from '../components/SessionLineage';
 import { SessionConversationSequences } from '../components/SessionConversationSequences';
 import { SegmentedControl } from '../components/ui/SegmentedControl';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import type jsPDF from 'jspdf';
 
 type Bucket = 'minute' | 'hour' | 'day';
 
@@ -108,8 +107,12 @@ export default function SessionDetail() {
     }
   }
 
-  function exportPdf() {
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  async function exportPdf() {
+    // Report generation is optional; keep its libraries out of the conversation screen's initial bundle.
+    const [{ default: JsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'), import('jspdf-autotable'),
+    ]);
+    const doc = new JsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
     let y = 40;
 

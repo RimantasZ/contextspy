@@ -1,14 +1,15 @@
 // Copyright 2026 Rimantas Zukaitis
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { useRequestContext, useSessionSequence } from '../api/hooks'
 import { sessionsApi } from '../api/client'
 import type { SessionConversation, SessionConversationPage, SessionConversationsData } from '../api/client'
-import { ContextChangePanel } from './dashboard/ContextChangePanel'
-import { evidenceLabel, gapLabel } from './dashboard/ConversationFlows'
+import { ConversationGroupRow } from './dashboard/ConversationGroupRow'
+import { gapLabel } from './dashboard/conversationPresentation'
 import { RequestFlow } from './dashboard/RequestFlow'
-import { RequestActivityChart } from './dashboard/RequestActivityChart'
-import { RequestDensityToggle, RequestViewControls } from './dashboard/RequestViewControls'
+import { RequestOverview } from './dashboard/RequestOverview'
+import { RequestViewControls } from './dashboard/RequestViewControls'
 import { useCompactRequestCards, useConversationCardDensity, useSelectedRequest } from './dashboard/requestViewState'
 import { formatDateTimeCompact } from '../lib/format'
 
@@ -19,6 +20,7 @@ export function SessionConversationSequences({ data, initialGroupKey, layout = '
   layout?: 'sequence' | 'conversations'; onLayoutChange?: (layout: 'sequence' | 'conversations') => void
 }) {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const sequence = useSessionSequence(data.session_id)
   const [compact, setCompact] = useCompactRequestCards(data.session_id)
   const [groupCompact, setGroupCompact] = useConversationCardDensity(data.session_id)
@@ -170,16 +172,13 @@ export function SessionConversationSequences({ data, initialGroupKey, layout = '
   return (
     <div className="min-w-0 space-y-4">
       <p className="text-xs text-[var(--text-muted)]">
-        {data.conversation_count} supported conversation{data.conversation_count === 1 ? '' : 's'} · {data.auxiliary_request_count ?? 0} auxiliary request{(data.auxiliary_request_count ?? 0) === 1 ? '' : 's'} · {data.lineage_fragment_count} diagnostic path{data.lineage_fragment_count === 1 ? '' : 's'}
+        {data.conversation_count} supported conversation{data.conversation_count === 1 ? '' : 's'} · {data.auxiliary_request_count ?? 0} auxiliary request{(data.auxiliary_request_count ?? 0) === 1 ? '' : 's'} · {data.diagnostic_path_count ?? data.lineage_fragment_count} diagnostic path{(data.diagnostic_path_count ?? data.lineage_fragment_count) === 1 ? '' : 's'}
       </p>
       <p role="status" aria-live="polite" className="text-xs text-[var(--text-muted)]">{notice}</p>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,.6fr)]">
-        <RequestActivityChart activity={sequence.data?.activity ?? []} />
-        <ContextChangePanel
+      <RequestOverview activity={sequence.data?.activity ?? []} onOpenRequest={(id) => navigate(`/requests/${id}`)}
           change={context.data?.context_change ?? (selectedId === newestId ? groups.find((group) => group.latest_request_id === selectedId)?.context_change ?? null : null)}
           pending={!!selectedId && context.isLoading} failed={!!selectedId && context.isError}
         />
-      </div>
       {layout === 'sequence' ? (
         sequence.isLoading ? <div className="panel text-sm text-[var(--text-muted)]">Loading request sequence…</div>
         : sequence.error || !sequence.data ? <p role="alert" className="notice-warning">Request sequence could not be loaded.</p>
@@ -202,20 +201,15 @@ export function SessionConversationSequences({ data, initialGroupKey, layout = '
           const nextCursor = more ? more.nextCursor : group.next_request_cursor
           const focused = jumped[group.key]
           return (
-            <section key={group.key} className="min-w-0 py-4 first:pt-0 last:pb-0" aria-label={group.label}>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <h3 className="section-title">{group.label}</h3>
-                  <p className="text-xs text-[var(--text-muted)]">{evidenceLabel(group)}</p>
-                  <p className="text-xs text-[var(--text-muted)]">
-                    {group.request_count} represented request{group.request_count === 1 ? '' : 's'} · latest {formatDateTimeCompact(group.latest_activity)} · {group.segment_count} lineage segment{group.segment_count === 1 ? '' : 's'}
-                  </p>
-                  {group.unassigned_request_count > 0 && <p className="text-xs text-[var(--warning)]">{group.unassigned_request_count} request{group.unassigned_request_count === 1 ? '' : 's'} with uncertain stream membership</p>}
-                </div>
-                <RequestDensityToggle compact={groupCompact(group.key)} onChange={(value) => setGroupCompact(group.key, value)}
-                  label={`${group.label} card detail`} />
-              </div>
-              {group.segment_index.length > 1 && (
+            <ConversationGroupRow key={group.key} group={group}
+              items={segments.flatMap((segment) => segment.request_flow)}
+              compact={groupCompact(group.key)} onCompactChange={(value) => setGroupCompact(group.key, value)}
+              selectedId={selectedId} onSelect={setSelectedId}
+              meta={<p className="text-xs text-[var(--text-muted)]">
+                {group.request_count} represented request{group.request_count === 1 ? '' : 's'} · latest {formatDateTimeCompact(group.latest_activity)} · {group.segment_count} lineage segment{group.segment_count === 1 ? '' : 's'}
+              </p>}
+              notice={group.unassigned_request_count > 0 && <p className="text-xs text-[var(--warning)]">{group.unassigned_request_count} request{group.unassigned_request_count === 1 ? '' : 's'} with uncertain stream membership</p>}
+              beforeFlow={group.segment_index.length > 1 && (
                 <details className="mb-3 rounded border border-[var(--border)] p-2 text-xs">
                   <summary className="cursor-pointer font-medium">Segment index · {group.segment_index.length} paths and breaks</summary>
                   <div className="mt-2 flex max-h-36 flex-wrap gap-2 overflow-y-auto">
@@ -228,24 +222,19 @@ export function SessionConversationSequences({ data, initialGroupKey, layout = '
                   </div>
                 </details>
               )}
-              <RequestFlow
-                items={segments.flatMap((segment) => segment.request_flow)}
-                bare
-                compact={groupCompact(group.key)}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                trailingAction={nextCursor ? (
+              trailingAction={nextCursor ? (
                   <button type="button" className="app-button h-full w-full text-center" disabled={!!loadingKey} onClick={() => loadEarlier(group)}>
                     {loadingKey === group.key ? 'Loading…' : `More (${group.request_count} total) →`}
                   </button>
                 ) : null}
-              />
+              afterFlow={<>
               {more?.continuesEarlier && <p className="mt-2 text-xs text-[var(--text-muted)]">This linked segment continues on the next page.</p>}
               {focused && <div className="mt-4 rounded border border-[var(--border)] p-3">
                 <div className="mb-2 flex justify-between gap-2"><h4 className="text-sm font-medium">Selected segment window</h4><button className="app-button min-h-7 py-1 text-xs" onClick={() => setJumped((previous) => ({ ...previous, [group.key]: undefined }))}>Close</button></div>
                 <RequestFlow items={focused.segments.flatMap((segment) => segment.request_flow)} bare compact={groupCompact(group.key)} selectedId={selectedId} onSelect={setSelectedId} />
               </div>}
-            </section>
+              </>}
+            />
           )
         })}
         </div>

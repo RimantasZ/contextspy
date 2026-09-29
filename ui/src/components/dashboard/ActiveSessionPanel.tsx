@@ -52,8 +52,8 @@ function ActiveDetails({ session }: { session: DashboardActiveSession }) {
       <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
         <Metric label="Elapsed" value={formatElapsedDuration(now - startedMs)} />
         <Metric label="Requests" value={session.request_count.toLocaleString()} />
-        <Metric label="Input tokens" value={session.tokens_total_input.toLocaleString()} />
-        <Metric label="Output tokens" value={session.tokens_total_output.toLocaleString()} />
+        <Metric label="Visible input est." value={session.tokens_total_input.toLocaleString()} />
+        <Metric label="Output est." value={session.tokens_total_output.toLocaleString()} />
       </div>
       <div className="flex flex-col items-end gap-1">
         <button
