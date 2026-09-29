@@ -1,5 +1,12 @@
 # What's New
 
+## v0.5.2
+
+### Conversations
+
+- Added a compact conversation view alongside the detailed one, with 24h time formatting and
+  tooltips, and fixed block change detection to account for encrypted content.
+
 ## v0.5.1
 
 ### Conversations
