@@ -76,7 +76,7 @@ export function ContextChangePanel({ change, unavailable = false, pending = fals
             <p className="text-xs text-[var(--text-muted)]">Block comparison unavailable.</p>
           ) : (
             <>
-              {rows.length === 0 ? (
+              {rows.length === 0 && change.comparison_fidelity !== 'observed_only' ? (
                 <p className="text-xs text-[var(--text-muted)]">No block-count changes. Content may still have changed.</p>
               ) : (
                 <ul className="space-y-1 text-sm">
@@ -96,7 +96,16 @@ export function ContextChangePanel({ change, unavailable = false, pending = fals
                       {hiddenCount} other block type{hiddenCount === 1 ? '' : 's'} changed
                     </li>
                   )}
+                  {change.comparison_fidelity === 'observed_only' && (
+                    <li className="flex items-center justify-between gap-2">
+                      <span className="text-[var(--text)]">Opaque changes:</span>
+                      <span className="font-medium tabular-nums text-[var(--text)]">{change.opaque_changes ?? 0}</span>
+                    </li>
+                  )}
                 </ul>
+              )}
+              {change.comparison_fidelity === 'observed_only' && (
+                <p className="mt-2 text-xs text-[var(--text-muted)]">Observed counts only; opaque contents not compared.</p>
               )}
               {change.comparison_fidelity === 'partial' && (
                 <p className="mt-2 text-xs text-[var(--text-muted)]">Partial capture</p>

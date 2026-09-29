@@ -498,8 +498,9 @@ export interface DashboardContextChange {
   external_parent: boolean
   first_conversation: boolean
   token_delta: number | null
-  comparison_fidelity: 'complete' | 'partial' | 'unavailable'
+  comparison_fidelity: 'complete' | 'partial' | 'observed_only' | 'unavailable'
   block_changes: DashboardBlockChange[]
+  opaque_changes?: number | null
 }
 
 export interface DashboardConversation {

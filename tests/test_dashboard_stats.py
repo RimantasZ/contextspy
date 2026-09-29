@@ -51,11 +51,12 @@ def _req(db, rid, *, sid="s1", seq=1, tin=100, tout=10, minutes=None, fidelity="
     return r
 
 
-def _blocks(db, rid, block_type, n, direction="input", content_hash=None):
+def _blocks(db, rid, block_type, n, direction="input", content_hash=None, attrs=None):
     for i in range(n):
         db.add(BlockRecord(
             request_id=rid, direction=direction, position=i,
             block_type=block_type, content_hash=content_hash, token_count=0,
+            attrs=attrs,
         ))
     db.flush()
 
@@ -220,9 +221,9 @@ def test_purged_content_still_counted(db):
     ("partial", "complete", "partial"),
     ("complete", "partial", "partial"),
     ("partial", "partial", "partial"),
-    ("opaque", "complete", "unavailable"),
-    ("complete", "opaque", "unavailable"),
-    ("opaque", "partial", "unavailable"),
+    ("opaque", "complete", "observed_only"),
+    ("complete", "opaque", "observed_only"),
+    ("opaque", "partial", "observed_only"),
 ])
 def test_fidelity(db, prev, cur, expected):
     _session(db)
@@ -233,7 +234,37 @@ def test_fidelity(db, prev, cur, expected):
     cc = crud.get_dashboard_live(db)["context_change"]
     assert cc["comparison_fidelity"] == expected
     assert cc["token_delta"] == 15
-    assert bool(cc["block_changes"]) == (expected != "unavailable")
+    assert bool(cc["block_changes"])
+    assert cc["opaque_changes"] == (0 if expected == "observed_only" else None)
+
+
+def test_opaque_changes_are_count_only_and_visible_changes_remain_observable(db):
+    _session(db)
+    _req(db, "p", seq=1, fidelity="opaque")
+    _req(db, "c", seq=2, fidelity="opaque", parent="p")
+    _blocks(db, "p", "thinking", 2, attrs='{"opaque": true}')
+    _blocks(db, "c", "thinking", 3, attrs='{"opaque": true}')
+    _blocks(db, "p", "tool_call", 1)
+    _blocks(db, "c", "tool_call", 2)
+    cc = crud.get_dashboard_live(db)["context_change"]
+    assert cc["comparison_fidelity"] == "observed_only"
+    assert cc["opaque_changes"] == 1
+    assert cc["block_changes"] == [
+        {"block_type": "tool_call", "current_count": 2, "previous_count": 1, "delta": 1},
+    ]
+    assert crud.get_session_request_context(db, "s1", "c")["context_change"] == cc
+
+
+def test_opaque_changes_do_not_compare_content_or_count_output(db):
+    _session(db)
+    _req(db, "p", seq=1, fidelity="opaque")
+    _req(db, "c", seq=2, fidelity="opaque", parent="p")
+    _blocks(db, "p", "thinking", 1, content_hash="old", attrs='{"opaque": true}')
+    _blocks(db, "c", "thinking", 1, content_hash="new", attrs='{"opaque": true}')
+    _blocks(db, "c", "thinking", 2, direction="output", attrs='{"opaque": true}')
+    cc = crud.get_dashboard_live(db)["context_change"]
+    assert cc["opaque_changes"] == 0
+    assert cc["block_changes"] == []
 
 
 def test_null_session_seq_is_deterministic(db):

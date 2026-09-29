@@ -83,6 +83,24 @@ describe('ContextChangePanel', () => {
     expect(screen.queryByText('Block changes')).toBeNull()
   })
 
+  it('shows observed-only visible deltas and opaque item count without implying content comparison', () => {
+    const { unmount } = render(<ContextChangePanel change={change({
+      comparison_fidelity: 'observed_only', opaque_changes: 2,
+      block_changes: [bc('tool_call', 1)],
+    })} />)
+    expect(screen.getByText('Opaque changes:')).toBeTruthy()
+    expect(screen.getByText('2')).toBeTruthy()
+    expect(screen.getByText('Tool calls')).toBeTruthy()
+    expect(screen.getByText('Observed counts only; opaque contents not compared.')).toBeTruthy()
+    unmount()
+
+    render(<ContextChangePanel change={change({
+      comparison_fidelity: 'observed_only', opaque_changes: 0,
+    })} />)
+    expect(screen.getByText('0')).toBeTruthy()
+    expect(screen.queryByText('Block comparison unavailable.')).toBeNull()
+  })
+
   it('never shows a limit, percentage or progress bar', () => {
     const { container } = render(<ContextChangePanel change={change()} />)
     expect(container.textContent).not.toMatch(/%|limit|remaining|max/i)

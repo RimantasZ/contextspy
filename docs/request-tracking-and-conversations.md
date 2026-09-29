@@ -224,8 +224,10 @@ calculate session totals.
   token delta is a difference between locally analyzed input sizes; “Block changes” are net
   counts of input block types, not a proof that content was added or removed. A zero block-count
   delta can still hide replaced content. Block comparison is marked partial when either context
-  is partial and unavailable when either is opaque; a parent-relative token delta may still be
-  shown when block comparison is unavailable.
+  is partial. When either context is opaque, ContextSpy shows observed-only counts for visible
+  block types and **Opaque changes: x** for the absolute difference in opaque input-item counts.
+  It does not compare encrypted contents: `0` does not mean the hidden state stayed the same.
+  A parent-relative token delta can still be shown for an opaque comparison.
 
 The `?view=lineage` URL opens the default **Sequence** layout;
 `?view=lineage&layout=conversations` opens grouped conversations. Older links with a

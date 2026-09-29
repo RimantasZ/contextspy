@@ -934,29 +934,37 @@ def _live_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> 
     return _session_lineage_graph(db, session_id, session_count)[0]
 
 
-def _block_counts(db: OrmSession, request_ids: list[str]) -> dict[str, dict[str, int]]:
+def _block_counts(
+    db: OrmSession, request_ids: list[str],
+) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
+    opaque = func.coalesce(func.json_extract(BlockRecord.attrs, "$.opaque"), 0)
     rows = db.execute(
         select(
             BlockRecord.request_id,
             BlockRecord.block_type,
+            opaque.label("opaque"),
             func.count().label("block_count"),
         )
         .where(
             BlockRecord.request_id.in_(request_ids),
             BlockRecord.direction == Direction.INPUT,
         )
-        .group_by(BlockRecord.request_id, BlockRecord.block_type)
+        .group_by(BlockRecord.request_id, BlockRecord.block_type, opaque)
     ).all()
     counts: dict[str, dict[str, int]] = {rid: {} for rid in request_ids}
+    opaque_counts: dict[str, int] = {rid: 0 for rid in request_ids}
     for row in rows:
-        counts[row.request_id][row.block_type] = row.block_count
-    return counts
+        if row.opaque:
+            opaque_counts[row.request_id] += row.block_count
+        else:
+            counts[row.request_id][row.block_type] = row.block_count
+    return counts, opaque_counts
 
 
 def _comparison_fidelity(latest: Request, previous: Request) -> str:
     pair = {latest.context_fidelity, previous.context_fidelity}
     if "opaque" in pair:
-        return "unavailable"
+        return "observed_only"
     if "partial" in pair:
         return "partial"
     return "complete"
@@ -965,6 +973,7 @@ def _comparison_fidelity(latest: Request, previous: Request) -> str:
 def _context_change(
     latest: Request, parent: Request | None, *, parent_state: str,
     confidence: float | None, block_counts: dict[str, dict[str, int]],
+    opaque_counts: dict[str, int],
     first_conversation: bool = False,
 ) -> dict:
     change: dict[str, Any] = {
@@ -980,6 +989,7 @@ def _context_change(
         "token_delta": None,
         "comparison_fidelity": "unavailable",
         "block_changes": [],
+        "opaque_changes": None,
     }
     if parent is None:
         return change
@@ -987,8 +997,10 @@ def _context_change(
     change["token_delta"] = latest.tokens_total_input - parent.tokens_total_input
     fidelity = _comparison_fidelity(latest, parent)
     change["comparison_fidelity"] = fidelity
-    if fidelity == "unavailable":
-        return change
+    if fidelity == "observed_only":
+        change["opaque_changes"] = abs(
+            opaque_counts.get(latest.id, 0) - opaque_counts.get(parent.id, 0)
+        )
 
     current = block_counts.get(latest.id, {})
     prior = block_counts.get(parent.id, {})
@@ -1106,10 +1118,11 @@ def _selected_context_change(db: OrmSession, graph: dict, request_id: str) -> di
     ids = [request_id] + ([parent_id] if parent_id else [])
     rows = db.execute(select(Request).where(Request.id.in_(ids))).scalars().all()
     by_id = {row.id: row for row in rows}
+    block_counts, opaque_counts = _block_counts(db, ids)
     return _context_change(
         by_id[request_id], by_id.get(parent_id), parent_state=node["parent_state"],
         confidence=edge["confidence"] if edge else None,
-        block_counts=_block_counts(db, ids),
+        block_counts=block_counts, opaque_counts=opaque_counts,
         first_conversation=any(
             request_id in group["request_ids"] and group["evidence"] == "parallel_chains"
             for group in graph["conversations"]
@@ -1254,7 +1267,7 @@ def _conversation_projection_view(
             comparison_ids.add(edge["source_request_id"])
     rows = list(db.execute(select(Request).where(Request.id.in_(comparison_ids))).scalars().all()) if comparison_ids else []
     row_by_id = {row.id: row for row in rows}
-    block_counts = _block_counts(db, list(comparison_ids)) if comparison_ids else {}
+    block_counts, opaque_counts = _block_counts(db, list(comparison_ids)) if comparison_ids else ({}, {})
     views = []
     page = None
     for group, ordered, selected, has_more, segment_by_id, starts in prepared:
@@ -1298,7 +1311,7 @@ def _conversation_projection_view(
             row_by_id[latest_id], row_by_id.get(parent_id),
             parent_state=nodes[latest_id]["parent_state"],
             confidence=edge["confidence"] if edge else None,
-            block_counts=block_counts,
+            block_counts=block_counts, opaque_counts=opaque_counts,
             first_conversation=group["evidence"] == "parallel_chains" and edge is None,
         )
         next_cursor = _cursor_encode(order(selected[-1])) if has_more and selected else None
