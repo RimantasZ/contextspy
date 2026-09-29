@@ -20,8 +20,8 @@ export function SessionConversationSequences({ data, initialGroupKey, layout = '
 }) {
   const queryClient = useQueryClient()
   const sequence = useSessionSequence(data.session_id)
-  const [compact, setCompact] = useCompactRequestCards()
-  const [groupCompact, setGroupCompact] = useConversationCardDensity(data.session_id, compact)
+  const [compact, setCompact] = useCompactRequestCards(data.session_id)
+  const [groupCompact, setGroupCompact] = useConversationCardDensity(data.session_id)
   const [extraSequence, setExtraSequence] = useState<NonNullable<typeof sequence.data>['request_flow']>([])
   const [nextSequenceCursor, setNextSequenceCursor] = useState<string | null>(null)
   const [sequenceRevision, setSequenceRevision] = useState<string | null>(null)

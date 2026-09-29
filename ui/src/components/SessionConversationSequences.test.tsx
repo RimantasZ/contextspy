@@ -34,8 +34,6 @@ const base: SessionConversationsData = {
 
 describe('session conversation sequences', () => {
   function show(data: SessionConversationsData) {
-    localStorage.setItem('contextspy.compact-request-cards', 'true')
-    localStorage.removeItem('contextspy.conversation-density:s1')
     const result = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SessionConversationSequences data={data} /></MemoryRouter></QueryClientProvider>)
     const firstLabel = data.conversations[0]?.label ?? data.auxiliary?.label
     if (firstLabel) fireEvent.click(within(screen.getByRole('group', { name: `${firstLabel} card detail` })).getByRole('button', { name: 'Detailed' }))

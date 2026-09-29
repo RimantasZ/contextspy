@@ -1,14 +1,24 @@
 import { useEffect, useState } from 'react'
 
-const COMPACT_KEY = 'contextspy.compact-request-cards'
+type DensityChoices = { sequenceCompact: boolean; conversations: Record<string, boolean> }
 
-export function useCompactRequestCards() {
-  const [compact, setCompact] = useState(() => {
-    try { return localStorage.getItem(COMPACT_KEY) !== 'false' } catch { return true }
-  })
-  useEffect(() => {
-    try { localStorage.setItem(COMPACT_KEY, String(compact)) } catch { /* storage unavailable */ }
-  }, [compact])
+// In-memory only: choices follow this capture across SPA navigation, but a fresh
+// page load starts Compact again. Never carry choices into another capture.
+const densityBySession = new Map<string, DensityChoices>()
+
+function choicesFor(sessionId: string): DensityChoices {
+  return densityBySession.get(sessionId) ?? { sequenceCompact: true, conversations: {} }
+}
+
+export function useCompactRequestCards(sessionId: string) {
+  const [state, setState] = useState(() => ({ sessionId, compact: choicesFor(sessionId).sequenceCompact }))
+  const compact = state.sessionId === sessionId ? state.compact : choicesFor(sessionId).sequenceCompact
+
+  function setCompact(value: boolean) {
+    densityBySession.set(sessionId, { ...choicesFor(sessionId), sequenceCompact: value })
+    setState({ sessionId, compact: value })
+  }
+
   return [compact, setCompact] as const
 }
 
@@ -19,21 +29,15 @@ export function useSelectedRequest(newestId: string | null) {
   return [selectedId ?? newestId, setSelectedId] as const
 }
 
-function readConversationDensity(sessionId: string): Record<string, boolean> {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(`contextspy.conversation-density:${sessionId}`) ?? '{}')
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'))
-  } catch { return {} }
-}
+export function useConversationCardDensity(sessionId: string) {
+  const [state, setState] = useState(() => ({ sessionId, overrides: choicesFor(sessionId).conversations }))
+  const overrides = state.sessionId === sessionId ? state.overrides : choicesFor(sessionId).conversations
 
-export function useConversationCardDensity(sessionId: string, defaultCompact: boolean) {
-  const [state, setState] = useState(() => ({ sessionId, overrides: readConversationDensity(sessionId) }))
-  const overrides = state.sessionId === sessionId ? state.overrides : readConversationDensity(sessionId)
   function setGroupCompact(groupKey: string, compact: boolean) {
     const next = { ...overrides, [groupKey]: compact }
+    densityBySession.set(sessionId, { ...choicesFor(sessionId), conversations: next })
     setState({ sessionId, overrides: next })
-    try { localStorage.setItem(`contextspy.conversation-density:${sessionId}`, JSON.stringify(next)) } catch { /* storage unavailable */ }
   }
-  return [(groupKey: string) => overrides[groupKey] ?? defaultCompact, setGroupCompact] as const
+
+  return [(groupKey: string) => overrides[groupKey] ?? true, setGroupCompact] as const
 }

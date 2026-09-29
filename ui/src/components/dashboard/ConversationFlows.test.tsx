@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import type { DashboardConversation, DashboardLiveData } from '../../api/client'
@@ -27,17 +27,16 @@ function group(label: string, seq: number, evidence: DashboardConversation['evid
   }
 }
 
-function show(groups: DashboardConversation[], auxiliary: DashboardConversation | null = null, onSelect = vi.fn()) {
-  localStorage.removeItem('contextspy.conversation-density:s1')
+function show(groups: DashboardConversation[], auxiliary: DashboardConversation | null = null, onSelect = vi.fn(), sequenceCompact = true, sessionId = 's1') {
   const data: DashboardLiveData = {
-    active_session: { id: 's1', name: 'Work', started_at: '2026-09-18T08:00:00', request_count: 3,
+    active_session: { id: sessionId, name: 'Work', started_at: '2026-09-18T08:00:00', request_count: 3,
       tokens_total_input: 300, tokens_total_output: 15 },
     request_flow: [], activity: [], context_change: null, conversations: groups,
     conversation_count: groups.length, auxiliary, auxiliary_request_count: auxiliary?.request_count ?? 0,
     confirmed_parallel_streams: 0, lineage_fragment_count: 0, has_more_conversations: false,
     most_recent_conversation_key: groups[0]?.key ?? null,
   }
-  render(<MemoryRouter><ConversationFlows data={data} compact selectedId={null} onSelect={onSelect} onShowSequence={() => {}} /></MemoryRouter>)
+  render(<MemoryRouter><ConversationFlows data={data} compact={sequenceCompact} selectedId={null} onSelect={onSelect} onShowSequence={() => {}} /></MemoryRouter>)
   return onSelect
 }
 
@@ -70,14 +69,26 @@ describe('grouped conversation rows', () => {
   })
 
   it('expands conversations independently and remembers each choice', () => {
-    localStorage.removeItem('contextspy.conversation-density:s1')
-    show([group('Conversation 1', 9), group('Conversation 2', 8)])
+    show([group('Conversation 1', 9), group('Conversation 2', 8)], null, vi.fn(), true, 's2')
     const first = screen.getByRole('region', { name: 'Conversation 1' })
     const second = screen.getByRole('region', { name: 'Conversation 2' })
     fireEvent.click(within(first).getByRole('button', { name: 'Detailed' }))
     expect(within(first).getByRole('button', { name: /Request #9/ }).textContent).toContain('100 in')
     expect(within(second).getByRole('button', { name: /Request #8/ }).textContent).not.toContain('100 in')
-    expect(JSON.parse(localStorage.getItem('contextspy.conversation-density:s1') ?? '{}'))
-      .toEqual({ 'Conversation 1': false })
+    expect(localStorage.getItem('contextspy.conversation-density:s2')).toBeNull()
+    cleanup()
+    show([group('Conversation 1', 9)], null, vi.fn(), true, 's3')
+    expect(within(screen.getByRole('group', { name: 'Conversation 1 card detail' })).getByRole('button', { name: 'Compact' }).getAttribute('aria-pressed')).toBe('true')
+    cleanup()
+    show([group('Conversation 1', 9)], null, vi.fn(), true, 's2')
+    expect(within(screen.getByRole('group', { name: 'Conversation 1 card detail' })).getByRole('button', { name: 'Detailed' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('defaults each conversation to compact even when the sequence is detailed', () => {
+    show([group('Conversation 1', 9), group('Conversation 2', 8)], null, vi.fn(), false, 's4')
+    for (const label of ['Conversation 1', 'Conversation 2']) {
+      const toggle = within(screen.getByRole('region', { name: label })).getByRole('group', { name: `${label} card detail` })
+      expect(within(toggle).getByRole('button', { name: 'Compact' }).getAttribute('aria-pressed')).toBe('true')
+    }
   })
 })

@@ -29,8 +29,8 @@ function card(seq: number): LineageRequestFlowItem {
     membership_state: 'unassigned', shared_history: false, fork_status: 'none' }
 }
 
-function data(seqs: number[]): DashboardLiveData {
-  return { active_session: { id: 's1', name: 'Work', started_at: '2026-09-18T08:00:00',
+function data(seqs: number[], sessionId = 's1'): DashboardLiveData {
+  return { active_session: { id: sessionId, name: 'Work', started_at: '2026-09-18T08:00:00',
     request_count: seqs.length, tokens_total_input: 100 * seqs.length, tokens_total_output: 5 * seqs.length },
     request_flow: seqs.map(card), activity: [], context_change: context(`r${seqs[0]}`),
     conversations: seqs.slice(0, 2).map((seq, index) => ({
@@ -39,14 +39,14 @@ function data(seqs: number[]): DashboardLiveData {
       latest_parent_state: 'root', request_count: 1, unlinked_segment_count: 0,
       recent_segments: [{ key: `r${seq}`, gap_reason: 'root', request_flow: [card(seq)] }],
       has_older_requests: false, context_change: context(`r${seq}`),
-    })), auxiliary: null, auxiliary_request_count: 0, conversation_count: 2,
+    })), auxiliary: null, auxiliary_request_count: 0, conversation_count: Math.min(2, seqs.length),
     confirmed_parallel_streams: 1, lineage_fragment_count: 2, has_more_conversations: false,
     most_recent_conversation_key: 'g0' }
 }
 
 describe('live request layouts', () => {
   it('defaults to compact chronological sequence, selects requests, and follows a new head', () => {
-    localStorage.removeItem('contextspy.compact-request-cards')
+    localStorage.setItem('contextspy.compact-request-cards', 'false')
     live = data([9, 8])
     const { rerender } = render(<MemoryRouter><LiveSessionSection /></MemoryRouter>)
     const row = screen.getByRole('list', { name: 'Request flow' })
@@ -69,6 +69,14 @@ describe('live request layouts', () => {
     const firstGroupToggle = screen.getByRole('group', { name: 'Conversation 1 card detail' })
     fireEvent.click(within(firstGroupToggle).getByRole('button', { name: 'Detailed' }))
     expect(within(firstGroupToggle).getByRole('button', { name: 'Detailed' }).getAttribute('aria-pressed')).toBe('true')
-    expect(localStorage.getItem('contextspy.compact-request-cards')).toBe('true')
+    expect(localStorage.getItem('contextspy.compact-request-cards')).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: 'Show sequence' }))
+    fireEvent.click(within(screen.getByRole('group', { name: 'Request card detail' })).getByRole('button', { name: 'Detailed' }))
+    live = data([1], 'another-session')
+    rerender(<MemoryRouter><LiveSessionSection /></MemoryRouter>)
+    expect(within(screen.getByRole('group', { name: 'Request card detail' })).getByRole('button', { name: 'Compact' }).getAttribute('aria-pressed')).toBe('true')
+    live = data([11, 10])
+    rerender(<MemoryRouter><LiveSessionSection /></MemoryRouter>)
+    expect(within(screen.getByRole('group', { name: 'Request card detail' })).getByRole('button', { name: 'Detailed' }).getAttribute('aria-pressed')).toBe('true')
   })
 })

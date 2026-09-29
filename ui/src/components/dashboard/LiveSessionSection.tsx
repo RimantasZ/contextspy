@@ -26,7 +26,7 @@ export function LiveSessionSection() {
   const { data, isLoading, isError } = useDashboardLive()
   const [layout, setLayout] = useState<'sequence' | 'conversations'>('sequence')
   const [selectionNotice, setSelectionNotice] = useState('')
-  const [compact, setCompact] = useCompactRequestCards()
+  const [compact, setCompact] = useCompactRequestCards(data?.active_session?.id ?? '')
   const newestId = data?.request_flow[0]?.id ?? null
   const [selectedId, setSelectedId] = useSelectedRequest(newestId)
   const context = useRequestContext(data?.active_session?.id ?? '',

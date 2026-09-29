@@ -203,7 +203,9 @@ calculate session totals.
   conversation. A selected card has a darker background. The Request flow header contains the
   conversation switch and a Compact/Detailed toggle. Grouped conversations share one section,
   with an independent toggle on each row (including Auxiliary requests), so one can be expanded
-  without expanding the others. Card-density choices persist in this browser; detailed cards
+  without expanding the others. Sequence and each conversation default to Compact independently;
+  explicit card-density choices are kept only for that session until the page is reloaded.
+  A fresh load returns to Compact. Detailed cards
   show additional metadata and icon tooltips.
   Click a card once to select it and update the context panel; click it again, or use “Open
   request” in the panel, for Request Detail. As new requests arrive, selection follows the

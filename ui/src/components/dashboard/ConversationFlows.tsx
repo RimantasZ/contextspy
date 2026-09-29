@@ -36,7 +36,7 @@ export function ConversationFlows({ data, selectedId, onSelect, compact, onShowS
   onShowSequence: () => void
 }) {
   const groups = [...(data.conversations ?? []), ...(data.auxiliary ? [data.auxiliary] : [])]
-  const [groupCompact, setGroupCompact] = useConversationCardDensity(data.active_session?.id ?? '', compact)
+  const [groupCompact, setGroupCompact] = useConversationCardDensity(data.active_session?.id ?? '')
   if (groups.length === 0) {
     return <div className="space-y-2">
       {data.request_flow.length > 0 && <p className="text-xs text-[var(--warning)]">Grouping unavailable; showing ungrouped session requests. Parent comparisons are unavailable.</p>}
