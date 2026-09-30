@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 from contextspy.analysis.tokenizer import count_tokens
 
@@ -45,6 +46,31 @@ class BlockType(StrEnum):
 class Direction(StrEnum):
     INPUT = "input"
     OUTPUT = "output"
+
+
+_BLOCK_VISUAL = {
+    BlockType.SYSTEM_PROMPT: "system",
+    BlockType.TOOL_DEFINITION: "tool_definition",
+    BlockType.USER_MESSAGE: "user",
+    BlockType.ASSISTANT_MESSAGE: "assistant",
+    BlockType.TOOL_CALL: "tool_call",
+    BlockType.TOOL_RESULT: "tool_result",
+    BlockType.THINKING: "thinking",
+    BlockType.ASSISTANT_PREFILL: "prefill",
+}
+
+
+def block_visual_token_totals(blocks: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Aggregate persisted block tokens for the request workbench's visual keys."""
+    totals: dict[str, dict[str, int]] = {"input": {}, "output": {}}
+    for block in blocks:
+        direction = block.get("direction")
+        if direction not in totals:
+            continue
+        visual = _BLOCK_VISUAL.get(block.get("block_type"), "other")
+        direction_totals = totals[direction]
+        direction_totals[visual] = direction_totals.get(visual, 0) + block["token_count"]
+    return totals
 
 
 def content_hash(content: str) -> str | None:

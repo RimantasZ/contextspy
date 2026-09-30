@@ -34,10 +34,12 @@ function rawPayload(request: Request, direction: WorkbenchDirection): string | n
 
 function RawPayload({ request, direction }: { request: Request; direction: WorkbenchDirection }) {
   const content = rawPayload(request, direction)
-  const [source, setSource] = useState<'payload' | 'events'>('payload')
+  const [source, setSource] = useState<'payload' | 'wire' | 'events'>('payload')
+  const hasWire = direction === 'input' && request.raw_request_body != null && request.raw_request_body !== content
   const hasEvents = direction === 'output' && (request.response_events?.length ?? 0) > 0
-  const shown = source === 'events' ? JSON.stringify(request.response_events) : content
-  const title = source === 'events' ? 'Raw response events' : `Raw ${direction === 'input' ? 'request' : 'response'} payload`
+  const selectedSource = (source === 'wire' && !hasWire) || (source === 'events' && !hasEvents) ? 'payload' : source
+  const shown = selectedSource === 'events' ? JSON.stringify(request.response_events) : selectedSource === 'wire' ? request.raw_request_body : content
+  const title = selectedSource === 'events' ? 'Raw response events' : selectedSource === 'wire' ? 'Original wire request' : hasWire ? 'Canonical request payload' : `Raw ${direction === 'input' ? 'request' : 'response'} payload`
 
   useEffect(() => { setSource('payload') }, [direction])
 
@@ -45,13 +47,14 @@ function RawPayload({ request, direction }: { request: Request; direction: Workb
     <div className="min-w-0">
       <div className="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2">
         <div className="flex gap-1">
-          <button type="button" onClick={() => setSource('payload')} className={`app-button min-h-8 py-1 text-xs ${source === 'payload' ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}>Payload</button>
-          {hasEvents && <button type="button" onClick={() => setSource('events')} className={`app-button min-h-8 py-1 text-xs ${source === 'events' ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}>Events</button>}
+          <button type="button" aria-pressed={selectedSource === 'payload'} onClick={() => setSource('payload')} className={`app-button min-h-8 py-1 text-xs ${selectedSource === 'payload' ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}>{hasWire ? 'Canonical' : 'Payload'}</button>
+          {hasWire && <button type="button" aria-pressed={selectedSource === 'wire'} onClick={() => setSource('wire')} className={`app-button min-h-8 py-1 text-xs ${selectedSource === 'wire' ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}>Wire</button>}
+          {hasEvents && <button type="button" aria-pressed={selectedSource === 'events'} onClick={() => setSource('events')} className={`app-button min-h-8 py-1 text-xs ${selectedSource === 'events' ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}>Events</button>}
         </div>
       </div>
       <div className="p-3">
         <SearchableContentViewer
-          key={`${direction}-${source}`}
+          key={`${direction}-${selectedSource}`}
           title={title}
           content={shown}
           emptyMessage="Raw content has been purged or was not captured."
@@ -84,7 +87,8 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
     query: search,
     arrangement: ARRANGEMENT_PRESETS[effectivePreset],
   }), [activeDirection, activeTypes, blocksQuery.data?.blocks, effectivePreset, hideZero, search])
-  const { allBlocks, available, tokenTotals, visibleBlocks } = blockModel
+  const { allBlocks, available, visibleBlocks } = blockModel
+  const tokenTotals = blocksQuery.data?.token_totals?.[activeDirection] ?? {}
 
   const selectedId = selection[activeDirection]
   const selected = allBlocks.find((block) => block.id === selectedId) ?? null

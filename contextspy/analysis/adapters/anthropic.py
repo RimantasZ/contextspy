@@ -269,6 +269,9 @@ class AnthropicAdapter(WireFormatAdapter):
                 delta = event.get("delta") or {}
                 if isinstance(delta, dict):
                     message.update(deepcopy(delta))
+                context_management = event.get("context_management")
+                if isinstance(context_management, dict):
+                    message["context_management"] = deepcopy(context_management)
                 usage = event.get("usage") or {}
                 if isinstance(usage, dict):
                     merged_usage = dict(message.get("usage") or {})

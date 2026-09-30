@@ -175,7 +175,9 @@ class _DatabaseLineageRepository(InvocationLineageRepository):
         self, provider: str, response_id: str,
     ) -> PersistedCanonicalInvocation | None:
         with get_db() as db:
-            row = crud.get_request_by_provider_response_id(db, provider, response_id)
+            row = crud.get_unique_request_by_provider_response_id(
+                db, provider, response_id,
+            )
             if row is None:
                 return None
             request_text = row.canonical_request_body or row.raw_request_body
@@ -190,10 +192,13 @@ class _DatabaseLineageRepository(InvocationLineageRepository):
                 )
             except (ValueError, TypeError, json.JSONDecodeError):
                 return None
+            adapter = get_adapter(row.endpoint)
             return PersistedCanonicalInvocation(
                 request=request,
                 response=response,
                 context_fidelity=row.context_fidelity,
+                outcome=row.invocation_outcome,
+                provider_protocol=adapter.format_id if adapter else None,
             )
 
 

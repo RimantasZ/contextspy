@@ -4,6 +4,13 @@
 
 ### Capture
 
+- Anthropic short `thread` requests now reconstruct retained, exact-ID history into canonical
+  request JSON and blocks. Missing predecessors or uncertain provider-managed state are labelled
+  partial/opaque rather than shown as a complete tiny context. Existing retained rows require
+  `contextspy db-upgrade`; already-purged bodies cannot be recovered.
+- The request workbench distinguishes reconstructed **Canonical** JSON from the original **Wire**
+  request, and its block-type token totals now come from the Python API.
+- Migration backups now use SQLite's consistent backup operation, including committed WAL data.
 - Added **Pause capture** / **Resume capture**: a button at the bottom of the dashboard sidebar and
   `contextspy pause` / `contextspy resume` stop recording requests without ending the session.
   Ignored requests are logged to the console, and `contextspy status` shows the capture state.

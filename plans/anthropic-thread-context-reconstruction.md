@@ -2,7 +2,11 @@
 
 ## Status and objective
 
-**Proposed; not implemented.** Materialize the client-visible accumulated context of short Anthropic `thread` requests in Python, then derive their input blocks and category estimates from that canonical JSON. Keep the original wire request separately. A successful reconstruction should make a short continuation inspectable like a full-history Messages request, without claiming to know provider-internal content that was not observable.
+**Implemented in code; live-database upgrade and provider-protocol validation remain.** Materialize the client-visible accumulated context of short Anthropic `thread` requests in Python, then derive their input blocks and category estimates from that canonical JSON. Keep the original wire request separately. A successful reconstruction should make a short continuation inspectable like a full-history Messages request, without claiming to know provider-internal content that was not observable.
+
+The normalizer, SSE edit evidence capture, exact-ID lookup, version 7 retained-row migration, SQLite-consistent migration backup, request-detail Canonical/Wire switch, backend-computed block-toolbar totals, docs, and regression tests are implemented. No migration has been run on the user's live database. The observed Anthropic thread field is still not publicly specified; shortened system lists therefore remain explicitly `partial`, and missing edit results are treated as opaque rather than silently assumed harmless.
+
+A read-only dry run over the cited session gave visible local estimates of 24,324 for #383 (previously 1,587) and 15,856 for #398 (previously 199); #384 remains partial with 658 because its provider predecessor is not retained. These figures are local estimates, not billed tokens. A single-process synthetic normalizer-only run with a 10 KB root and 120-character new messages took about 0.04 / 3.78 / 14.5 seconds for 100 / 1,000 / 2,000 requests and emitted about 2.5 / 160 / 618 MB of cumulative canonical JSON. This demonstrates quadratic snapshot storage; it is not a capture, migration, or reference-machine performance guarantee.
 
 The existing OpenAI Responses/Codex WebSocket normalizer is the architectural template: normalize provider state before analysis, follow an explicit provider response ID, persist canonical request/response documents, and mark unavailable or opaque history honestly. The Anthropic continuation grammar must be validated separately; copying the Responses `input + output + input` algorithm would be an assumption, not an implementation.
 
@@ -71,3 +75,9 @@ The public [Messages API reference](https://platform.claude.com/docs/en/api/beta
 3. #382–#398 gain substantially fuller representation where retained evidence allows it; the #384 gap and all downstream uncertainty remain visible. No claim is made that local estimates must equal Anthropic's reported tokens.
 4. Non-thread traffic, OpenAI/Codex normalization, and conversation grouping regressions pass. Migration is recoverable, reports skipped rows, and does not silently erase existing analysis.
 5. Performance and storage at the agreed normal upper bound of about 2,000 requests are measured and documented; provider-specific reconstruction remains entirely in Python.
+
+## Remaining operational validation
+
+- With ContextSpy stopped and enough free disk space for a full database backup plus growth, run `contextspy db-upgrade` on the user's database; inspect its summary and the affected request-detail/lineage screens. This has deliberately not been run by the implementation work.
+- Measure **full** capture/backfill time, resulting SQLite size, and selected-request rendering on a synthetic or copied 2,000-request database. The 2,000-request number above measures the normalizer and serialized JSON only, not tokenization, block persistence, SQLite backup, or UI latency.
+- Obtain an authoritative thread protocol contract if Anthropic publishes one, or a controlled full-replay fixture that verifies shortened `system` semantics. Until then, the inherited tail remains explicitly partial rather than being presented as exact.

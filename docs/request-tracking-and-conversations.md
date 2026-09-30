@@ -45,6 +45,15 @@ An inferred display-lineage link never authorizes reconstruction of missing prov
 When explicit state is missing or opaque, ContextSpy reports partial or opaque context instead
 of inventing content.
 
+Short Anthropic `thread` requests are handled in the same spirit: an exact
+`thread.previous_message_id` can connect the retained earlier messages and assistant response
+to the newly sent messages. The request's raw JSON still shows only what crossed the wire;
+its canonical JSON and blocks show the reconstructed, client-visible history. This is not a
+claim that the provider's internal prompt is identical: server-side context edits can remove
+content, and an omitted system-block tail is shown as an uncertain reconstruction. A cache
+diagnostic `previous_message_id` is not used as a parent link. If earlier raw/canonical bodies
+have been purged, the missing content cannot be recovered from billed token counts.
+
 ## How a direct parent is established
 
 ContextSpy analyzes lineage in the Python backend from stored request and block metadata,

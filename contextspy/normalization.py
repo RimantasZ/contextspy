@@ -33,6 +33,8 @@ class PersistedCanonicalInvocation:
     request: CanonicalJsonDocument
     response: CanonicalJsonDocument | None
     context_fidelity: str = "complete"
+    outcome: str = "completed"
+    provider_protocol: str | None = None
 
 
 class InvocationLineageRepository(Protocol):
@@ -69,6 +71,20 @@ def _response_id(response: CanonicalJsonDocument | None) -> str | None:
         return None
     value = response.value.get("id")
     return value if isinstance(value, str) and value else None
+
+
+def _anthropic_hidden_content(value: Any) -> bool:
+    """Detect content whose original text cannot be recovered from capture."""
+    if isinstance(value, dict):
+        kind = value.get("type")
+        if kind in {"redacted_thinking", "compaction"}:
+            return True
+        if kind == "thinking" and not value.get("thinking"):
+            return True
+        return any(_anthropic_hidden_content(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_anthropic_hidden_content(child) for child in value)
+    return False
 
 
 class IdentityInvocationNormalizer:
@@ -290,10 +306,151 @@ class OpenAIResponsesInvocationNormalizer:
         )
 
 
+class AnthropicThreadInvocationNormalizer:
+    """Expand the observable history carried by Anthropic thread continuations.
+
+    The wire request is retained separately.  In particular, cache diagnostics
+    are not lineage evidence: only ``thread.previous_message_id`` is followed.
+    """
+
+    provider_protocol = "anthropic"
+
+    def normalize(
+        self,
+        observed: ObservedInvocation,
+        lineage: InvocationLineageRepository,
+    ) -> CanonicalInvocation:
+        thread = observed.request_payload.get("thread")
+        if not isinstance(thread, dict):
+            return _IDENTITY.normalize(observed, lineage)
+
+        mode = thread.get("type")
+        predecessor = thread.get("previous_message_id")
+        predecessor = predecessor if isinstance(predecessor, str) and predecessor else None
+        notes: list[str] = []
+        fidelity = "complete"
+        request = deepcopy(observed.request_payload)
+        request.pop("thread", None)
+
+        if mode == "continue":
+            if predecessor is None:
+                fidelity = "partial"
+                notes.append("Thread continuation has no valid predecessor message ID")
+            elif predecessor == _response_id(observed.response):
+                fidelity = "partial"
+                notes.append("Thread continuation refers to its own response ID")
+            else:
+                previous = lineage.get(observed.provider, predecessor)
+                if previous is None:
+                    fidelity = "partial"
+                    notes.append("A referenced earlier thread response was not captured or retained")
+                elif previous.provider_protocol not in {None, "anthropic"}:
+                    fidelity = "partial"
+                    notes.append("Referenced thread response uses a different provider protocol")
+                elif (
+                    previous.response is None
+                    or previous.outcome in {"failed", "incomplete"}
+                    or _response_id(previous.response) != predecessor
+                ):
+                    fidelity = "partial"
+                    notes.append("A referenced earlier thread response is missing, incomplete, or inconsistent")
+                else:
+                    previous_messages = previous.request.value.get("messages")
+                    current_messages = request.get("messages")
+                    response = previous.response.value
+                    output = response.get("content")
+                    if (
+                        not isinstance(previous_messages, list)
+                        or not isinstance(current_messages, list)
+                        or not isinstance(output, list)
+                        or response.get("role") != "assistant"
+                        or response.get("error")
+                    ):
+                        fidelity = "partial"
+                        notes.append("Thread history or predecessor output has an unsupported shape")
+                    else:
+                        # A previous assistant turn is part of the next input,
+                        # not the whole response envelope (usage/metadata).
+                        assistant = {"role": "assistant", "content": deepcopy(output)}
+                        prefix = deepcopy(previous_messages) + [assistant]
+                        delta = deepcopy(current_messages)
+                        if delta[:len(prefix)] == prefix:
+                            # Some clients may send an expanded prefix while
+                            # still referencing thread state.
+                            request["messages"] = delta
+                        elif delta[:1] == [assistant]:
+                            request["messages"] = deepcopy(previous_messages) + delta
+                        else:
+                            request["messages"] = prefix + delta
+                        prior_request = previous.request.value
+                        if "tools" not in request and "tools" in prior_request:
+                            request["tools"] = deepcopy(prior_request["tools"])
+                        if "system" not in request and "system" in prior_request:
+                            request["system"] = deepcopy(prior_request["system"])
+                        elif (
+                            isinstance(request.get("system"), list)
+                            and isinstance(prior_request.get("system"), list)
+                            and 0 < len(request["system"]) < len(prior_request["system"])
+                        ):
+                            # Observed thread traffic sends a changed leading
+                            # system block while omitting the stable tail.
+                            # The inheritance rule is not publicly specified.
+                            request["system"] += deepcopy(
+                                prior_request["system"][len(request["system"]):]
+                            )
+                            fidelity = "partial"
+                            notes.append("Inherited system-block tail is inferred from thread history")
+                        if previous.context_fidelity == "partial":
+                            fidelity = "partial"
+                            notes.append("An earlier predecessor in this thread is unavailable")
+                        elif previous.context_fidelity == "opaque" and fidelity == "complete":
+                            fidelity = "opaque"
+                            notes.append("An earlier predecessor contains opaque provider state")
+        elif mode != "create":
+            fidelity = "partial"
+            notes.append("Unrecognized Anthropic thread operation")
+
+        # Context edits happen at the provider, after the logical request is
+        # assembled.  The returned edit summary gives counts, not full text.
+        management = observed.request_payload.get("context_management")
+        edits = management.get("edits") if isinstance(management, dict) else None
+        response_management = (
+            observed.response.value.get("context_management")
+            if observed.response is not None else None
+        )
+        applied = (
+            response_management.get("applied_edits")
+            if isinstance(response_management, dict) else None
+        )
+        if applied or (edits and applied is None):
+            if fidelity == "complete":
+                fidelity = "opaque"
+            notes.append("Provider-side context editing may hide the exact model input")
+        if _anthropic_hidden_content(request.get("messages")):
+            if fidelity == "complete":
+                fidelity = "opaque"
+            notes.append("Thread history contains hidden or redacted content")
+
+        return CanonicalInvocation(
+            request=(
+                _observed_request_document(observed) if mode == "create"
+                else CanonicalJsonDocument.from_value(request)
+            ),
+            response=observed.response,
+            provider_response_id=_response_id(observed.response),
+            predecessor_response_id=predecessor if mode == "continue" else None,
+            outcome=observed.outcome,
+            context_fidelity=fidelity,
+            context_notes=tuple(dict.fromkeys(notes)),
+        )
+
+
 _IDENTITY = IdentityInvocationNormalizer()
 _NORMALIZERS: dict[str, ProviderInvocationNormalizer] = {
     OpenAIResponsesInvocationNormalizer.provider_protocol:
         OpenAIResponsesInvocationNormalizer(),
+    AnthropicThreadInvocationNormalizer.provider_protocol:
+        AnthropicThreadInvocationNormalizer(),
 }
 
 

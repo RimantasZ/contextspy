@@ -741,8 +741,8 @@ def reset_db(
 def db_upgrade() -> None:
     """Apply pending data migrations (e.g. backfill blocks from raw request bodies).
 
-    Safe to re-run — already-migrated requests are skipped. Requests whose raw
-    bodies were already purged by retention simply get no blocks.
+    Safe to re-run — completed migration versions are skipped. Requests whose
+    raw bodies were already purged cannot have their context reconstructed.
     """
     from contextspy.config import Settings
     from contextspy.db import migrations
@@ -775,8 +775,28 @@ def db_upgrade() -> None:
             return
         console.print(f"[bold]Applying data migrations:[/bold] {pending}")
         applied = migrations.apply_data_migrations(db)
+        thread_backfill = getattr(db, "info", {}).get("anthropic_thread_backfill")
 
     console.print(f"[green]Done.[/green] Applied migrations: {applied}")
+    if thread_backfill is not None:
+        console.print(
+            "Anthropic thread backfill: "
+            f"{thread_backfill['reanalyzed']}/{thread_backfill['retained']} retained rows "
+            "reanalyzed; "
+            f"{thread_backfill['partial']} partial, "
+            f"{thread_backfill['opaque']} opaque, "
+            f"{thread_backfill['failed']} failed."
+        )
+        console.print(
+            f"Already-full roots: {thread_backfill['already_full']}; "
+            f"missing direct ancestors: {thread_backfill['missing_ancestor']}; "
+            "canonical JSON growth: "
+            f"{thread_backfill['canonical_growth_bytes']:,} bytes."
+        )
+        console.print(
+            "Rows whose request bodies were already purged cannot be identified "
+            "or reconstructed from usage counts alone."
+        )
 
 
 # ---------------------------------------------------------------------------

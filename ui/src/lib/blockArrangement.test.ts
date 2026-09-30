@@ -21,7 +21,7 @@ describe('block arrangement', () => {
     expect(blockGroupKey(block, 'toolPair')).toBe('call-1')
   })
 
-  it('derives filters, totals, and visible blocks in one model', () => {
+  it('derives filters and visible blocks without recalculating token totals', () => {
     const model = buildWorkbenchBlockModel([
       ...blocks,
       makeBlock({ id: 4, direction: 'output', token_count: 5 }),
@@ -29,6 +29,5 @@ describe('block arrangement', () => {
     ], { direction: 'input', activeTypes: new Set(['user']), hideZero: true, query: 'second', arrangement: ARRANGEMENT_PRESETS.sequence })
     expect(model.directionBlocks).toHaveLength(4)
     expect(model.visibleBlocks.map((block) => block.id)).toEqual([2])
-    expect(model.tokenTotals.user).toBe(240)
   })
 })

@@ -436,7 +436,11 @@ export const requestsApi = {
   },
   get: (id: string) => apiFetch<{ request: Request }>(`/requests/${id}`),
   blocks: (id: string) =>
-    apiFetch<{ session_seq: number | null; blocks: RequestBlock[] }>(`/requests/${id}/blocks`),
+    apiFetch<{
+      session_seq: number | null
+      blocks: RequestBlock[]
+      token_totals?: Record<'input' | 'output', Record<string, number>>
+    }>(`/requests/${id}/blocks`),
   contextDiff: (id: string, parentId: string) =>
     apiFetch<ContextDiffResponse>(`/requests/${id}/context-diff?parent_id=${encodeURIComponent(parentId)}`),
 }
