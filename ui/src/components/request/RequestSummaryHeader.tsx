@@ -13,7 +13,7 @@ export function RequestSummaryHeader({ request, onBack, onDirection }: {
   onBack: () => void
   onDirection: (direction: 'input' | 'output') => void
 }) {
-  const cache = (request.cache_read_tokens ?? 0) + (request.cache_creation_tokens ?? 0)
+  const cachedSharePct = request.context_accounting.cached_share_pct
 
   return (
     <header className="space-y-3">
@@ -36,7 +36,7 @@ export function RequestSummaryHeader({ request, onBack, onDirection }: {
         </button>
         <div className="panel p-3"><span className="eyebrow block">Duration</span><strong className="text-lg tabular-nums">{formatRequestDuration(request.duration_ms)}</strong></div>
         <div className="panel p-3"><span className="eyebrow block">Model</span><strong className="block truncate text-sm" title={request.model ?? undefined}>{request.model ?? '—'}</strong></div>
-        <div className="panel col-span-2 p-3 sm:col-span-4 lg:col-span-1"><span className="eyebrow block">Cache activity</span><strong className="text-sm tabular-nums">{cache > 0 ? cache.toLocaleString() : 'None'}</strong></div>
+        <div className="panel col-span-2 p-3 sm:col-span-4 lg:col-span-1"><span className="eyebrow block">Cache hit</span><strong className="text-sm tabular-nums" title="Share of provider-reported input tokens served from the prompt cache">{cachedSharePct != null ? `${cachedSharePct.toFixed(1)}%` : '—'}</strong></div>
       </div>
     </header>
   )
