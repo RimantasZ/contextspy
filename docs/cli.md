@@ -40,8 +40,22 @@ Start in local/reverse-proxy mode. Reads `[[reverse_targets]]` from `config.toml
 contextspy status
 ```
 
-Show the forward-proxy state, reported proxy port, CA status, and active session. This command
-requires the dashboard/API to be running.
+Show the forward-proxy state, reported proxy port, CA status, whether capture is active or paused,
+and the active session. This command requires the dashboard/API to be running.
+
+---
+
+```
+contextspy pause
+contextspy resume
+```
+
+Pause or resume capture. While paused, requests to known LLM providers (including WebSocket
+traffic) are forwarded untouched but not recorded; each ignored request is logged to the console
+as `Ignored request …: capture is paused`. The pause is independent of sessions, is held in memory
+only (capture is always active after a restart), and is shared with the **Pause capture** button at
+the bottom of the dashboard sidebar. Requests already in flight when you pause are still recorded.
+These commands require the dashboard/API to be running.
 
 ---
 

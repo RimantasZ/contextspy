@@ -692,9 +692,11 @@ Stats response shape (shared by overview and per-session):
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/proxy/status` | `{ "running": bool, "port": int, "cert_installed": bool }` |
+| `GET` | `/api/proxy/status` | `{ "running": bool, "port": int, "cert_installed": bool, "paused": bool }` |
 | `POST` | `/api/proxy/start` | Start the proxy (no-op if already running). |
 | `POST` | `/api/proxy/stop` | Stop the proxy. |
+| `POST` | `/api/proxy/pause` | Pause capture: LLM requests are forwarded but ignored (logged to console). Returns `{ "paused": true }`. Held in memory only (`contextspy/proxy/capture_state.py`). |
+| `POST` | `/api/proxy/resume` | Resume capture. Returns `{ "paused": false }`. |
 | `POST` | `/api/proxy/install-cert` | Install the mitmproxy CA cert into the OS trust store. |
 | `GET` | `/api/proxy.pac` | PAC file (`text/plain`) routing known LLM hostnames through the proxy, `DIRECT` otherwise — an alternative to setting `HTTPS_PROXY` for clients that support PAC. |
 
@@ -741,7 +743,8 @@ The application uses semantic CSS variables for all surfaces, text, state, chart
 colours. Light and dark themes follow a saved `contextspy-theme` preference, falling back to the
 OS colour scheme; the theme is applied before React loads to avoid a flash. The application shell
 uses a full sidebar on wide screens, an icon rail at narrower desktop widths, and a sticky header
-plus navigation drawer on mobile.
+plus navigation drawer on mobile. The sidebar footer holds a **Pause capture / Resume capture**
+button (always visible, highlighted while paused) above the theme toggle.
 
 #### Pages
 
@@ -862,7 +865,7 @@ contextspy help
 
 contextspy status
     Show whether the forward proxy and CA certificate are available, the reported
-    proxy port, and the active session name.
+    proxy port, whether capture is active or paused, and the active session name.
 
 contextspy install-cert
     Run OS-specific CA cert trust-store installation.
@@ -924,6 +927,13 @@ contextspy setup-ollama
 contextspy setup-vllm
     Print config.toml snippet and client base-URL change for vLLM.
 
+contextspy pause
+    Pause capture (calls POST /api/proxy/pause). Requests to LLM providers are ignored and
+    logged to the console until `contextspy resume`. Not persisted across restarts.
+
+contextspy resume
+    Resume capture (calls POST /api/proxy/resume).
+
 contextspy session start <name>
     Start a named session (calls POST /api/sessions).
     Ends any currently active session first.
@@ -938,7 +948,7 @@ contextspy --version
     Print the installed package version and exit.
 ```
 
-`session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-upgrade`, `db-stats`, `report`, and all `setup-*`/`inject-cert` commands work offline.
+`pause`, `resume`, `session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-upgrade`, `db-stats`, `report`, and all `setup-*`/`inject-cert` commands work offline.
 
 ---
 
@@ -1095,7 +1105,7 @@ contextspy/                         # repo root
 │   │   │   ├── SessionDetail.tsx
 │   │   │   └── Settings.tsx
 │   │   └── components/
-│   │       ├── Layout.tsx           # Responsive shell + theme toggle
+│   │       ├── Layout.tsx           # Responsive shell + pause-capture + theme toggle
 │   │       ├── TokenDonut.tsx
 │   │       ├── TimeSeriesChart.tsx
 │   │       ├── RequestTable.tsx

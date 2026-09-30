@@ -1,5 +1,13 @@
 # What's New
 
+## Unreleased
+
+### Capture
+
+- Added **Pause capture** / **Resume capture**: a button at the bottom of the dashboard sidebar and
+  `contextspy pause` / `contextspy resume` stop recording requests without ending the session.
+  Ignored requests are logged to the console, and `contextspy status` shows the capture state.
+
 ## v0.5.2
 
 ### Conversations
