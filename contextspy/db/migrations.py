@@ -30,7 +30,8 @@ import json
 import logging
 import re
 import sqlite3
-from datetime import datetime, timezone
+from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -73,7 +74,7 @@ def inspect_migration_state(db_path: Path) -> tuple[int, list[int]]:
         return SCHEMA_VERSION, []
 
     uri = f"{db_path.resolve().as_uri()}?mode=ro"
-    with sqlite3.connect(uri, uri=True) as conn:
+    with closing(sqlite3.connect(uri, uri=True)) as conn:
         tables = {
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -113,58 +114,29 @@ def create_migration_backup(
     timestamp: datetime | None = None,
 ) -> Path:
     """Create a consistent SQLite snapshot, including committed WAL pages."""
-    db_path = Path(db_path)
-    timestamp = timestamp or datetime.now(timezone.utc)
-    timestamp_text = timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d-%H%M")
-    backup_stem = (
-        f"{db_path.stem}_backup_v{version_from}_to_v{version_to}_{timestamp_text}"
+    from contextspy.db.backups import create_backup
+
+    return create_backup(
+        db_path, version_from, purpose="migration",
+        target_version=version_to, timestamp=timestamp,
     )
-    backup_path = db_path.with_name(f"{backup_stem}.back")
-    suffix = 1
-    while backup_path.exists():
-        backup_path = db_path.with_name(f"{backup_stem}-{suffix}.back")
-        suffix += 1
-    source_uri = f"{db_path.resolve().as_uri()}?mode=ro"
-    try:
-        with sqlite3.connect(source_uri, uri=True) as source:
-            with sqlite3.connect(backup_path) as destination:
-                source.backup(destination)
-    except Exception:
-        backup_path.unlink(missing_ok=True)
-        raise
-    return backup_path
 
 
 def list_migration_backups(db_path: Path) -> list[Path]:
     """Return versioned migration backups belonging to ``db_path``."""
+    from contextspy.db.backups import list_backups
+
     db_path = Path(db_path)
-    if not db_path.parent.is_dir():
-        return []
-
     escaped_stem = re.escape(db_path.stem)
-    current_name = re.compile(
-        rf"(?P<base>{escaped_stem}_backup_v\d+_to_v\d+_"
-        r"\d{4}-\d{2}-\d{2}-\d{4})"
-        r"(?:-(?P<sequence>\d+))?\.back"
+    migration = re.compile(
+        rf"{escaped_stem}_backup_v\d+_to_v\d+_"
+        r"\d{4}-\d{2}-\d{2}-\d{4}(?:-\d+)?\.back"
     )
-    legacy_name = re.compile(
-        rf"{escaped_stem}_\d+_\d+_\d{{8}}T\d{{12}}Z\.back"
-    )
-    backups: list[Path] = []
-    for candidate in db_path.parent.iterdir():
-        if candidate.is_file() and (
-            current_name.fullmatch(candidate.name)
-            or legacy_name.fullmatch(candidate.name)
-        ):
-            backups.append(candidate)
-
-    def sort_key(backup: Path) -> tuple[str, int]:
-        match = current_name.fullmatch(backup.name)
-        if match is None:
-            return backup.name, 0
-        return match.group("base"), int(match.group("sequence") or 0)
-
-    return sorted(backups, key=sort_key)
+    legacy = re.compile(rf"{escaped_stem}_\d+_\d+_\d{{8}}T\d{{12}}Z\.back")
+    return [
+        path for path in list_backups(db_path)
+        if migration.fullmatch(path.name) or legacy.fullmatch(path.name)
+    ]
 
 
 def get_meta(db: OrmSession, key: str, default: str | None = None) -> str | None:

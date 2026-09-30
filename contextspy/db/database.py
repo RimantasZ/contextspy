@@ -15,29 +15,88 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import logging
 from pathlib import Path
 from typing import Generator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
 from contextspy.db.models import Base
+from contextspy.db.maintenance_lock import acquire_database_lock, release_database_lock
 
 _engine = None
 _SessionLocal = None
+_db_lock_handle = None
+_db_lock_path: Path | None = None
+_SQLITE_BUSY_TIMEOUT_MS = 250
+logger = logging.getLogger(__name__)
 
 
 def init_db(db_path: Path) -> None:
-    global _engine, _SessionLocal
+    global _engine, _SessionLocal, _db_lock_handle, _db_lock_path
+    db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    _engine = create_engine(
-        f"sqlite:///{db_path}",
-        connect_args={"check_same_thread": False},
-        echo=False,
-    )
-    _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
-    Base.metadata.create_all(_engine)
-    _migrate(_engine)
+    resolved_path = db_path.resolve()
+    reuse_lock = _db_lock_handle is not None and _db_lock_path == resolved_path
+    new_lock = None if reuse_lock or str(db_path) == ":memory:" else acquire_database_lock(db_path)
+    try:
+        engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={
+                "check_same_thread": False,
+                "timeout": _SQLITE_BUSY_TIMEOUT_MS / 1000,
+            },
+            echo=False,
+        )
+    except Exception:
+        if new_lock is not None:
+            release_database_lock(new_lock)
+        raise
+
+    @event.listens_for(engine, "connect")
+    def _set_busy_timeout(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
+        finally:
+            cursor.close()
+
+    try:
+        if str(db_path) != ":memory:":
+            try:
+                with engine.connect() as conn:
+                    mode = conn.exec_driver_sql("PRAGMA journal_mode=WAL").scalar_one()
+            except OperationalError as exc:
+                raise RuntimeError(
+                    f"Could not enable SQLite WAL for {db_path}. Stop other ContextSpy "
+                    "processes and check database permissions before restarting."
+                ) from exc
+            if str(mode).lower() != "wal":
+                raise RuntimeError(
+                    f"SQLite did not enable WAL for {db_path} (returned {mode!r}). "
+                    "Check the database filesystem and permissions."
+                )
+            logger.info("SQLite journal mode: WAL")
+        Base.metadata.create_all(engine)
+        _migrate(engine)
+    except Exception:
+        engine.dispose()
+        if new_lock is not None:
+            release_database_lock(new_lock)
+        raise
+
+    previous_engine = _engine
+    previous_lock = _db_lock_handle
+    _engine = engine
+    _SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    _db_lock_handle = previous_lock if reuse_lock else new_lock
+    _db_lock_path = resolved_path if _db_lock_handle is not None else None
+    if previous_engine is not None:
+        previous_engine.dispose()
+    if previous_lock is not None and not reuse_lock:
+        release_database_lock(previous_lock)
 
 
 def _migrate(engine) -> None:
@@ -103,8 +162,15 @@ def get_engine():
 
 
 def dispose_engine() -> None:
+    global _engine, _SessionLocal, _db_lock_handle, _db_lock_path
     if _engine:
         _engine.dispose()
+    _engine = None
+    _SessionLocal = None
+    if _db_lock_handle is not None:
+        release_database_lock(_db_lock_handle)
+    _db_lock_handle = None
+    _db_lock_path = None
 
 
 @contextmanager
