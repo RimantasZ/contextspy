@@ -227,6 +227,14 @@ export function useProxyStatus() {
   })
 }
 
+export function useSetCapturePaused() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (paused: boolean) => (paused ? proxyApi.pause() : proxyApi.resume()),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['proxy', 'status'] }),
+  })
+}
+
 export function useInstallCert() {
   const qc = useQueryClient()
   return useMutation({

@@ -36,6 +36,7 @@ from contextspy.analysis.invocations import (
 from contextspy.analysis.stream_hint import extract_stream_hint
 from contextspy.db import crud
 from contextspy.db.database import get_db
+from contextspy.proxy import capture_state
 from contextspy.normalization import (
     InvocationLineageRepository,
     ObservedInvocation,
@@ -294,6 +295,13 @@ class ContextSpyAddon:
         flow.metadata["ts_start"] = time.monotonic()
         flow.metadata["contextspy_started_at"] = datetime.now(timezone.utc)
         provider = self._get_provider(flow.request.pretty_host, flow.request.port)
+        if provider is not None and capture_state.is_paused():
+            flow.metadata["contextspy_paused_ignore"] = True
+            logger.info(
+                "Ignored request %s %s%s: capture is paused",
+                flow.request.method, flow.request.pretty_host, flow.request.path[:60],
+            )
+            return
         if provider is not None:
             with get_db() as db:
                 active_session = crud.get_active_session(db)
@@ -308,7 +316,7 @@ class ContextSpyAddon:
         logger.debug("HOOK request: %s %s", flow.request.pretty_host, flow.request.path[:60])
 
     def responseheaders(self, flow: http.HTTPFlow) -> None:
-        if flow.response is None:
+        if flow.response is None or flow.metadata.get("contextspy_paused_ignore"):
             return
         ct = flow.response.headers.get("content-type", "").lower()
         logger.debug(
@@ -351,6 +359,8 @@ class ContextSpyAddon:
             return  # handled by the SSE stream callback
         if flow.response is None:
             return  # no response to process (e.g., connection error)
+        if flow.metadata.get("contextspy_paused_ignore"):
+            return  # request arrived while capture was paused
         try:
             self._handle_response(flow)
         except Exception as exc:
@@ -783,6 +793,13 @@ class ContextSpyAddon:
         if provider is None:
             return  # not an LLM host
 
+        if capture_state.is_paused():
+            logger.info(
+                "Ignored WebSocket connection %s%s: capture is paused",
+                host, flow.request.path[:60],
+            )
+            return
+
         protocol = get_ws_protocol(host, flow.request.path)
         if protocol is None:
             logger.info(
@@ -809,6 +826,14 @@ class ContextSpyAddon:
             return
 
         message = flow.websocket.messages[-1]
+        if capture_state.is_paused():
+            if message.from_client:
+                logger.info(
+                    "Ignored WebSocket message to %s%s: capture is paused",
+                    flow.request.pretty_host, flow.request.path[:60],
+                )
+            del flow.websocket.messages[:-1]
+            return
         capture_context = None
         if message.from_client:
             with get_db() as db:
@@ -861,7 +886,7 @@ class ContextSpyAddon:
         if flow.id in self._ws_flows:
             self.websocket_end(flow)
             return
-        if flow.metadata.get("contextspy_saved"):
+        if flow.metadata.get("contextspy_saved") or flow.metadata.get("contextspy_paused_ignore"):
             return
 
         provider = self._get_provider(flow.request.pretty_host, flow.request.port)

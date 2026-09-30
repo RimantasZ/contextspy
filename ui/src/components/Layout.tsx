@@ -14,6 +14,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useWebSocket } from '../api/useWebSocket'
+import { PauseCaptureButton } from './PauseCaptureButton'
 import { ThemeToggle, useTheme } from './ui/ThemeToggle'
 
 const navItems = [
@@ -47,7 +48,8 @@ export default function Layout() {
           <span className="nav-label whitespace-nowrap">{label}</span>
         </NavLink>
       ))}
-      <div className="mt-auto pt-4">
+      <div className="mt-auto flex flex-col gap-1 pt-4">
+        <PauseCaptureButton />
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </div>
     </>

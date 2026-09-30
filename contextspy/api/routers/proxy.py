@@ -16,7 +16,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse
 
-from contextspy.proxy import runner
+from contextspy.proxy import capture_state, runner
 from contextspy.proxy.cert import cert_exists, install_cert
 
 router = APIRouter(tags=["proxy"])
@@ -33,6 +33,7 @@ def proxy_status():
         "running": runner.is_running(),
         "port": port,
         "cert_installed": cert_exists(),
+        "paused": capture_state.is_paused(),
     }
 
 
@@ -54,6 +55,18 @@ def proxy_start():
 def proxy_stop():
     runner.stop_proxy()
     return {"status": "stopped"}
+
+
+@router.post("/proxy/pause")
+def proxy_pause():
+    capture_state.set_paused(True)
+    return {"paused": True}
+
+
+@router.post("/proxy/resume")
+def proxy_resume():
+    capture_state.set_paused(False)
+    return {"paused": False}
 
 
 @router.post("/proxy/install-cert")

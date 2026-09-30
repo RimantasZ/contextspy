@@ -394,6 +394,10 @@ def status() -> None:
         )
         console.print(f"Proxy port:      {data['port']}")
         console.print(f"Cert installed:  {'yes' if data['cert_installed'] else 'no'}")
+        if data.get("paused"):
+            console.print("Capture:         [bold yellow]paused[/bold yellow]")
+        else:
+            console.print("Capture:         [bold]active[/bold]")
     except Exception:
         console.print("[red]Web server not reachable. Is contextspy running?[/red]")
         return
@@ -520,6 +524,37 @@ def run_cmd(
 
 
 # ---------------------------------------------------------------------------
+# Capture pause / resume
+# ---------------------------------------------------------------------------
+
+
+def _set_capture_paused(paused: bool) -> None:
+    action = "pause" if paused else "resume"
+    try:
+        resp = httpx.post(_api(_web_port(), f"/proxy/{action}"), timeout=5)
+        resp.raise_for_status()
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}. Is contextspy running?[/red]")
+        raise typer.Exit(1)
+    if paused:
+        console.print("[yellow]Capture paused:[/yellow] requests are ignored until you run `contextspy resume`.")
+    else:
+        console.print("[green]Capture resumed.[/green]")
+
+
+@app.command()
+def pause() -> None:
+    """Pause capture: proxied requests are ignored (and logged) until resumed."""
+    _set_capture_paused(True)
+
+
+@app.command()
+def resume() -> None:
+    """Resume capture after `contextspy pause`."""
+    _set_capture_paused(False)
+
+
+# ---------------------------------------------------------------------------
 # Session sub-commands
 # ---------------------------------------------------------------------------
 
@@ -640,6 +675,8 @@ def help_cmd() -> None:
         ("setup-llamaserver", "Print setup instructions for llama.cpp/llama-server"),
         ("setup-ollama", "Print setup instructions for Ollama"),
         ("setup-vllm", "Print setup instructions for vLLM"),
+        ("pause", "Pause capture; requests are ignored until resumed"),
+        ("resume", "Resume capture after a pause"),
         ("session start", "Start a named session"),
         ("session end", "End the current active session"),
         ("session list", "List all sessions"),

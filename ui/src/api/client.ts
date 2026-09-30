@@ -367,6 +367,7 @@ export interface ProxyStatus {
   running: boolean
   port: number
   cert_installed: boolean
+  paused: boolean
 }
 
 // ---- Session API ----------------------------------------------------------
@@ -627,6 +628,8 @@ export const proxyApi = {
   status: () => apiFetch<ProxyStatus>('/proxy/status'),
   start: () => apiFetch<{ status: string }>('/proxy/start', { method: 'POST' }),
   stop: () => apiFetch<{ status: string }>('/proxy/stop', { method: 'POST' }),
+  pause: () => apiFetch<{ paused: boolean }>('/proxy/pause', { method: 'POST' }),
+  resume: () => apiFetch<{ paused: boolean }>('/proxy/resume', { method: 'POST' }),
   installCert: () =>
     apiFetch<{ success: boolean; message: string }>('/proxy/install-cert', { method: 'POST' }),
 }
