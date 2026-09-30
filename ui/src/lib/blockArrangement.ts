@@ -35,7 +35,6 @@ export interface WorkbenchBlockModel {
   directionBlocks: RequestBlock[]
   visibleBlocks: RequestBlock[]
   available: Set<BlockVisual>
-  tokenTotals: Partial<Record<BlockVisual, number>>
 }
 
 export function buildWorkbenchBlockModel(blocks: RequestBlock[], options: {
@@ -48,11 +47,6 @@ export function buildWorkbenchBlockModel(blocks: RequestBlock[], options: {
   const allBlocks = sortedBlocks(blocks)
   const directionBlocks = allBlocks.filter((block) => block.direction === options.direction)
   const available = new Set(directionBlocks.map(visualOf))
-  const tokenTotals = directionBlocks.reduce<Partial<Record<BlockVisual, number>>>((totals, block) => {
-    const visual = visualOf(block)
-    totals[visual] = (totals[visual] ?? 0) + block.token_count
-    return totals
-  }, {})
   const needle = options.query.trim().toLocaleLowerCase()
   const filtered = directionBlocks.filter((block) => {
     if (options.hideZero && block.token_count <= 0) return false
@@ -61,5 +55,5 @@ export function buildWorkbenchBlockModel(blocks: RequestBlock[], options: {
     return [block.content, block.tool_name, block.block_type, block.category, block.tool_call_id]
       .some((value) => String(value ?? '').toLocaleLowerCase().includes(needle))
   })
-  return { allBlocks, directionBlocks, visibleBlocks: arrangeBlocks(filtered, options.arrangement), available, tokenTotals }
+  return { allBlocks, directionBlocks, visibleBlocks: arrangeBlocks(filtered, options.arrangement), available }
 }

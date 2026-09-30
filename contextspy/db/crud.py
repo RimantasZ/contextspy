@@ -166,6 +166,21 @@ def get_request_by_provider_response_id(
     ).scalars().first()
 
 
+def get_unique_request_by_provider_response_id(
+    db: OrmSession, provider: str, response_id: str,
+) -> Request | None:
+    """Resolve state only if the provider ID identifies exactly one stored row."""
+    rows = db.execute(
+        select(Request)
+        .where(
+            Request.provider == provider,
+            Request.provider_response_id == response_id,
+        )
+        .limit(2)
+    ).scalars().all()
+    return rows[0] if len(rows) == 1 else None
+
+
 def _lineage_snapshots_for_requests(
     db: OrmSession, requests: list[Request],
 ) -> list:

@@ -27,8 +27,8 @@ table and applied explicitly with ``contextspy db-upgrade``.
 from __future__ import annotations
 
 import json
+import logging
 import re
-import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,7 +39,9 @@ from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, Session, ToolStat
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA_VERSION_KEY = "schema_version"
 _PENDING_KEY = "pending_data_migrations"
@@ -110,7 +112,7 @@ def create_migration_backup(
     *,
     timestamp: datetime | None = None,
 ) -> Path:
-    """Copy the untouched SQLite file to a versioned backup beside it."""
+    """Create a consistent SQLite snapshot, including committed WAL pages."""
     db_path = Path(db_path)
     timestamp = timestamp or datetime.now(timezone.utc)
     timestamp_text = timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d-%H%M")
@@ -122,7 +124,14 @@ def create_migration_backup(
     while backup_path.exists():
         backup_path = db_path.with_name(f"{backup_stem}-{suffix}.back")
         suffix += 1
-    shutil.copy2(db_path, backup_path)
+    source_uri = f"{db_path.resolve().as_uri()}?mode=ro"
+    try:
+        with sqlite3.connect(source_uri, uri=True) as source:
+            with sqlite3.connect(backup_path) as destination:
+                source.backup(destination)
+    except Exception:
+        backup_path.unlink(missing_ok=True)
+        raise
     return backup_path
 
 
@@ -712,10 +721,198 @@ def _migrate_to_v6(db: OrmSession) -> None:
     db.flush()
 
 
+def _migrate_to_v7(db: OrmSession) -> None:
+    """Re-analyze retained Anthropic thread requests through exact ID lineage."""
+    from contextspy.analysis.adapters import get_adapter
+    from contextspy.analysis.classifier import classify, per_tool_tokens
+    from contextspy.analysis.invocations import CanonicalJsonDocument, analyze_invocation
+    from contextspy.db.crud import (
+        get_unique_request_by_provider_response_id,
+        insert_blocks,
+        upsert_tool_stats,
+    )
+    from contextspy.normalization import (
+        ObservedInvocation,
+        PersistedCanonicalInvocation,
+        normalize_invocation,
+    )
+
+    class DatabaseLineage:
+        def get(self, provider: str, response_id: str):
+            parent = get_unique_request_by_provider_response_id(db, provider, response_id)
+            if parent is None:
+                return None
+            request_text = parent.canonical_request_body or parent.raw_request_body
+            response_text = parent.canonical_response_body or parent.raw_response_body
+            if not request_text:
+                return None
+            try:
+                request = CanonicalJsonDocument.from_text(request_text)
+                response = (
+                    CanonicalJsonDocument.from_text(response_text)
+                    if response_text else None
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                return None
+            adapter = get_adapter(parent.endpoint)
+            return PersistedCanonicalInvocation(
+                request=request,
+                response=response,
+                context_fidelity=parent.context_fidelity,
+                outcome=parent.invocation_outcome,
+                provider_protocol=adapter.format_id if adapter else None,
+            )
+
+    class MissingLineage:
+        def get(self, provider: str, response_id: str):
+            return None
+
+    candidates: dict[str, tuple[str, str | None]] = {}
+    response_to_candidate: dict[tuple[str, str], str] = {}
+    rows = db.execute(
+        select(Request.id, Request.provider, Request.provider_response_id,
+               Request.endpoint, Request.raw_request_body)
+        .where(Request.raw_request_body.contains('"thread"'))
+    )
+    for request_id, provider, response_id, endpoint, raw_text in rows:
+        adapter = get_adapter(endpoint)
+        if adapter is None or adapter.format_id != "anthropic":
+            continue
+        try:
+            payload = json.loads(raw_text)
+        except (ValueError, TypeError):
+            continue
+        thread = payload.get("thread") if isinstance(payload, dict) else None
+        if not isinstance(thread, dict):
+            continue
+        predecessor = thread.get("previous_message_id")
+        predecessor = predecessor if isinstance(predecessor, str) and predecessor else None
+        candidates[request_id] = (provider, predecessor)
+        if response_id:
+            response_to_candidate[(provider, response_id)] = request_id
+
+    remaining = dict(candidates)
+    counts = {
+        "retained": len(candidates), "reanalyzed": 0, "already_full": 0,
+        "missing_ancestor": 0, "partial": 0, "opaque": 0, "failed": 0,
+        "canonical_growth_bytes": 0,
+    }
+    lineage = DatabaseLineage()
+    missing_lineage = MissingLineage()
+
+    def apply_candidate(request_id: str, *, force_missing: bool = False) -> None:
+        row = db.get(Request, request_id)
+        if row is None or not row.raw_request_body:
+            counts["failed"] += 1
+            return
+        adapter = get_adapter(row.endpoint)
+        try:
+            payload = json.loads(row.raw_request_body)
+            response_text = row.canonical_response_body or row.raw_response_body
+            response = (
+                CanonicalJsonDocument.from_text(response_text)
+                if response_text else None
+            )
+            outcome = row.invocation_outcome
+            if outcome == "unknown":
+                outcome = (
+                    "failed" if row.status_code is not None and row.status_code >= 400
+                    else "incomplete" if not row.response_complete
+                    else "completed"
+                )
+            canonical = normalize_invocation(
+                ObservedInvocation(
+                    provider=row.provider,
+                    provider_protocol="anthropic",
+                    protocol_id="anthropic_messages",
+                    request_payload=payload,
+                    observed_request_text=row.raw_request_body,
+                    response=response,
+                    outcome=outcome,
+                ),
+                missing_lineage if force_missing else lineage,
+            )
+            analysis = analyze_invocation(canonical, adapter)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            logger.warning("Skipping Anthropic thread backfill for %s: %s", request_id, exc)
+            counts["failed"] += 1
+            return
+
+        old_canonical_bytes = len((row.canonical_request_body or "").encode("utf-8"))
+        row.canonical_request_body = canonical.request.text
+        counts["canonical_growth_bytes"] += (
+            len(canonical.request.text.encode("utf-8")) - old_canonical_bytes
+        )
+        row.canonical_response_body = (
+            canonical.response.text if canonical.response else None
+        )
+        row.provider_response_id = canonical.provider_response_id
+        row.predecessor_response_id = canonical.predecessor_response_id
+        row.invocation_outcome = canonical.outcome
+        row.context_fidelity = canonical.context_fidelity
+        row.context_notes = (
+            json.dumps(canonical.context_notes) if canonical.context_notes else None
+        )
+        if analysis.issues:
+            counts["failed"] += 1
+        else:
+            analyzed = analysis.analyzed
+            breakdown = classify(analyzed)
+            for field, value in breakdown.to_db_fields().items():
+                setattr(row, field, value)
+            row.model = analyzed.model
+            row.provider_input_tokens = analyzed.usage.input_tokens
+            row.provider_output_tokens = analyzed.usage.output_tokens
+            row.provider_reasoning_tokens = analyzed.usage.reasoning_tokens
+            row.cache_read_tokens = analyzed.usage.cache_read_tokens
+            row.cache_creation_tokens = analyzed.usage.cache_creation_tokens
+            row.usage_extra = (
+                json.dumps(analyzed.usage.extra) if analyzed.usage.extra else None
+            )
+            db.execute(delete(BlockRecord).where(BlockRecord.request_id == row.id))
+            db.execute(delete(ToolStat).where(ToolStat.request_id == row.id))
+            blocks = analyzed.input_blocks + analyzed.output_blocks
+            if blocks:
+                insert_blocks(db, row.id, blocks)
+            tool_rows = per_tool_tokens(analyzed)
+            if tool_rows:
+                upsert_tool_stats(db, row.id, tool_rows)
+            counts["reanalyzed"] += 1
+        if canonical.context_fidelity in {"partial", "opaque"}:
+            counts[canonical.context_fidelity] += 1
+        if payload.get("thread", {}).get("type") == "create":
+            counts["already_full"] += 1
+        if any("referenced earlier thread response" in note for note in canonical.context_notes):
+            counts["missing_ancestor"] += 1
+        db.flush()
+        db.expunge(row)
+
+    # Roots before descendants.  A missing/ambiguous ancestor is eventually
+    # processed as partial; no timestamp or session order substitutes for it.
+    while remaining:
+        progressed = False
+        for request_id, (provider, predecessor) in list(remaining.items()):
+            parent_id = response_to_candidate.get((provider, predecessor)) if predecessor else None
+            if parent_id in remaining and parent_id != request_id:
+                continue
+            apply_candidate(request_id)
+            del remaining[request_id]
+            progressed = True
+        if not progressed:
+            # Break one cyclic dependency as explicitly missing, then let
+            # later descendants inherit only the retained partial tail.
+            request_id = next(iter(remaining))
+            apply_candidate(request_id, force_missing=True)
+            del remaining[request_id]
+    db.info["anthropic_thread_backfill"] = counts
+    logger.info("Anthropic thread backfill: %s", counts)
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
     5: _migrate_to_v5,
     6: _migrate_to_v6,
+    7: _migrate_to_v7,
 }

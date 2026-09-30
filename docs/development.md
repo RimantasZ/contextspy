@@ -136,6 +136,12 @@ the provider adapter. Blocks and category/token columns are derived indexes over
 they intentionally duplicate data. A retained canonical pair is sufficient to rerun analysis
 without replaying transport events. `raw_request_body` and `response_events` remain diagnostic
 evidence, while `raw_response_body` is retained as a compatibility field.
+For Anthropic `thread.continue`, the canonical request is an expanded logical context, while
+`raw_request_body` remains the short wire delta. The normalizer follows only
+`thread.previous_message_id`; the separate diagnostics predecessor ID compares cache fingerprints.
+Inherited system-block tails are treated as uncertain, and server-side context edits may leave
+the actual post-edit prompt opaque. A versioned data migration reanalyzes retained thread rows;
+requests already purged by retention cannot be reconstructed from usage numbers.
 
 Reconstruction and block-analysis failures are recorded in `capture_error` without discarding the
 canonical application payload. The UI's JSON is provider-level application content, not
@@ -150,7 +156,8 @@ Each invocation records one of three fidelity states:
 
 - `complete`: the request was observed in full or its visible lineage was expanded through exact
   provider IDs;
-- `partial`: a required predecessor was missing or purged;
+- `partial`: a required predecessor was missing or purged, or inherited thread configuration
+  cannot be verified exactly;
 - `opaque`: compaction, encryption, truncation, or another provider-side representation prevents
   inspection of some content.
 

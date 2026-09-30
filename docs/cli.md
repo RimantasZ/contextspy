@@ -131,3 +131,9 @@ contextspy report          Print aggregate token stats and category breakdown ta
 contextspy reset-db        Delete ALL requests and sessions (prompts for confirmation)
 contextspy reset-db --yes  Skip confirmation (`-y` is also accepted)
 ```
+
+Stop the ContextSpy backend before `db-upgrade`. It creates a consistent SQLite backup,
+including committed WAL content, before changing derived data. Leave at least the current
+database size available for that backup, plus room for newly materialized canonical requests
+and blocks. The Anthropic thread backfill reports retained rows reanalyzed and partial/opaque
+results; payloads already removed by retention cannot be recovered.

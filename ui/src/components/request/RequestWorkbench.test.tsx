@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeBlock, makeRequest } from '../../test/fixtures'
 import { RequestWorkbench } from './RequestWorkbench'
 import type { WorkbenchDirection } from './RequestWorkbench'
+import type { Request } from '../../api/client'
 
 const blocks = [
   makeBlock({ id: 1, position: 0, block_type: 'system_prompt', token_count: 20, content: 'system rules' }),
@@ -13,22 +14,23 @@ const blocks = [
   makeBlock({ id: 4, position: 2, block_type: 'tool_definition', tool_name: 'empty_tool', token_count: 0, content: '{}' }),
   makeBlock({ id: 3, direction: 'output', position: 0, block_type: 'assistant_message', token_count: 5, content: 'answer' }),
 ]
+const tokenTotals = { input: { system: 20, user: 10, tool_definition: 0 }, output: { assistant: 5 } }
 
-function Harness() {
+function Harness({ request }: { request: Request }) {
   const [direction, setDirection] = useState<WorkbenchDirection>('input')
-  return <RequestWorkbench request={makeRequest()} activeDirection={direction} onDirectionChange={setDirection} />
+  return <RequestWorkbench request={request} activeDirection={direction} onDirectionChange={setDirection} />
 }
 
-function renderWorkbench() {
+function renderWorkbench(request = makeRequest()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  return render(<QueryClientProvider client={client}><Harness request={request} /></QueryClientProvider>)
 }
 
 afterEach(() => vi.restoreAllMocks())
 
 describe('RequestWorkbench', () => {
   it('opens on Request, switches direction and preserves selection', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks }), { status: 200 }))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks, token_totals: tokenTotals }), { status: 200 }))
     renderWorkbench()
     const input = await screen.findByRole('button', { name: /User.*position 2/i })
     expect(screen.getByRole('button', { name: 'System20' }).getAttribute('title')).toBe('System: 20 tokens')
@@ -47,7 +49,7 @@ describe('RequestWorkbench', () => {
   })
 
   it('filters blocks and exposes Raw in the same workbench', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks }), { status: 200 }))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks, token_totals: tokenTotals }), { status: 200 }))
     renderWorkbench()
     await screen.findByRole('button', { name: /User.*position 2/i })
     const hideZero = screen.getByRole('checkbox', { name: /Hide zero-token/i }) as HTMLInputElement
@@ -68,8 +70,25 @@ describe('RequestWorkbench', () => {
     expect((screen.getByRole('combobox', { name: 'Formatting' }) as HTMLSelectElement).value).toBe('structured')
   })
 
+  it('shows canonical and original wire JSON separately for reconstructed threads', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks, token_totals: tokenTotals }), { status: 200 }))
+    renderWorkbench(makeRequest({
+      request_body: '{"messages":[{"role":"user","content":"earlier"}]}',
+      canonical_request_body: '{"messages":[{"role":"user","content":"earlier"}]}',
+      raw_request_body: '{"thread":{"type":"continue","previous_message_id":"msg_1"},"messages":[{"role":"user","content":"next"}]}',
+    }))
+    await userEvent.click(screen.getByRole('button', { name: 'Raw' }))
+    expect(screen.getByRole('searchbox', { name: /Search canonical request payload/i })).toBeTruthy()
+    expect(screen.getByText('"earlier"')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Wire' }))
+    expect(screen.getByRole('button', { name: 'Wire' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('searchbox', { name: /Search original wire request/i })).toBeTruthy()
+    expect(screen.getByText('"previous_message_id"')).toBeTruthy()
+    expect(screen.queryByText('"earlier"')).toBeNull()
+  })
+
   it('changes block size with the size selector', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks }), { status: 200 }))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks, token_totals: tokenTotals }), { status: 200 }))
     renderWorkbench()
     await screen.findByRole('button', { name: /User.*position 2/i })
     await userEvent.click(screen.getByRole('button', { name: 'Compact' }))
@@ -88,7 +107,7 @@ describe('RequestWorkbench', () => {
   })
 
   it('clears selection when its block is filtered out', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks }), { status: 200 }))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ session_seq: 1, blocks, token_totals: tokenTotals }), { status: 200 }))
     renderWorkbench()
     await userEvent.click(await screen.findByRole('button', { name: /User.*position 2/i }))
     expect(screen.getByRole('region', { name: /User content/i })).toBeTruthy()

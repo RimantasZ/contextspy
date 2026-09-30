@@ -16,6 +16,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from contextspy.db import crud
+from contextspy.analysis.blocks import block_visual_token_totals
 from contextspy.analysis.lineage import context_diff_for_requests
 from contextspy.db.database import get_db
 
@@ -68,7 +69,11 @@ def get_request_blocks(request_id: str):
         if not req:
             raise HTTPException(status_code=404, detail="Request not found")
         blocks = crud.get_blocks(db, request_id)
-        return {"session_seq": req.session_seq, "blocks": blocks}
+        return {
+            "session_seq": req.session_seq,
+            "blocks": blocks,
+            "token_totals": block_visual_token_totals(blocks),
+        }
 
 
 @router.get("/requests/{request_id}/context-diff")

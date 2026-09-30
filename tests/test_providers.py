@@ -32,7 +32,9 @@ from contextspy.analysis.adapters.anthropic import AnthropicAdapter
 from contextspy.analysis.adapters.ollama import OllamaAdapter
 from contextspy.analysis.adapters.openai_chat import OpenAIChatAdapter
 from contextspy.analysis.adapters.openai_responses import OpenAIResponsesAdapter
-from contextspy.analysis.blocks import AnalyzedRequest, BlockType, Direction, Usage
+from contextspy.analysis.blocks import (
+    AnalyzedRequest, BlockType, Direction, Usage, block_visual_token_totals,
+)
 from contextspy.analysis.capture import CapturedEvent, decode_sse
 from contextspy.analysis.classifier import classify, classify_blocks, per_tool_tokens
 from contextspy.analysis.tokenizer import count_tokens
@@ -45,6 +47,15 @@ def _parse_stream(adapter, raw: bytes):
 
 def _json_sse_payloads(raw: bytes) -> list[dict]:
     return [event.payload for event in decode_sse(raw) if isinstance(event.payload, dict)]
+
+
+def test_visual_token_totals_are_aggregated_in_python():
+    assert block_visual_token_totals([
+        {"direction": "input", "block_type": "user_message", "token_count": 4},
+        {"direction": "input", "block_type": "user_message", "token_count": 6},
+        {"direction": "input", "block_type": "unknown", "token_count": 2},
+        {"direction": "output", "block_type": "assistant_message", "token_count": 3},
+    ]) == {"input": {"user": 10, "other": 2}, "output": {"assistant": 3}}
 
 try:
     from contextspy.proxy.addon import _detect_agent, _detect_provider

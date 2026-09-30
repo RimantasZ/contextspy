@@ -23,7 +23,7 @@ def test_inspect_migration_state_is_read_only_for_legacy_database(tmp_path):
     version_from, pending = migrations.inspect_migration_state(db_path)
 
     assert version_from == 1
-    assert pending == [2, 3, 4, 5, 6]
+    assert pending == [2, 3, 4, 5, 6, 7]
     assert db_path.read_bytes() == original_bytes
     with sqlite3.connect(db_path) as conn:
         tables = {
@@ -33,7 +33,7 @@ def test_inspect_migration_state_is_read_only_for_legacy_database(tmp_path):
     assert tables == {"requests"}
 
 
-def test_create_migration_backup_uses_versioned_filename_and_exact_copy(tmp_path):
+def test_create_migration_backup_uses_versioned_filename_and_sqlite_snapshot(tmp_path):
     db_path = tmp_path / "contextspy.db"
     _legacy_db_with_request(db_path)
     timestamp = datetime(2026, 8, 27, 12, 34, 56, 789, tzinfo=timezone.utc)
@@ -43,7 +43,8 @@ def test_create_migration_backup_uses_versioned_filename_and_exact_copy(tmp_path
     )
 
     assert backup_path.name == "contextspy_backup_v1_to_v2_2026-08-27-1234.back"
-    assert backup_path.read_bytes() == db_path.read_bytes()
+    with sqlite3.connect(backup_path) as backup:
+        assert backup.execute("SELECT id FROM requests").fetchall() == [("old-request",)]
 
 
 def test_create_migration_backup_adds_suffix_when_name_exists(tmp_path):
@@ -60,9 +61,29 @@ def test_create_migration_backup_adds_suffix_when_name_exists(tmp_path):
     )
 
     assert backup_path.name == "contextspy_backup_v1_to_v2_2026-08-27-1234-2.back"
-    assert backup_path.read_bytes() == db_path.read_bytes()
+    with sqlite3.connect(backup_path) as backup:
+        assert backup.execute("SELECT id FROM requests").fetchall() == [("old-request",)]
     assert base.read_bytes() == b"first backup"
     assert suffixed.read_bytes() == b"second backup"
+
+
+def test_migration_backup_includes_committed_uncheckpointed_wal_rows(tmp_path):
+    db_path = tmp_path / "wal.db"
+    with sqlite3.connect(db_path) as setup:
+        setup.execute("CREATE TABLE records (value TEXT)")
+    source = sqlite3.connect(db_path)
+    try:
+        source.execute("PRAGMA journal_mode=WAL")
+        source.execute("PRAGMA wal_autocheckpoint=0")
+        source.execute("INSERT INTO records VALUES ('from-wal')")
+        source.commit()
+        backup_path = migrations.create_migration_backup(db_path, 6, 7)
+        with sqlite3.connect(backup_path) as backup:
+            assert backup.execute("SELECT value FROM records").fetchall() == [
+                ("from-wal",),
+            ]
+    finally:
+        source.close()
 
 
 def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path):
@@ -71,15 +92,14 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
     from contextspy.db import database
 
     db_path = tmp_path / "profile.db"
-    original_bytes = b"untouched sqlite database"
-    db_path.write_bytes(original_bytes)
+    _legacy_db_with_request(db_path)
     previous_backup = tmp_path / "profile_backup_v0_to_v1_2026-08-26-0000.back"
     previous_backup.write_bytes(b"old backup")
 
     settings = Settings(config_dir=tmp_path)
     settings.storage.db_path = db_path
     monkeypatch.setattr(Settings, "load", classmethod(lambda cls: settings))
-    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3, 4, 5, 6]))
+    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3, 4, 5, 6, 7]))
 
     events = []
     real_create_backup = migrations.create_migration_backup
@@ -102,8 +122,8 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
         yield object()
 
     monkeypatch.setattr(migrations, "create_migration_backup", create_backup)
-    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3, 4, 5, 6])
-    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3, 4, 5, 6])
+    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3, 4, 5, 6, 7])
+    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3, 4, 5, 6, 7])
     monkeypatch.setattr(database, "init_db", init_db)
     monkeypatch.setattr(database, "get_db", get_db)
 
@@ -117,13 +137,14 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
 
     cli.db_upgrade()
 
-    backup_path = tmp_path / "profile_backup_v1_to_v6_2026-08-27-0000.back"
+    backup_path = tmp_path / "profile_backup_v1_to_v7_2026-08-27-0000.back"
     assert events == ["backup", "init"]
-    assert backup_path.read_bytes() == original_bytes
+    with sqlite3.connect(backup_path) as backup:
+        assert backup.execute("SELECT id FROM requests").fetchall() == [("old-request",)]
     assert db_path.read_bytes() == b"database changed by init"
     rendered_output = "\n".join(output)
     assert f"Path: {backup_path}" in rendered_output
-    assert "Size on disk: 25 bytes" in rendered_output
+    assert "Size on disk:" in rendered_output
     assert str(previous_backup) in rendered_output
     assert "10 bytes" in rendered_output
     assert "deleted when no longer needed to save disk space" in rendered_output
@@ -330,6 +351,138 @@ def test_v3_backfill_reconstructs_exact_websocket_lineage_and_blocks(tmp_path):
         ]
         assert child.context_fidelity == "complete"
         assert any(block["block_type"] == "tool_result" for block in blocks)
+
+
+def test_v7_backfills_anthropic_thread_canonical_context_and_is_idempotent(tmp_path):
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "anthropic_thread_backfill.db")
+    root_request = {
+        "thread": {"type": "create"}, "model": "claude-test",
+        "system": [{"type": "text", "text": "instructions"}],
+        "tools": [{"name": "shell", "input_schema": {"type": "object"}}],
+        "messages": [{"role": "user", "content": "inspect"}],
+    }
+    root_response = {
+        "id": "msg_root", "role": "assistant",
+        "content": [{"type": "tool_use", "id": "tool_1", "name": "shell", "input": {}}],
+    }
+    child_request = {
+        "thread": {"type": "continue", "previous_message_id": "msg_root"},
+        "model": "claude-test",
+        "messages": [{"role": "user", "content": [{
+            "type": "tool_result", "tool_use_id": "tool_1", "content": "ok",
+        }]}],
+    }
+    child_response = {
+        "id": "msg_child", "role": "assistant", "content": [],
+        "usage": {"input_tokens": 2, "cache_read_input_tokens": 100},
+    }
+    with get_db() as db:
+        # Deliberately insert the descendant first: exact links, not row order,
+        # determine migration order.
+        for request, response in (
+            (child_request, child_response), (root_request, root_response),
+        ):
+            crud.create_request(db, {
+                "id": str(uuid.uuid4()),
+                "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic",
+                "endpoint": "/v1/messages",
+                "transport": "rest",
+                "response_complete": 1,
+                "raw_request_body": json.dumps(request),
+                "raw_response_body": json.dumps(response),
+            })
+
+    with get_db() as db:
+        migrations._migrate_to_v7(db)
+        migrations._migrate_to_v7(db)
+        stats = db.info["anthropic_thread_backfill"]
+        assert stats["retained"] == 2
+        assert stats["reanalyzed"] == 2
+        assert stats["already_full"] == 1
+        assert stats["canonical_growth_bytes"] > 0
+
+    with get_db() as db:
+        child = crud.get_request_by_provider_response_id(db, "anthropic", "msg_child")
+        assert child is not None
+        canonical = json.loads(child.canonical_request_body)
+        assert child.predecessor_response_id == "msg_root"
+        assert child.context_fidelity == "complete"
+        assert canonical["messages"] == [
+            root_request["messages"][0],
+            {"role": "assistant", "content": root_response["content"]},
+            child_request["messages"][0],
+        ]
+        assert canonical["system"] == root_request["system"]
+        assert canonical["tools"] == root_request["tools"]
+        assert child.provider_input_tokens == 102
+        blocks = crud.get_blocks(db, child.id)
+        assert any(block["block_type"] == "tool_result" for block in blocks)
+        assert len([block for block in blocks if block["block_type"] == "tool_definition"]) == 1
+
+
+def test_unique_provider_response_lookup_rejects_collisions(tmp_path):
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "duplicate_provider_ids.db")
+    with get_db() as db:
+        for _ in range(2):
+            crud.create_request(db, {
+                "id": str(uuid.uuid4()),
+                "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic",
+                "endpoint": "/v1/messages",
+                "provider_response_id": "msg_duplicate",
+            })
+    with get_db() as db:
+        assert crud.get_unique_request_by_provider_response_id(
+            db, "anthropic", "msg_duplicate",
+        ) is None
+
+
+def test_v7_missing_thread_ancestor_does_not_gain_an_adjacent_parent(tmp_path):
+    from contextspy.db import crud
+    from contextspy.db.database import get_db, init_db
+
+    init_db(tmp_path / "missing_thread_ancestor.db")
+    rows = [
+        ({"thread": {"type": "create"}, "messages": [
+            {"role": "user", "content": "unrelated root"},
+        ]}, {"id": "msg_root", "role": "assistant", "content": []}),
+        ({"thread": {"type": "continue", "previous_message_id": "msg_absent"},
+          "messages": [{"role": "user", "content": "known tail"}]},
+         {"id": "msg_orphan", "role": "assistant", "content": [
+             {"type": "text", "text": "known reply"},
+         ]}),
+        ({"thread": {"type": "continue", "previous_message_id": "msg_orphan"},
+          "messages": [{"role": "user", "content": "later tail"}]},
+         {"id": "msg_later", "role": "assistant", "content": []}),
+    ]
+    with get_db() as db:
+        for request, response in rows:
+            crud.create_request(db, {
+                "id": str(uuid.uuid4()),
+                "timestamp": datetime.now(timezone.utc),
+                "provider": "anthropic", "endpoint": "/v1/messages",
+                "response_complete": 1,
+                "raw_request_body": json.dumps(request),
+                "raw_response_body": json.dumps(response),
+            })
+    with get_db() as db:
+        migrations._migrate_to_v7(db)
+    with get_db() as db:
+        orphan = crud.get_request_by_provider_response_id(db, "anthropic", "msg_orphan")
+        later = crud.get_request_by_provider_response_id(db, "anthropic", "msg_later")
+        assert orphan.context_fidelity == later.context_fidelity == "partial"
+        assert orphan.predecessor_response_id == "msg_absent"
+        assert later.predecessor_response_id == "msg_orphan"
+        assert [message["content"] for message in json.loads(later.canonical_request_body)["messages"]] == [
+            "known tail", [{"type": "text", "text": "known reply"}], "later tail",
+        ]
 
 
 def test_v4_reanalyzes_inline_media_without_tokenizing_base64(tmp_path):

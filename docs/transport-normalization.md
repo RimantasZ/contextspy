@@ -26,7 +26,8 @@ whether the provider performed additional private sampling or processing passes 
 
 Before analysis, every supported invocation is converted into two transport-neutral documents:
 
-- the **canonical request** is the provider-shaped context submitted for that invocation;
+- the **canonical request** is the provider-shaped, observable logical context for that invocation
+  (possibly expanded from provider thread state rather than byte-identical to the wire request);
 - the **canonical response** is the provider-shaped response, including output and terminal
   usage.
 
@@ -60,6 +61,18 @@ the provider supplies compacted, encrypted, or otherwise non-inspectable state, 
 **opaque**. The visible provider item is retained, but ContextSpy does not fabricate its original
 contents.
 
+Anthropic Messages traffic can also contain short `thread` requests. For a captured
+`thread.continue`, ContextSpy follows `thread.previous_message_id` to a retained provider
+response, then materializes the predecessor's canonical messages, its assistant output, and
+the new messages before block analysis. Omitted tools and system blocks are carried forward
+where supported by the observed request shape. A shortened system list requires an inferred
+stable tail, so that request is labelled **partial**, not provider-verified complete.
+Request detail's Raw view offers separate **Canonical** and **Wire** tabs when these differ.
+`diagnostics.previous_message_id` is a prompt-cache comparison key and does not authorize
+context reconstruction. Server-side context edits can make the effective model prompt differ
+from the expanded client-visible history; applied or unreported edits are labelled **opaque**
+unless a missing predecessor already makes the request partial.
+
 ## Why can a reconstructed Codex response look large?
 
 Response JSON size is provider-schema dependent and is not the same thing as generated output
@@ -88,9 +101,9 @@ The request record may contain several related artifacts:
 
 | Field | Purpose |
 | --- | --- |
-| `canonical_request_body` | Exact provider-shaped request analyzed and displayed |
+| `canonical_request_body` | Provider-shaped logical request analyzed and displayed; expanded from exact state lineage when possible |
 | `canonical_response_body` | Exact provider-shaped response analyzed and displayed |
-| `raw_request_body` | Original REST request or sparse WebSocket start message |
+| `raw_request_body` | Original REST request, including a short Anthropic thread delta, or sparse WebSocket start message |
 | `raw_response_body` | Compatibility copy of the processed response |
 | `response_events` | Optional ordered streaming/WebSocket diagnostics |
 | blocks and category columns | Derived indexes used by analysis and the UI |
