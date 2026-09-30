@@ -94,6 +94,20 @@ All data is stored in `~/.contextspy/`:
 | `~/.contextspy/contextspy.db` | SQLite database — all requests and sessions |
 | `~/.contextspy/config.toml` | Configuration file (auto-created on first run) |
 
+File-backed databases use SQLite WAL mode. While ContextSpy runs, SQLite may also create
+`contextspy.db-wal` and `contextspy.db-shm`; these are part of the live database and must not be
+deleted or copied separately. WAL lets dashboard reads overlap capture commits, while bounded
+retries handle transient writer contention. A capture that still cannot be saved logs
+`capture_not_saved` with its request ID; the provider request itself may have succeeded.
+For a backup while the database is live, use SQLite's online backup API. A plain file copy is
+safe only after all ContextSpy processes and other database connections have stopped and the
+database has checkpointed. The `db-upgrade` command already uses an online backup.
+If WAL must be rolled back for an older ContextSpy build, first stop all processes and make a
+recoverable backup. Then open the database with SQLite, run `PRAGMA wal_checkpoint(TRUNCATE);`
+and `PRAGMA journal_mode=DELETE;`, and confirm that the latter returns `delete` before starting
+the older build. The current build enables WAL again on its next start; never remove sidecar
+files manually as a rollback method.
+
 Observed request payloads, canonical request/response payloads, normalized SSE/NDJSON/WebSocket
 event logs, plus the content-addressed `block_contents` table (see below), become eligible for
 purging 7 days after capture by default to limit disk usage — configurable via

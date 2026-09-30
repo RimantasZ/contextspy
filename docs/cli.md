@@ -137,3 +137,8 @@ including committed WAL content, before changing derived data. Leave at least th
 database size available for that backup, plus room for newly materialized canonical requests
 and blocks. The Anthropic thread backfill reports retained rows reanalyzed and partial/opaque
 results; payloads already removed by retention cannot be recovered.
+
+ContextSpy enables SQLite WAL mode on startup for file-backed databases. Stop all ContextSpy
+processes before an offline copy or restore; a live `.db` file alone may omit committed data in
+its `-wal` sidecar. Do not delete `-wal` or `-shm` files while the database is in use. For a live
+backup, use SQLite's online backup API instead of copying the main file.

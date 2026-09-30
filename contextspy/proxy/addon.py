@@ -19,6 +19,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 import uuid
 
@@ -37,6 +38,7 @@ from contextspy.analysis.stream_hint import extract_stream_hint
 from contextspy.db import crud
 from contextspy.db.database import get_db
 from contextspy.proxy import capture_state
+from contextspy.proxy.capture_writer import CaptureEnvelope, persist_capture
 from contextspy.normalization import (
     InvocationLineageRepository,
     ObservedInvocation,
@@ -681,87 +683,79 @@ class ContextSpyAddon:
             cache_creation = None
             usage_extra = None
 
-        with get_db() as db:
-            if canonical is not None and canonical.provider_response_id:
-                existing = crud.get_request_by_provider_response_id(
-                    db, provider, canonical.provider_response_id,
-                )
-                if existing is not None:
-                    logger.debug(
-                        "Skipping duplicate provider response %s",
-                        canonical.provider_response_id,
-                    )
-                    return
-            if session_id is _CAPTURE_UNSET:
+        if session_id is _CAPTURE_UNSET:
+            with get_db() as db:
                 active_session = crud.get_active_session(db)
                 resolved_session_id = active_session.id if active_session else None
-            else:
-                resolved_session_id = session_id
+        else:
+            resolved_session_id = session_id
 
-            data: dict = {
-                "id": str(uuid.uuid4()),
-                "session_id": resolved_session_id,
-                "timestamp": datetime.now(timezone.utc),
-                "started_at": started_at,
-                "provider": provider,
-                "model": model,
-                "agent": agent,
-                "endpoint": endpoint,
-                "duration_ms": duration_ms,
-                "ttft_ms": ttft_ms,
-                "status_code": status_code,
-                "transport": transport,
-                "response_transport": response_transport,
-                "response_reconstructed": int(response_reconstructed),
-                "response_complete": int(response_complete),
-                "capture_error": json.dumps(capture_error) if capture_error else None,
-                "canonical_request_body": canonical.request.text if canonical else None,
-                "canonical_response_body": (
-                    canonical.response.text if canonical and canonical.response else None
-                ),
-                "provider_response_id": canonical.provider_response_id if canonical else None,
-                "predecessor_response_id": (
-                    canonical.predecessor_response_id if canonical else None
-                ),
-                "invocation_outcome": (
-                    canonical.outcome if canonical else _invocation_outcome(
-                        status_code, response_complete,
-                    )
-                ),
-                "context_fidelity": canonical.context_fidelity if canonical else "complete",
-                "context_notes": (
-                    json.dumps(canonical.context_notes)
-                    if canonical and canonical.context_notes else None
-                ),
-                "provider_input_tokens": provider_input,
-                "provider_output_tokens": provider_output,
-                "provider_reasoning_tokens": provider_reasoning,
-                "cache_read_tokens": cache_read,
-                "cache_creation_tokens": cache_creation,
-                "usage_extra": usage_extra,
-                "raw_request_body": raw_request_body,
-                "raw_response_body": raw_resp_text,
-                "response_events": response_events,
-            }
-            hint_source, hint_digest = extract_stream_hint(
-                agent=agent, endpoint=endpoint, request=req_body,
-            )
-            data["stream_hint_source"] = hint_source
-            data["stream_hint_digest"] = hint_digest
-            data.update(breakdown.to_db_fields())
-            req_record = crud.create_request(db, data)
-
-            if analyzed is not None:
-                all_blocks = analyzed.input_blocks + analyzed.output_blocks
-                if all_blocks:
-                    crud.insert_blocks(db, req_record.id, all_blocks)
-
-                tool_rows = per_tool_tokens(analyzed)
-                if tool_rows:
-                    crud.upsert_tool_stats(db, req_record.id, tool_rows)
-
-            # Serialise while the session is still open to avoid detached-instance errors
-            ws_payload = req_record.to_dict(include_raw=False)
+        data: dict = {
+            "id": str(uuid.uuid4()),
+            "session_id": resolved_session_id,
+            "timestamp": datetime.now(timezone.utc),
+            "started_at": started_at,
+            "provider": provider,
+            "model": model,
+            "agent": agent,
+            "endpoint": endpoint,
+            "duration_ms": duration_ms,
+            "ttft_ms": ttft_ms,
+            "status_code": status_code,
+            "transport": transport,
+            "response_transport": response_transport,
+            "response_reconstructed": int(response_reconstructed),
+            "response_complete": int(response_complete),
+            "capture_error": json.dumps(capture_error) if capture_error else None,
+            "canonical_request_body": canonical.request.text if canonical else None,
+            "canonical_response_body": (
+                canonical.response.text if canonical and canonical.response else None
+            ),
+            "provider_response_id": canonical.provider_response_id if canonical else None,
+            "predecessor_response_id": (
+                canonical.predecessor_response_id if canonical else None
+            ),
+            "invocation_outcome": (
+                canonical.outcome if canonical else _invocation_outcome(
+                    status_code, response_complete,
+                )
+            ),
+            "context_fidelity": canonical.context_fidelity if canonical else "complete",
+            "context_notes": (
+                json.dumps(canonical.context_notes)
+                if canonical and canonical.context_notes else None
+            ),
+            "provider_input_tokens": provider_input,
+            "provider_output_tokens": provider_output,
+            "provider_reasoning_tokens": provider_reasoning,
+            "cache_read_tokens": cache_read,
+            "cache_creation_tokens": cache_creation,
+            "usage_extra": usage_extra,
+            "raw_request_body": raw_request_body,
+            "raw_response_body": raw_resp_text,
+            "response_events": response_events,
+        }
+        hint_source, hint_digest = extract_stream_hint(
+            agent=agent, endpoint=endpoint, request=req_body,
+        )
+        data["stream_hint_source"] = hint_source
+        data["stream_hint_digest"] = hint_digest
+        data.update(breakdown.to_db_fields())
+        envelope = CaptureEnvelope(
+            request_id=data["id"],
+            provider=provider,
+            provider_response_id=data["provider_response_id"],
+            transport=transport,
+            data=MappingProxyType(data),
+            blocks=tuple(analyzed.input_blocks + analyzed.output_blocks) if analyzed else (),
+            tool_rows=(
+                tuple(MappingProxyType(row) for row in per_tool_tokens(analyzed))
+                if analyzed else ()
+            ),
+        )
+        ws_payload = persist_capture(envelope)
+        if ws_payload is None:
+            return
 
         ts_str = data["timestamp"].strftime("%H:%M:%S")
         logger.info(

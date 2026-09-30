@@ -2,11 +2,20 @@
 
 ## Status
 
-Postponed implementation plan. No runtime or database changes have been made for this plan.
-The observed `sqlite3.OperationalError: database is locked` occurred while committing a
-WebSocket capture. The exact connection holding the lock at that instant is not known; the
-read/write contention described below is a strong, testable explanation, not a proven
-identification of that particular reader.
+Implemented on the `db-lock-fix` branch; live rollout and observation remain. The original
+failure was a WebSocket capture. Later logs confirmed the same commit-time failure lost three
+Anthropic SSE captures between requests #233 and #236 in session
+`859f3179-f864-4a92-a6f8-4c4b5382b55d`. The exact connection holding each lock is unknown;
+the read/write contention mechanism is reproduced by the regression test. The migration-backup
+code had already moved to SQLite's online backup API before this branch.
+
+Implementation and verification: file-backed databases select WAL at startup and configure a
+250 ms per-connection busy timeout; a prepared capture envelope retries the whole atomic
+transaction with fresh sessions for up to about 2 seconds on SQLite busy/locked errors. Tests
+cover DELETE-vs-WAL read/write overlap, pinned dashboard reads, real writer contention,
+injected commit/write failures, non-lock errors, and one broadcast. The backend suite passes;
+the 2,000-request repeated-context benchmark was run. The user's live database was not opened
+for writing, converted, or load-tested by this branch.
 
 ## Problem and current behavior
 
@@ -51,11 +60,9 @@ identification of that particular reader.
 
 ### 2. Make existing backup/maintenance behavior WAL-safe
 
-- `db/migrations.py:create_migration_backup()` currently uses `shutil.copy2(db_path, ...)`.
-  Once WAL is active, a main-file-only copy can omit committed pages or be inconsistent.
-  Replace it with SQLite's online backup API while keeping the current versioned `.back`
-  naming, CLI output, and restore expectations. Verify the backup includes data committed to
-  an active WAL and passes `PRAGMA integrity_check` when opened independently.
+- `db/migrations.py:create_migration_backup()` already uses SQLite's online backup API,
+  including committed WAL content; `tests/test_migrations.py` covers this. Keep the existing
+  versioned `.back` naming, CLI output, and restore expectations.
 - Audit `db-upgrade`, `reset-db`, `db-stats`, `report`, and documented manual backup/restore
   steps. No routine operation should treat the main `.db` file as the complete live database.
   Document that an offline file copy requires a fully stopped/checkpointed database, while

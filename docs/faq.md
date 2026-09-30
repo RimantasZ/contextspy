@@ -210,7 +210,10 @@ Aggregated token counts and classifications are kept indefinitely until you run 
 contextspy reset-db
 ```
 
-Or delete `~/.contextspy/contextspy.db` manually — make sure ContextSpy is not running first to avoid a locked database.
+Or delete `~/.contextspy/contextspy.db` manually after stopping all ContextSpy processes and
+database connections. SQLite WAL mode may create `contextspy.db-wal` and `contextspy.db-shm`
+while the database is active; never remove these sidecars while it is in use. The `reset-db`
+command is safer because it clears rows through SQLite rather than deleting a live database file.
 
 ---
 

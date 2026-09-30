@@ -82,6 +82,7 @@ def test_migration_backup_includes_committed_uncheckpointed_wal_rows(tmp_path):
             assert backup.execute("SELECT value FROM records").fetchall() == [
                 ("from-wal",),
             ]
+            assert backup.execute("PRAGMA integrity_check").fetchone() == ("ok",)
     finally:
         source.close()
 
