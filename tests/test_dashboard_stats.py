@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.api.routers import stats as stats_router, sessions as sessions_router
-from contextspy.db import crud, database
+from contextspy.db import crud, database, session_lineage_service
 from contextspy.db.models import Base, BlockRecord, Request, Session
 
 T0 = datetime(2026, 9, 18, 8, 0, 0)
@@ -433,7 +433,8 @@ def test_dashboard_batches_card_and_parent_queries(db):
         assert crud.get_dashboard_live(db)["conversation_count"] == 2
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    assert len(statements) <= 12
+    # One extra bounded query fingerprints block evidence for safe cache invalidation.
+    assert len(statements) <= 13
 
 
 def test_dashboard_reuses_analysis_until_request_revision_changes(db, monkeypatch):
@@ -451,6 +452,118 @@ def test_dashboard_reuses_analysis_until_request_revision_changes(db, monkeypatc
     assert calls == 1
     _req(db, "second", seq=2)
     assert crud.get_dashboard_live(db)["active_session"]["request_count"] == 2
+    assert calls == 2
+
+
+def test_diagnostics_reuses_dashboard_graph_until_revision_changes(db, monkeypatch):
+    _session(db)
+    _req(db, "first", seq=1)
+    original = crud.get_session_lineage_snapshots
+    calls = 0
+    def counted(*args):
+        nonlocal calls
+        calls += 1
+        return original(*args)
+    monkeypatch.setattr(crud, "get_session_lineage_snapshots", counted)
+    dashboard = crud.get_dashboard_live(db)
+    revision = crud.get_session_lineage_revision(db, "s1")
+    assert revision == dashboard["sequence_revision"]
+    graph = crud.get_session_lineage_graph(db, "s1")
+    assert graph["analysis_version"] in revision
+    assert calls == 1
+    _req(db, "second", seq=2)
+    assert crud.get_session_lineage_revision(db, "s1") != revision
+    crud.get_session_lineage_graph(db, "s1")
+    assert calls == 2
+
+
+def test_lineage_revision_tracks_relevant_edits_without_unrelated_invalidations(db):
+    _session(db)
+    _session(db, "s2", active=False)
+    child = _req(db, "child", parent="external-response")
+    original = crud.get_session_lineage_revision(db, "s1")
+    _req(db, "unrelated", sid="s2")
+    assert crud.get_session_lineage_revision(db, "s1") == original
+
+    child.stream_hint_digest = "new-hint"
+    db.flush()
+    edited = crud.get_session_lineage_revision(db, "s1")
+    assert edited != original
+
+    _blocks(db, "child", "user_message", 1, content_hash="visible")
+    with_block = crud.get_session_lineage_revision(db, "s1")
+    assert with_block != edited
+
+    external = _req(db, "external", sid="s2", seq=2)
+    external.provider_response_id = "external-response"
+    db.flush()
+    with_parent = crud.get_session_lineage_revision(db, "s1")
+    assert with_parent != with_block
+    external.context_fidelity = "partial"
+    db.flush()
+    assert crud.get_session_lineage_revision(db, "s1") != with_parent
+
+
+def test_lineage_snapshots_do_not_load_unused_block_attrs(db):
+    _session(db)
+    _req(db, "first")
+    _blocks(db, "first", "user_message", 1, content_hash="visible", attrs="not JSON")
+    block_selects = []
+    def record(_connection, _cursor, statement, _parameters, _context, _many):
+        if "FROM blocks" in statement:
+            block_selects.append(statement)
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        snapshots, external = crud.get_session_lineage_snapshots(db, "s1")
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert external == []
+    assert snapshots[0].blocks[0].content_hash == "visible"
+    assert not hasattr(snapshots[0].blocks[0], "attrs")
+    assert len(block_selects) == 1
+    assert "blocks.attrs" not in block_selects[0]
+
+
+def test_dashboard_display_reads_skip_retained_request_bodies(db):
+    _session(db)
+    first = _req(db, "first", seq=1)
+    second = _req(db, "second", seq=2, parent="first")
+    first.raw_request_body = second.raw_request_body = "large retained body"
+    db.flush()
+    db.expunge_all()  # Exercise fresh ORM reads, not rows already present in the identity map.
+    request_selects = []
+    def record(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT") and "FROM requests" in statement:
+            request_selects.append(statement)
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        dashboard = crud.get_dashboard_live(db)
+        crud.get_session_request_context(db, "s1", "second")
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert dashboard["context_change"]["parent_request_id"] == "first"
+    assert request_selects
+    assert all("raw_request_body" not in statement and
+               "canonical_request_body" not in statement and
+               "canonical_response_body" not in statement
+               for statement in request_selects)
+
+
+def test_oversized_lineage_graph_is_not_retained(db, monkeypatch):
+    _session(db)
+    _req(db, "first", seq=1)
+    monkeypatch.setattr(session_lineage_service, "CACHE_BYTES_LIMIT", 1)
+    original = crud.get_session_lineage_snapshots
+    calls = 0
+    def counted(*args):
+        nonlocal calls
+        calls += 1
+        return original(*args)
+    monkeypatch.setattr(crud, "get_session_lineage_snapshots", counted)
+    crud.get_session_lineage_graph(db, "s1")
+    crud.get_session_lineage_graph(db, "s1")
     assert calls == 2
 
 
@@ -780,6 +893,13 @@ def test_session_conversation_routes_return_revision_and_refresh_condition(tmp_p
         response = client.get("/api/sessions/s1/conversations")
         assert response.status_code == 200
         body = response.json()
+        revision_response = client.get("/api/sessions/s1/lineage/revision")
+        assert revision_response.status_code == 200
+        assert revision_response.json() == {"revision": body["revision"]}
+        diagnostics = client.get("/api/sessions/s1/lineage")
+        assert diagnostics.status_code == 200
+        assert diagnostics.json()["session"] == diagnostics.json()["capture"]
+        assert diagnostics.json()["diagnostic_path_count"] == diagnostics.json()["lineage_fragment_count"]
         group = body["conversations"][0]
         page = client.get("/api/sessions/s1/conversations/requests", params={
             "group_key": group["key"], "revision": body["revision"],
@@ -795,6 +915,7 @@ def test_session_conversation_routes_return_revision_and_refresh_condition(tmp_p
         })
         assert stale.status_code == 409
         assert client.get("/api/sessions/missing/conversations").status_code == 404
+        assert client.get("/api/sessions/missing/lineage/revision").status_code == 404
     finally:
         database.dispose_engine()
 

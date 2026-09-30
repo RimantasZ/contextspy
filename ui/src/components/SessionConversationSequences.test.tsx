@@ -1,10 +1,10 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 import { sessionsApi } from '../api/client'
-import type { SessionConversation, SessionConversationsData } from '../api/client'
+import type { SessionConversation, SessionConversationPage, SessionConversationsData } from '../api/client'
 import { SessionConversationSequences } from './SessionConversationSequences'
 
 function group(key: string, seq: number, gap: SessionConversation['recent_segments'][number]['gap_reason'] = 'root'): SessionConversation {
@@ -101,6 +101,93 @@ describe('session conversation sequences', () => {
     expect(extra).toHaveBeenCalledWith('s1', 1, 'v1')
     earlier.mockRestore()
     extra.mockRestore()
+  })
+
+  it('loads a linked group once per revision, not on every first-page poll', async () => {
+    const linked = vi.spyOn(sessionsApi, 'conversations').mockImplementation(
+      async (_sessionId, _offset, revision) => ({
+        ...base, revision: revision ?? base.revision,
+        conversations: [group('linked', 8)],
+      }),
+    )
+    const queryClient = new QueryClient()
+    const renderView = (data: SessionConversationsData) => (
+      <QueryClientProvider client={queryClient}><MemoryRouter>
+        <SessionConversationSequences data={data} initialGroupKey="linked" />
+      </MemoryRouter></QueryClientProvider>
+    )
+    const view = render(renderView(base))
+    expect(await screen.findByRole('region', { name: 'linked' })).toBeTruthy()
+    expect(linked).toHaveBeenCalledTimes(1)
+
+    view.rerender(renderView({ ...base, conversations: [...base.conversations] }))
+    expect(linked).toHaveBeenCalledTimes(1)
+
+    view.rerender(renderView({ ...base, revision: 'v2', conversations: [...base.conversations] }))
+    await waitFor(() => expect(linked).toHaveBeenCalledTimes(2))
+    linked.mockRestore()
+  })
+
+  it('lets a failed linked conversation load be retried without polling repeatedly', async () => {
+    const linked = vi.spyOn(sessionsApi, 'conversations')
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValueOnce({ ...base, conversations: [group('linked-retry', 8)] })
+    const queryClient = new QueryClient()
+    const renderView = (data: SessionConversationsData) => (
+      <QueryClientProvider client={queryClient}><MemoryRouter>
+        <SessionConversationSequences data={data} initialGroupKey="linked-retry" />
+      </MemoryRouter></QueryClientProvider>
+    )
+    const view = render(renderView(base))
+    const retry = await screen.findByRole('button', { name: 'Retry linked conversation' })
+    expect(linked).toHaveBeenCalledTimes(1)
+    view.rerender(renderView({ ...base, conversations: [...base.conversations] }))
+    expect(linked).toHaveBeenCalledTimes(1)
+    await userEvent.click(retry)
+    expect(await screen.findByRole('region', { name: 'linked-retry' })).toBeTruthy()
+    expect(linked).toHaveBeenCalledTimes(2)
+    linked.mockRestore()
+  })
+
+  it('discards older conversation pages when the capture revision changes', async () => {
+    const earlier = vi.spyOn(sessionsApi, 'conversationRequests').mockResolvedValue({
+      session_id: 's1', revision: 'v1', group_key: 'primary', next_cursor: null, continues_earlier: false,
+      segments: [group('older', 8).recent_segments[0]],
+    })
+    const queryClient = new QueryClient()
+    const renderView = (data: SessionConversationsData) => (
+      <QueryClientProvider client={queryClient}><MemoryRouter>
+        <SessionConversationSequences data={data} />
+      </MemoryRouter></QueryClientProvider>
+    )
+    const view = render(renderView(base))
+    await userEvent.click(screen.getByRole('button', { name: 'More (2 total) →' }))
+    expect(await screen.findByRole('button', { name: /Request #8/ })).toBeTruthy()
+    view.rerender(renderView({ ...base, revision: 'v2' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Request #8/ })).toBeNull())
+    expect(screen.getByRole('button', { name: 'More (2 total) →' })).toBeTruthy()
+    earlier.mockRestore()
+  })
+
+  it('ignores a page that arrives after the capture revision changes', async () => {
+    let resolvePage!: (page: SessionConversationPage) => void
+    const earlier = vi.spyOn(sessionsApi, 'conversationRequests').mockImplementation(
+      () => new Promise<SessionConversationPage>((resolve) => { resolvePage = resolve }),
+    )
+    const queryClient = new QueryClient()
+    const renderView = (data: SessionConversationsData) => (
+      <QueryClientProvider client={queryClient}><MemoryRouter>
+        <SessionConversationSequences data={data} />
+      </MemoryRouter></QueryClientProvider>
+    )
+    const view = render(renderView(base))
+    await userEvent.click(screen.getByRole('button', { name: 'More (2 total) →' }))
+    view.rerender(renderView({ ...base, revision: 'v2' }))
+    resolvePage({ session_id: 's1', revision: 'v1', group_key: 'primary', next_cursor: null,
+      continues_earlier: false, segments: [group('older', 8).recent_segments[0]] })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'More (2 total) →' })).toBeTruthy())
+    expect(screen.queryByRole('button', { name: /Request #8/ })).toBeNull()
+    earlier.mockRestore()
   })
 
   it('selects a request card in the grouped view', async () => {

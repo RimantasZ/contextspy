@@ -19,7 +19,6 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from contextspy.api.websocket import ConnectionManager
-from contextspy.analysis.lineage import build_lineage_graph
 from contextspy.db import crud
 from contextspy.db.database import get_db
 
@@ -78,18 +77,28 @@ def get_session(session_id: str):
 
 @router.get("/sessions/{session_id}/lineage")
 def get_session_lineage(session_id: str):
-    """Return the complete, backend-derived invocation graph for one capture."""
+    """Return the complete, backend-derived invocation graph for one session."""
     with get_db() as db:
         session = crud.get_session(db, session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         with db.begin_nested():
-            requests, external_requests = crud.get_session_lineage_snapshots(db, session_id)
-            graph = build_lineage_graph(requests, external_requests=external_requests)
+            graph = crud.get_session_lineage_graph(db, session_id)
         return {
             "capture": session.to_dict(),
+            "session": session.to_dict(),
             **graph,
         }
+
+
+@router.get("/sessions/{session_id}/lineage/revision")
+def get_session_lineage_revision(session_id: str):
+    """Small polling response so diagnostics reloads only when evidence changes."""
+    with get_db() as db:
+        if not crud.get_session(db, session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        with db.begin_nested():
+            return {"revision": crud.get_session_lineage_revision(db, session_id)}
 
 
 @router.get("/sessions/{session_id}/conversations")

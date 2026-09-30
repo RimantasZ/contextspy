@@ -11,8 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import type { DashboardBlockChange, DashboardContextChange } from '../../api/client'
 import { ContextChangePanel } from './ContextChangePanel'
 
@@ -35,6 +35,17 @@ describe('ContextChangePanel', () => {
     expect(screen.getByText('Compared with #17')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Open request' }).getAttribute('href')).toBe('/requests/r18')
     expect(screen.getByText(/\+5,612 tokens/)).toBeTruthy()
+  })
+
+  it('keeps visible estimate and provider usage distinct and allows future actions', () => {
+    const onOpen = vi.fn()
+    render(<ContextChangePanel change={change({ provider_input_tokens: 91000 })}
+      onOpenRequest={onOpen} actions={<button type="button">Compare</button>} />)
+    expect(screen.getByText('estimated visible input tokens')).toBeTruthy()
+    expect(screen.getByText('Provider reported 91,000 input tokens')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Compare' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Open request' }))
+    expect(onOpen).toHaveBeenCalledWith('r18')
   })
 
   it('shows negative and zero deltas', () => {

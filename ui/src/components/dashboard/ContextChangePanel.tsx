@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+import type { ReactNode } from 'react'
 import type { DashboardContextChange } from '../../api/client'
 import { formatSignedTokens, requestLabel, selectBlockChangeRows } from './dashboardFormat'
 
@@ -20,8 +21,10 @@ function tokenGlyph(delta: number): string {
   return '•'
 }
 
-export function ContextChangePanel({ change, unavailable = false, pending = false, failed = false }: {
-  change: DashboardContextChange | null; unavailable?: boolean; pending?: boolean; failed?: boolean
+export function ContextChangePanel({ change, pending = false, failed = false, onOpenRequest, actions }: {
+  change: DashboardContextChange | null; pending?: boolean; failed?: boolean
+  onOpenRequest?: (id: string) => void
+  actions?: ReactNode
 }) {
   if (!change) {
     return (
@@ -29,7 +32,7 @@ export function ContextChangePanel({ change, unavailable = false, pending = fals
         <h2 className="section-title">Context size</h2>
         <p className="py-6 text-center text-sm text-[var(--text-muted)]">
           {pending ? 'Loading request context…' : failed ? 'Request context could not be loaded.' :
-            unavailable ? 'Parent comparison unavailable for this request.' : 'No requests captured in this session yet.'}
+            'No requests captured in this session yet.'}
         </p>
       </div>
     )
@@ -51,17 +54,25 @@ export function ContextChangePanel({ change, unavailable = false, pending = fals
     <div className="panel">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="section-title">Context size · {requestLabel(change.session_seq, change.request_id)}</h2>
-        <a className="app-button min-h-7 py-1 text-xs" href={`/requests/${change.request_id}`}>Open request</a>
+        <div className="flex flex-wrap items-center gap-2">
+          {actions}
+          {onOpenRequest
+            ? <button type="button" className="app-button min-h-7 py-1 text-xs" onClick={() => onOpenRequest(change.request_id)}>Open request</button>
+            : <a className="app-button min-h-7 py-1 text-xs" href={`/requests/${change.request_id}`}>Open request</a>}
+        </div>
       </div>
       <p className="mb-3 text-xs text-[var(--text-muted)]">
         {hasParent
-          ? `Compared with ${parentLabel}${change.external_parent ? ' (another session)' : ''}${change.parent_state === 'inferred' ? ` · inferred ${Math.round((change.parent_confidence ?? 0) * 100)}%` : ''}`
+          ? `Compared with ${parentLabel}${change.external_parent ? ' (another session)' : ''}${change.parent_state === 'inferred' ? ` · inference score ${Math.round((change.parent_confidence ?? 0) * 100)}/100` : ''}`
           : noParentText}
       </p>
       <p className="text-2xl font-semibold tabular-nums text-[var(--text)]">
         {change.tokens_total_input.toLocaleString()}{' '}
-        <span className="text-sm font-normal text-[var(--text-muted)]">tokens</span>
+        <span className="text-sm font-normal text-[var(--text-muted)]">estimated visible input tokens</span>
       </p>
+      {change.provider_input_tokens != null && <p className="mt-0.5 text-xs tabular-nums text-[var(--text-muted)]">
+        Provider reported {change.provider_input_tokens.toLocaleString()} input tokens
+      </p>}
       {change.token_delta !== null && (
         <p className="mt-0.5 text-sm font-medium tabular-nums text-[var(--accent-soft-text)]">
           <span aria-hidden="true">{tokenGlyph(change.token_delta)} </span>

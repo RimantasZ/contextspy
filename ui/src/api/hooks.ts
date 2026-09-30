@@ -41,12 +41,20 @@ export function useSession(id: string) {
 }
 
 export function useSessionLineage(id: string, enabled: boolean = true) {
-  return useQuery({
-    queryKey: ['lineage', id],
-    queryFn: () => sessionsApi.lineage(id),
+  const revision = useQuery({
+    queryKey: ['lineage-revision', id],
+    queryFn: () => sessionsApi.lineageRevision(id),
     enabled: !!id && enabled,
     refetchInterval: 5_000,
   })
+  const graph = useQuery({
+    queryKey: ['lineage', id, revision.data?.revision],
+    queryFn: () => sessionsApi.lineage(id),
+    enabled: !!id && enabled && !!revision.data?.revision,
+    staleTime: Infinity,
+  })
+  return { ...graph, isLoading: revision.isLoading || graph.isLoading,
+    error: revision.error ?? graph.error }
 }
 
 export function useSessionConversations(id: string, enabled: boolean = true) {

@@ -57,7 +57,7 @@ describe('RequestActivityChart', () => {
     expect(screen.getByRole('img').getAttribute('aria-label')).toMatch(/left axis.*right axis/)
     expect(container.querySelectorAll('.recharts-yAxis').length).toBe(2)
     expect(container.querySelectorAll('.recharts-bar').length).toBe(2)
-    expect(screen.getByText('Input (left axis)')).toBeTruthy()
+    expect(screen.getByText('Visible input est. (left axis)')).toBeTruthy()
     expect(screen.getByText('Output (right axis)')).toBeTruthy()
   })
 

@@ -20,7 +20,7 @@ function requestLabel(node: LineageNode): string {
 
 function relationLabel(edge: LineageEdge): string {
   if (edge.certainty === 'exact') return 'Exact continuation'
-  if (edge.certainty === 'inferred') return `Inferred ${Math.round((edge.confidence ?? 0) * 100)}%`
+  if (edge.certainty === 'inferred') return `Inferred score ${Math.round((edge.confidence ?? 0) * 100)}/100`
   return 'Suggested relation'
 }
 
@@ -188,7 +188,7 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="section-title">Lineage diagnostics</p>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">{graph.conversation_count} supported conversation{graph.conversation_count === 1 ? '' : 's'} · {graph.auxiliary_request_count ?? 0} auxiliary request{(graph.auxiliary_request_count ?? 0) === 1 ? '' : 's'} · {graph.lineage_fragment_count} diagnostic lineage path{graph.lineage_fragment_count === 1 ? '' : 's'}. Unlinked paths are not automatically separate conversations. Request numbers show recording order.</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">{graph.conversation_count} supported conversation{graph.conversation_count === 1 ? '' : 's'} · {graph.auxiliary_request_count ?? 0} auxiliary request{(graph.auxiliary_request_count ?? 0) === 1 ? '' : 's'} · {graph.diagnostic_path_count ?? graph.lineage_fragment_count} diagnostic lineage path{(graph.diagnostic_path_count ?? graph.lineage_fragment_count) === 1 ? '' : 's'}. Unlinked paths are not automatically separate conversations. Request numbers show recording order.</p>
         </div>
         <div className="flex flex-wrap gap-3 text-xs text-[var(--text-muted)]" aria-label="Lineage graph legend">
           <span><span className="mr-1 inline-block w-5 border-t-2 border-[var(--success)]" />Exact</span>
@@ -248,12 +248,21 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
                     stroke={stroke}
                     strokeWidth={selected ? 4 : 2}
                     strokeDasharray={edge.certainty === 'exact' ? undefined : '7 5'}
+                    pointerEvents="none"
+                    aria-hidden="true"
+                  />
+                  <path
+                    d={`M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`}
+                    fill="none"
+                    stroke="transparent"
+                    strokeWidth={18}
                     className="cursor-pointer"
                     role="button"
                     tabIndex={0}
                     aria-label={`${relationLabel(edge)} from ${requestLabel(source)} to ${requestLabel(target)}`}
                     onClick={() => chooseEdge(edge)}
-                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') chooseEdge(edge) }}
+                    onFocus={() => chooseEdge(edge)}
+                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); chooseEdge(edge) } }}
                   />
                   <circle cx={x2} cy={y2} r="4" fill={stroke} />
                   {summary && (
@@ -326,7 +335,9 @@ export function SessionLineage({ graph }: { graph: LineageGraph }) {
                           className="app-button min-h-8 py-1 text-xs"
                           onClick={() => navigate(`/requests/${candidate.request_id}`)}
                         >
-                          {requestLabel(byId.get(candidate.request_id) ?? selectedNode)} · {Math.round(candidate.confidence * 100)}%
+                          {allNodesById.has(candidate.request_id)
+                            ? requestLabel(allNodesById.get(candidate.request_id)!)
+                            : candidate.request_id.slice(0, 8)} · score {Math.round(candidate.confidence * 100)}/100
                         </button>
                       ))}
                     </div>

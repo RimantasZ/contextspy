@@ -290,12 +290,14 @@ export interface LineageEdge {
 
 export interface LineageGraph {
   capture: Session
+  session?: Session
   analysis_version: string
   nodes: LineageNode[]
   edges: LineageEdge[]
   conversation_count: number
   confirmed_parallel_streams: number
   lineage_fragment_count: number
+  diagnostic_path_count?: number
   lineage_paths: Array<{
     key: string
     request_ids: string[]
@@ -387,6 +389,7 @@ export const sessionsApi = {
   delete: (id: string, deleteRequests = false) =>
     apiFetch<{ deleted: string }>(`/sessions/${id}?delete_requests=${deleteRequests}`, { method: 'DELETE' }),
   lineage: (id: string) => apiFetch<LineageGraph>(`/sessions/${id}/lineage`),
+  lineageRevision: (id: string) => apiFetch<{ revision: string }>(`/sessions/${id}/lineage/revision`),
   conversations: (id: string, groupOffset = 0, revision?: string, groupKey?: string) => {
     const q = new URLSearchParams({ group_offset: String(groupOffset) })
     if (revision) q.set('revision', revision)
@@ -491,6 +494,7 @@ export interface DashboardContextChange {
   request_id: string
   session_seq: number | null
   tokens_total_input: number
+  provider_input_tokens?: number | null
   parent_request_id: string | null
   parent_session_seq: number | null
   parent_state: LineageNode['parent_state']
@@ -563,6 +567,7 @@ export interface SessionConversationsData {
   conversation_count: number
   confirmed_parallel_streams: number
   lineage_fragment_count: number
+  diagnostic_path_count?: number
   primary_key: string | null
   conversations: SessionConversation[]
   auxiliary?: SessionConversation | null
@@ -592,6 +597,7 @@ export interface DashboardLiveData {
   conversation_count: number
   confirmed_parallel_streams: number
   lineage_fragment_count: number
+  diagnostic_path_count?: number
   has_more_conversations: boolean
   most_recent_conversation_key: string | null
 }

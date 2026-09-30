@@ -15,19 +15,17 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
 import json
 import uuid
-from collections import OrderedDict
 from datetime import datetime, timezone
-from threading import Lock
 from typing import Any, TYPE_CHECKING
 
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm import Session as OrmSession, load_only
 
 from contextspy.analysis.blocks import BlockType, Direction
+from contextspy.db import session_lineage_service
 from contextspy.db.models import BlockContent, BlockRecord, Request, Session, ToolStat
 
 if TYPE_CHECKING:
@@ -182,6 +180,14 @@ def _lineage_snapshots_for_requests(
     if request_ids:
         rows = db.execute(
             select(BlockRecord)
+            .options(load_only(
+                BlockRecord.id, BlockRecord.request_id, BlockRecord.direction,
+                BlockRecord.position, BlockRecord.message_index,
+                BlockRecord.block_type, BlockRecord.category,
+                BlockRecord.content_hash, BlockRecord.token_count,
+                BlockRecord.tool_name, BlockRecord.tool_call_id,
+                raiseload=True,
+            ))
             .where(BlockRecord.request_id.in_(request_ids))
             .order_by(
                 BlockRecord.request_id.asc(),
@@ -191,10 +197,6 @@ def _lineage_snapshots_for_requests(
             )
         ).scalars().all()
         for block in rows:
-            try:
-                attrs = json.loads(block.attrs) if block.attrs else {}
-            except (json.JSONDecodeError, TypeError):
-                attrs = {}
             blocks_by_request[block.request_id].append(ContextBlock(
                 id=block.id,
                 request_id=block.request_id,
@@ -207,7 +209,6 @@ def _lineage_snapshots_for_requests(
                 token_count=block.token_count,
                 tool_name=block.tool_name,
                 tool_call_id=block.tool_call_id,
-                attrs=attrs,
             ))
 
     return [RequestSnapshot(
@@ -237,8 +238,17 @@ def get_session_lineage_snapshots(db: OrmSession, session_id: str) -> tuple[list
     """Load one capture and any exact parents outside it without N+1 queries."""
     from dataclasses import replace
 
+    lineage_columns = (
+        Request.id, Request.session_id, Request.session_seq, Request.timestamp,
+        Request.started_at, Request.duration_ms, Request.provider, Request.model,
+        Request.agent, Request.endpoint, Request.provider_response_id,
+        Request.predecessor_response_id, Request.context_fidelity,
+        Request.tokens_total_input, Request.tokens_total_output,
+        Request.stream_hint_source, Request.stream_hint_digest,
+    )
     requests = list(db.execute(
         select(Request)
+        .options(load_only(*lineage_columns, raiseload=True))
         .where(Request.session_id == session_id)
         .order_by(Request.session_seq.asc(), Request.timestamp.asc(), Request.id.asc())
     ).scalars().all())
@@ -260,6 +270,7 @@ def get_session_lineage_snapshots(db: OrmSession, session_id: str) -> tuple[list
     response_ids = {response_id for _, response_id in missing_ids}
     candidates = list(db.execute(
         select(Request)
+        .options(load_only(*lineage_columns, raiseload=True))
         .where(Request.provider_response_id.in_(response_ids))
         .order_by(Request.timestamp.desc(), Request.id.desc())
     ).scalars().all())
@@ -888,50 +899,40 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
 
 _LIVE_ACTIVITY_LIMIT = 10
 _CONVERSATION_PREVIEW_LIMIT = 15
-_LIVE_GRAPH_CACHE_LIMIT = 4
-_live_graph_cache: OrderedDict[tuple, dict] = OrderedDict()
-_live_graph_cache_lock = Lock()
+_DISPLAY_REQUEST_COLUMNS = (
+    Request.id, Request.session_id, Request.session_seq, Request.timestamp,
+    Request.model, Request.duration_ms, Request.status_code,
+    Request.invocation_outcome, Request.context_fidelity,
+    Request.tokens_total_input, Request.tokens_total_output,
+    Request.provider_input_tokens,
+)
+
+
+def _display_requests():
+    """Request metadata needed by cards, activity and context comparisons."""
+    return select(Request).options(load_only(*_DISPLAY_REQUEST_COLUMNS, raiseload=True))
+
+
+def _session_lineage_revision(db: OrmSession, session_id: str, session_count: int) -> str:
+    """Compatibility entry point for the dedicated lineage read service."""
+    return session_lineage_service.evidence_revision(db, session_id, session_count)
 
 
 def _session_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> tuple[dict, str]:
-    """Cache immutable capture analysis until the request set changes.
-
-    Request/block analysis metadata is committed atomically and is append-only
-    during capture. The global revision also invalidates unresolved external
-    predecessors when a request is captured outside the active session.
-    """
-    from contextspy.analysis.lineage import ANALYSIS_VERSION, build_lineage_graph
-
-    global_count, last_rowid = db.execute(
-        text("SELECT count(*), max(rowid) FROM requests")
-    ).one()
-    hint_hash = hashlib.sha256()
-    for request_id, source, digest in db.execute(
-        select(Request.id, Request.stream_hint_source, Request.stream_hint_digest)
-        .where(Request.session_id == session_id).order_by(Request.id)
-    ):
-        hint_hash.update(f"{request_id}\0{source or ''}\0{digest or ''}\n".encode())
-    revision = (f"{ANALYSIS_VERSION}:{session_count}:{global_count}:"
-                f"{last_rowid or 0}:{hint_hash.hexdigest()[:16]}")
-    key = (db.get_bind(), session_id, revision)
-    with _live_graph_cache_lock:
-        cached = _live_graph_cache.get(key)
-        if cached is not None:
-            _live_graph_cache.move_to_end(key)
-            return cached, revision
-    snapshots, external = get_session_lineage_snapshots(db, session_id)
-    graph = build_lineage_graph(snapshots, external_requests=external)
-    with _live_graph_cache_lock:
-        _live_graph_cache[key] = graph
-        _live_graph_cache.move_to_end(key)
-        while len(_live_graph_cache) > _LIVE_GRAPH_CACHE_LIMIT:
-            _live_graph_cache.popitem(last=False)
-    return graph, revision
+    return session_lineage_service.graph_for_session(
+        db, session_id, session_count, get_session_lineage_snapshots,
+    )
 
 
-def _live_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> dict:
-    """Compatibility wrapper for the dashboard's shared session graph."""
-    return _session_lineage_graph(db, session_id, session_count)[0]
+def get_session_lineage_graph(db: OrmSession, session_id: str) -> dict:
+    """Return the same revisioned analysis used by dashboard projections."""
+    count = db.scalar(select(func.count()).where(Request.session_id == session_id)) or 0
+    return _session_lineage_graph(db, session_id, count)[0]
+
+
+def get_session_lineage_revision(db: OrmSession, session_id: str) -> str:
+    count = db.scalar(select(func.count()).where(Request.session_id == session_id)) or 0
+    return _session_lineage_revision(db, session_id, count)
 
 
 def _block_counts(
@@ -980,6 +981,7 @@ def _context_change(
         "request_id": latest.id,
         "session_seq": latest.session_seq,
         "tokens_total_input": latest.tokens_total_input,
+        "provider_input_tokens": latest.provider_input_tokens,
         "parent_request_id": parent.id if parent else None,
         "parent_session_seq": parent.session_seq if parent else None,
         "parent_state": parent_state,
@@ -1065,7 +1067,9 @@ def _session_sequence_projection(db: OrmSession, graph: dict, *, limit: int,
         raise ValueError("Request cursor does not belong to this session")
     eligible = [node for node in ordered if after is None or _sequence_order(node) < after]
     selected = eligible[:limit]
-    rows = db.execute(select(Request).where(Request.id.in_(node["request_id"] for node in selected))).scalars().all() if selected else []
+    rows = db.execute(_display_requests().where(Request.id.in_(
+        node["request_id"] for node in selected
+    ))).scalars().all() if selected else []
     row_by_id = {row.id: row for row in rows}
     edges = {edge["target_request_id"]: edge for edge in graph["edges"]
              if edge["relation_type"] == "context_continuation"}
@@ -1095,7 +1099,7 @@ def _session_sequence_projection(db: OrmSession, graph: dict, *, limit: int,
 
 def _session_activity(db: OrmSession, session_id: str) -> list[dict]:
     recent = db.execute(
-        select(Request).where(Request.session_id == session_id)
+        _display_requests().where(Request.session_id == session_id)
         .order_by(Request.session_seq.desc(), Request.timestamp.desc(), Request.id.desc())
         .limit(_LIVE_ACTIVITY_LIMIT)
     ).scalars().all()
@@ -1116,7 +1120,7 @@ def _selected_context_change(db: OrmSession, graph: dict, request_id: str) -> di
                  item["relation_type"] == "context_continuation"), None)
     parent_id = edge["source_request_id"] if edge else None
     ids = [request_id] + ([parent_id] if parent_id else [])
-    rows = db.execute(select(Request).where(Request.id.in_(ids))).scalars().all()
+    rows = db.execute(_display_requests().where(Request.id.in_(ids))).scalars().all()
     by_id = {row.id: row for row in rows}
     block_counts, opaque_counts = _block_counts(db, ids)
     return _context_change(
@@ -1260,12 +1264,13 @@ def _conversation_projection_view(
         latest_ids.add(ordered[0])
         prepared.append((group, ordered, selected, has_more, segment_by_id, starts))
 
-    comparison_ids = set(visible_ids) | latest_ids
+    comparison_ids = set(latest_ids)
     for rid in latest_ids:
         edge = parent_edges.get(rid)
         if edge:
             comparison_ids.add(edge["source_request_id"])
-    rows = list(db.execute(select(Request).where(Request.id.in_(comparison_ids))).scalars().all()) if comparison_ids else []
+    row_ids = set(visible_ids) | comparison_ids
+    rows = list(db.execute(_display_requests().where(Request.id.in_(row_ids))).scalars().all()) if row_ids else []
     row_by_id = {row.id: row for row in rows}
     block_counts, opaque_counts = _block_counts(db, list(comparison_ids)) if comparison_ids else ({}, {})
     views = []
@@ -1378,6 +1383,7 @@ def get_session_conversations(
             "conversation_count": graph["conversation_count"],
             "confirmed_parallel_streams": graph["confirmed_parallel_streams"],
             "lineage_fragment_count": graph["lineage_fragment_count"],
+            "diagnostic_path_count": graph["diagnostic_path_count"],
             "primary_key": graph["conversations"][0]["key"] if ordered else None,
             "conversations": views[:len(groups)],
             "auxiliary": views[-1] if auxiliary_group else None,
@@ -1426,6 +1432,7 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
             "context_change": None, "conversations": [], "conversation_count": 0,
             "auxiliary": None, "auxiliary_request_count": 0,
             "confirmed_parallel_streams": 0, "lineage_fragment_count": 0,
+            "diagnostic_path_count": 0,
             "has_more_conversations": False,
             "most_recent_conversation_key": None,
         }
@@ -1476,6 +1483,7 @@ def _get_dashboard_live_snapshot(db: OrmSession) -> dict:
         "conversation_count": graph["conversation_count"],
         "confirmed_parallel_streams": graph["confirmed_parallel_streams"],
         "lineage_fragment_count": graph["lineage_fragment_count"],
+        "diagnostic_path_count": graph["diagnostic_path_count"],
         "has_more_conversations": graph["conversation_count"] > len(conversations),
         "most_recent_conversation_key": most_recent["key"] if most_recent else None,
     }

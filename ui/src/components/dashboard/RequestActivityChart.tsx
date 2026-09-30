@@ -17,7 +17,7 @@ import { formatCompactTokens, formatTokenTooltip, toActivityChartData } from './
 
 const TICK = { fill: 'var(--chart-axis)', fontSize: 11 }
 const SUMMARY =
-  'Input and output token totals for the ten most recent requests; input uses the left axis and output uses the right axis.'
+  'Locally estimated visible input and output token totals for the ten most recent requests; input uses the left axis and output uses the right axis.'
 
 export function RequestActivityChart({ activity }: { activity: DashboardActivityPoint[] }) {
   const data = toActivityChartData(activity)
@@ -29,7 +29,7 @@ export function RequestActivityChart({ activity }: { activity: DashboardActivity
         <ul className="flex gap-4 text-xs text-[var(--text-muted)]">
           <li className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[var(--chart-input)]" aria-hidden="true" />
-            Input (left axis)
+            Visible input est. (left axis)
           </li>
           <li className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[var(--chart-output)]" aria-hidden="true" />
@@ -55,7 +55,7 @@ export function RequestActivityChart({ activity }: { activity: DashboardActivity
                 axisLine={false}
                 width={48}
                 tickFormatter={formatCompactTokens}
-                label={{ value: 'Input tokens', angle: -90, position: 'insideLeft', fill: 'var(--chart-axis)', fontSize: 11, offset: 4 }}
+                label={{ value: 'Visible input est.', angle: -90, position: 'insideLeft', fill: 'var(--chart-axis)', fontSize: 11, offset: 4 }}
               />
               <YAxis
                 yAxisId="output"
@@ -74,7 +74,7 @@ export function RequestActivityChart({ activity }: { activity: DashboardActivity
                 labelStyle={{ color: 'var(--chart-tooltip-text)' }}
                 itemStyle={{ color: 'var(--text-muted)' }}
               />
-              <Bar yAxisId="input" dataKey="tokens_total_input" name="Input" fill="var(--chart-input)" radius={[2, 2, 0, 0]} />
+              <Bar yAxisId="input" dataKey="tokens_total_input" name="Visible input est." fill="var(--chart-input)" radius={[2, 2, 0, 0]} />
               <Bar yAxisId="output" dataKey="tokens_total_output" name="Output" fill="var(--chart-output)" radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>

@@ -128,7 +128,7 @@ describe('SessionLineage', () => {
     render(<MemoryRouter><SessionLineage graph={graph} /></MemoryRouter>)
 
     expect(screen.getByRole('button', { name: 'Request #1, No known parent' }).textContent).toContain('Confirmed fork')
-    expect(screen.getByRole('button', { name: /Inferred 91% from Request #1 to Request #3/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Inferred score 91\/100 from Request #1 to Request #3/ })).toBeTruthy()
 
     await userEvent.click(screen.getByRole('button', { name: 'Request #1, No known parent' }))
     expect(screen.getByText('Primary conversation, Conversation 2 · request depth 0')).toBeTruthy()
@@ -174,5 +174,23 @@ describe('SessionLineage', () => {
     expect(screen.getAllByRole('button', { name: /^Request #\d+,/ })).toHaveLength(5)
     await userEvent.click(screen.getByRole('button', { name: 'Newer nodes' }))
     expect(screen.getAllByRole('button', { name: /^Request #\d+,/ })).toHaveLength(25)
+  })
+
+  it('labels an ambiguity candidate outside the visible window by its own request number', async () => {
+    const ids = Array.from({ length: 30 }, (_, index) => `long-${index + 1}`)
+    const longGraph: LineageGraph = {
+      ...graph,
+      lineage_paths: [{ key: 'long-30', request_ids: ids, leaf_request_id: 'long-30', root_request_id: 'long-1', root_session_seq: 1,
+        leaf_session_seq: 30, request_count: 30, last_activity: '2026-09-11T12:00:30Z', start_parent_state: 'root' }],
+      nodes: ids.map((id, index) => node({ request_id: id, session_seq: index + 1, depth: index, is_fork: false,
+        conversation_fork_status: 'none', parent_state: index === 29 ? 'ambiguous' : 'root' })),
+      edges: [],
+      ambiguous_candidates: [{ request_id: 'long-30', candidates: [
+        { request_id: 'long-1', confidence: 0.72, evidence: {} },
+      ] }],
+    }
+    render(<MemoryRouter><SessionLineage graph={longGraph} /></MemoryRouter>)
+    await userEvent.click(screen.getByRole('button', { name: 'Request #30, Ambiguous parent' }))
+    expect(screen.getByRole('button', { name: 'Request #1 · score 72/100' })).toBeTruthy()
   })
 })
