@@ -126,17 +126,36 @@ These commands work offline — no proxy or dashboard needs to be running.
 
 ```
 contextspy db-stats        Print database row counts
+contextspy db-backup       Create an on-demand SQLite backup
+contextspy db-restore FILE Restore FILE, preserving the current DB for rollback
 contextspy db-upgrade      Back up the DB and apply pending data migrations
 contextspy report          Print aggregate token stats and category breakdown table
 contextspy reset-db        Delete ALL requests and sessions (prompts for confirmation)
 contextspy reset-db --yes  Skip confirmation (`-y` is also accepted)
 ```
 
+`db-backup` can run while ContextSpy is capturing; it uses SQLite's online backup API and
+publishes the file only after copying and validating it. The default name is
+`contextspy_backup_v7_2026-09-30-181504Z.back` (the version and UTC timestamp vary).
+Large databases need at least one database-sized copy of free disk space, and a live backup
+may temporarily increase disk I/O. `contextspy status` lists manual, migration, and
+pre-restore backups even when the web server is offline.
+
 Stop the ContextSpy backend before `db-upgrade`. It creates a consistent SQLite backup,
-including committed WAL content, before changing derived data. Leave at least the current
-database size available for that backup, plus room for newly materialized canonical requests
-and blocks. The Anthropic thread backfill reports retained rows reanalyzed and partial/opaque
-results; payloads already removed by retention cannot be recovered.
+including committed WAL content, before changing derived data. Migration names retain the
+`contextspy_backup_v6_to_v7_2026-09-30-1445.back` form. Leave at least the current database
+size available for that backup, plus room for newly materialized canonical requests and blocks.
+The Anthropic thread backfill reports retained rows reanalyzed and partial/opaque results;
+payloads already removed by retention cannot be recovered.
+
+To restore, stop all ContextSpy processes and other programs using the database. Preview with
+`contextspy db-restore BACKUP.back --dry-run`, then run `contextspy db-restore BACKUP.back` and
+confirm (or pass `--yes` for noninteractive use). A bare filename is resolved in the database
+directory; an explicit path also works. Restore validates the backup, stages a complete copy,
+and retains the former database as `contextspy_backup_v7_pre_restore_...back` before switching
+files. The source backup is not consumed. Restore replaces the database; it does not merge in
+newer requests. If the restored backup has pending data migrations, run `contextspy db-upgrade`
+before starting ContextSpy. A pre-WAL backup can be restored; startup will enable WAL again.
 
 ContextSpy enables SQLite WAL mode on startup for file-backed databases. Stop all ContextSpy
 processes before an offline copy or restore; a live `.db` file alone may omit committed data in

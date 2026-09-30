@@ -83,6 +83,8 @@ def test_migration_backup_includes_committed_uncheckpointed_wal_rows(tmp_path):
                 ("from-wal",),
             ]
             assert backup.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+            assert backup.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+        assert not backup_path.with_name(f"{backup_path.name}-wal").exists()
     finally:
         source.close()
 

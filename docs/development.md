@@ -102,6 +102,11 @@ retries handle transient writer contention. A capture that still cannot be saved
 For a backup while the database is live, use SQLite's online backup API. A plain file copy is
 safe only after all ContextSpy processes and other database connections have stopped and the
 database has checkpointed. The `db-upgrade` command already uses an online backup.
+`db-backup` uses the same SQLite snapshot implementation on demand. Both publish a verified,
+standalone `.back` file in rollback-journal mode, so no sidecar is required to restore it.
+Offline `db-restore` stages and verifies that file, checkpoints/converts the stopped current
+database to a standalone pre-restore rollback file, then switches the active path. It refuses
+to proceed if the app-level database lock or SQLite sidecars indicate another user of the DB.
 If WAL must be rolled back for an older ContextSpy build, first stop all processes and make a
 recoverable backup. Then open the database with SQLite, run `PRAGMA wal_checkpoint(TRUNCATE);`
 and `PRAGMA journal_mode=DELETE;`, and confirm that the latter returns `delete` before starting

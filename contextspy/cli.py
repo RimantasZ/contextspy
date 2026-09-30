@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import pathlib
+import sqlite3
 import subprocess
 import webbrowser
 from typing import Callable, Optional
@@ -77,7 +78,7 @@ def _format_file_size(path: pathlib.Path) -> str:
     return f"{value:.1f} {unit} ({size:,} bytes)"
 
 
-def _print_previous_migration_backups(backups: list[pathlib.Path]) -> None:
+def _print_previous_backups(backups: list[pathlib.Path]) -> None:
     if not backups:
         return
     console.print("[yellow]Previous database backups:[/yellow]")
@@ -87,6 +88,14 @@ def _print_previous_migration_backups(backups: list[pathlib.Path]) -> None:
         "[yellow]Previous backups can be deleted when no longer needed "
         "to save disk space.[/yellow]"
     )
+
+
+def _print_database_backups(db_path: pathlib.Path) -> None:
+    from contextspy.db.backups import list_backups
+
+    backups = list_backups(db_path)
+    if backups:
+        _print_previous_backups(backups)
 
 
 def _api(port: int, path: str) -> str:
@@ -385,10 +394,15 @@ def start_local(
 @app.command()
 def status() -> None:
     """Show proxy status and active session."""
-    port = _web_port()
+    from contextspy.config import Settings
+
+    settings = Settings.load()
+    port = settings.web.port
+    reachable = False
     try:
         resp = httpx.get(_api(port, "/proxy/status"), timeout=3)
         data = resp.json()
+        reachable = True
         console.print(
             f"Proxy running:   [bold]{'yes' if data['running'] else 'no'}[/bold]"
         )
@@ -400,20 +414,21 @@ def status() -> None:
             console.print("Capture:         [bold]active[/bold]")
     except Exception:
         console.print("[red]Web server not reachable. Is contextspy running?[/red]")
-        return
 
-    try:
-        resp2 = httpx.get(_api(port, "/sessions"), timeout=3)
-        sessions = resp2.json().get("sessions", [])
-        active = next((s for s in sessions if s["is_active"]), None)
-        if active:
-            console.print(
-                f"Active session:  [bold green]{active['name']}[/bold green] (id: {active['id'][:8]}…)"
-            )
-        else:
-            console.print("Active session:  [dim]none[/dim]")
-    except Exception:
-        pass
+    if reachable:
+        try:
+            resp2 = httpx.get(_api(port, "/sessions"), timeout=3)
+            sessions = resp2.json().get("sessions", [])
+            active = next((s for s in sessions if s["is_active"]), None)
+            if active:
+                console.print(
+                    f"Active session:  [bold green]{active['name']}[/bold green] (id: {active['id'][:8]}…)"
+                )
+            else:
+                console.print("Active session:  [dim]none[/dim]")
+        except Exception:
+            pass
+    _print_database_backups(settings.storage.db_path)
 
 
 @app.command("install-cert")
@@ -645,6 +660,8 @@ def help_cmd() -> None:
             "Run a tool with proxy env vars injected (code/cursor/claude/opencode + fallback)",
         ),
         ("reset-db", "Delete all requests and sessions from the local database"),
+        ("db-backup", "Create a consistent on-demand SQLite backup"),
+        ("db-restore", "Restore a backup, preserving the current DB for rollback"),
         (
             "db-upgrade",
             "Apply pending data migrations (e.g. backfill blocks from raw bodies)",
@@ -737,6 +754,87 @@ def reset_db(
 # ---------------------------------------------------------------------------
 
 
+@app.command("db-backup")
+def db_backup() -> None:
+    """Create a standalone backup of the configured database, even in WAL mode."""
+    from contextspy.config import Settings
+    from contextspy.db import migrations
+    from contextspy.db.backups import create_backup
+
+    db_path = Settings.load().storage.db_path
+    try:
+        version, _pending = migrations.inspect_migration_state(db_path)
+        backup_path = create_backup(db_path, version)
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        console.print(f"[red]Backup failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]Database backup created:[/green] {backup_path}")
+    console.print(f"  Schema version: v{version}")
+    console.print(f"  Size on disk: {_format_file_size(backup_path)}")
+
+
+def _configured_backend_reachable(settings) -> bool:
+    """Also catch older running builds, which do not hold the maintenance lock."""
+    try:
+        response = httpx.get(_api(settings.web.port, "/proxy/status"), timeout=1)
+        return response.status_code == 200 and "running" in response.json()
+    except (httpx.HTTPError, ValueError, KeyError):
+        return False
+
+
+@app.command("db-restore")
+def db_restore(
+    backup_file: pathlib.Path = typer.Argument(
+        ..., help="Backup filename in the database directory, or an explicit path"
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm replacement without a prompt"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and preview only"),
+) -> None:
+    """Restore a backup offline, retaining the current database for rollback."""
+    from contextspy.config import Settings
+    from contextspy.db import migrations
+    from contextspy.db.backups import inspect_backup, restore_backup
+
+    settings = Settings.load()
+    db_path = settings.storage.db_path
+    backup_path = (
+        db_path.parent / backup_file if backup_file.parent == pathlib.Path(".")
+        else backup_file
+    )
+    try:
+        version = inspect_backup(backup_path)
+        _current_version, pending = migrations.inspect_migration_state(backup_path)
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        console.print(f"[red]Restore preflight failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"Backup: {backup_path} ({_format_file_size(backup_path)})")
+    console.print(f"  Schema version: v{version}")
+    if pending:
+        console.print(f"  Data migrations required after restore: {pending}")
+    if dry_run:
+        console.print("[green]Backup validation passed; no files changed.[/green]")
+        return
+    if _configured_backend_reachable(settings):
+        console.print("[red]Stop ContextSpy before restoring a database.[/red]")
+        raise typer.Exit(1)
+    if not yes:
+        typer.confirm(
+            "Replace the current database with this backup? The current database "
+            "will be kept as a pre-restore rollback file.",
+            abort=True,
+        )
+    try:
+        result = restore_backup(db_path, backup_path, validated_version=version)
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        console.print(f"[red]Restore failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]Database restored:[/green] {result.backup_path}")
+    if result.rollback_path is not None:
+        console.print(f"  Previous database preserved: {result.rollback_path}")
+    if pending:
+        console.print("Run [bold]contextspy db-upgrade[/bold] before starting ContextSpy.")
+
+
 @app.command("db-upgrade")
 def db_upgrade() -> None:
     """Apply pending data migrations (e.g. backfill blocks from raw request bodies).
@@ -752,7 +850,9 @@ def db_upgrade() -> None:
     settings.ensure_dirs()
     db_path = settings.storage.db_path
 
-    previous_backups = migrations.list_migration_backups(db_path)
+    from contextspy.db.backups import list_backups
+
+    previous_backups = list_backups(db_path)
     version_from, pending_before_init = migrations.inspect_migration_state(db_path)
     if pending_before_init:
         backup_path = migrations.create_migration_backup(
@@ -762,7 +862,7 @@ def db_upgrade() -> None:
         console.print(f"  Path: {backup_path}")
         console.print(f"  Size on disk: {_format_file_size(backup_path)}")
 
-    _print_previous_migration_backups(previous_backups)
+    _print_previous_backups(previous_backups)
 
     init_db(db_path)
 
