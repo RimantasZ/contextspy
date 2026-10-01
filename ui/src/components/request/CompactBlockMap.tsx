@@ -4,8 +4,9 @@ import type { BlockGrouping } from '../../lib/blockArrangement'
 import { blockGroupKey } from '../../lib/blockArrangement'
 import { BlockTile } from './BlockTile'
 
-export function CompactBlockMap({ blocks, selectedId, density, grouping, onSelect }: {
+export function CompactBlockMap({ blocks, selectedId, density, grouping, dimmedIds, onSelect }: {
   blocks: RequestBlock[]
+  dimmedIds?: ReadonlySet<number>
   selectedId: number | null
   density: number
   grouping: BlockGrouping
@@ -63,6 +64,7 @@ export function CompactBlockMap({ blocks, selectedId, density, grouping, onSelec
             id={`block-tile-${block.id}`}
             block={block}
             selected={selected}
+            dimmed={dimmedIds?.has(block.id)}
             tabIndex={selected || (selectedId == null && index === 0) ? 0 : -1}
             onSelect={() => onSelect(selected ? null : block)}
             onKeyDown={(event) => onKeyDown(event, index)}

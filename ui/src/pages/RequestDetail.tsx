@@ -8,7 +8,7 @@ import { ToolBreakdownSection } from '../components/ToolBreakdown'
 import { CaptureNotice } from '../components/request/CaptureNotice'
 import { RequestSummaryHeader } from '../components/request/RequestSummaryHeader'
 import { RequestWorkbench } from '../components/request/RequestWorkbench'
-import type { WorkbenchDirection } from '../components/request/RequestWorkbench'
+import type { ShowMode, WorkbenchDirection } from '../components/request/RequestWorkbench'
 import { formatDateTime, normalizeServerTimestamp } from '../lib/format'
 
 function categoryData(request: {
@@ -44,6 +44,8 @@ export default function RequestDetail() {
   const toolStats = useRequestToolStats(id)
   const lineage = useSessionLineage(requestQuery.data?.request.session_id ?? '')
   const [activeDirection, setActiveDirection] = useState<WorkbenchDirection>('input')
+  // Lives here (not in the workbench) so it survives parent/child hops, which unmount the workbench while loading.
+  const [showMode, setShowMode] = useState<ShowMode>('all')
 
   if (requestQuery.isLoading) return <div className="page-shell text-sm text-[var(--text-muted)]">Loading request…</div>
   if (requestQuery.error || !requestQuery.data) return <div className="page-shell text-sm text-[var(--danger)]">Request not found.</div>
@@ -104,7 +106,15 @@ export default function RequestDetail() {
           {request.session_id && <button type="button" className="app-button-ghost ml-auto min-h-8 py-1" onClick={() => navigate(`/sessions/${request.session_id}?view=lineage`)}>Open session conversations</button>}
         </div>
       )}
-      <RequestWorkbench request={request} activeDirection={activeDirection} onDirectionChange={setActiveDirection} />
+      <RequestWorkbench
+        request={request}
+        activeDirection={activeDirection}
+        onDirectionChange={setActiveDirection}
+        parentRequestId={parentEdge?.source_request_id ?? null}
+        lineageLoading={lineage.isLoading}
+        showMode={showMode}
+        onShowModeChange={setShowMode}
+      />
 
       <Disclosure title="Analytics">
         <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">

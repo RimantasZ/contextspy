@@ -43,6 +43,8 @@ export function buildWorkbenchBlockModel(blocks: RequestBlock[], options: {
   hideZero: boolean
   query: string
   arrangement: BlockArrangement
+  /** When set, only blocks whose id is in this backend-provided set are kept. */
+  onlyIds?: ReadonlySet<number> | null
 }): WorkbenchBlockModel {
   const allBlocks = sortedBlocks(blocks)
   const directionBlocks = allBlocks.filter((block) => block.direction === options.direction)
@@ -50,6 +52,7 @@ export function buildWorkbenchBlockModel(blocks: RequestBlock[], options: {
   const needle = options.query.trim().toLocaleLowerCase()
   const filtered = directionBlocks.filter((block) => {
     if (options.hideZero && block.token_count <= 0) return false
+    if (options.onlyIds && !options.onlyIds.has(block.id)) return false
     if (!options.activeTypes.has(visualOf(block))) return false
     if (!needle) return true
     return [block.content, block.tool_name, block.block_type, block.category, block.tool_call_id]

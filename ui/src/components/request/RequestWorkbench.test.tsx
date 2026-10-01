@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeBlock, makeRequest } from '../../test/fixtures'
 import { RequestWorkbench } from './RequestWorkbench'
-import type { WorkbenchDirection } from './RequestWorkbench'
+import type { ShowMode, WorkbenchDirection } from './RequestWorkbench'
 import type { Request } from '../../api/client'
 
 const blocks = [
@@ -16,14 +16,23 @@ const blocks = [
 ]
 const tokenTotals = { input: { system: 20, user: 10, tool_definition: 0 }, output: { assistant: 5 } }
 
-function Harness({ request }: { request: Request }) {
+function Harness({ request, parentRequestId }: { request: Request; parentRequestId?: string | null }) {
   const [direction, setDirection] = useState<WorkbenchDirection>('input')
-  return <RequestWorkbench request={request} activeDirection={direction} onDirectionChange={setDirection} />
+  const [showMode, setShowMode] = useState<ShowMode>('all')
+  return <RequestWorkbench request={request} activeDirection={direction} onDirectionChange={setDirection} parentRequestId={parentRequestId} showMode={showMode} onShowModeChange={setShowMode} />
 }
 
-function renderWorkbench(request = makeRequest()) {
+function renderWorkbench(request = makeRequest(), parentRequestId: string | null = null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={client}><Harness request={request} /></QueryClientProvider>)
+  return render(<QueryClientProvider client={client}><Harness request={request} parentRequestId={parentRequestId} /></QueryClientProvider>)
+}
+
+function mockBlocksAndDiff(newIds: number[]) {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.includes('/context-diff')) return new Response(JSON.stringify({ parent_request_id: 'parent', child_request_id: 'request-1', delta: {}, new_child_block_ids: newIds }), { status: 200 })
+    return new Response(JSON.stringify({ session_seq: 1, blocks, token_totals: tokenTotals }), { status: 200 })
+  })
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -139,5 +148,61 @@ describe('RequestWorkbench', () => {
     await userEvent.click(screen.getByRole('button', { name: /Request/i }))
     expect(arrangement.disabled).toBe(false)
     expect(arrangement.value).toBe('largestFirst')
+  })
+
+  describe('Show control', () => {
+    it('sits after Size with All / New only / Highlight new and is disabled without a parent', async () => {
+      mockBlocksAndDiff([2])
+      renderWorkbench()
+      await screen.findByRole('button', { name: /User.*position 2/i })
+      const show = screen.getByRole('combobox', { name: 'Show' }) as HTMLSelectElement
+      expect(Array.from(show.options, (option) => option.text)).toEqual(['All', 'New only', 'Highlight new'])
+      expect(show.disabled).toBe(true)
+      expect(show.title).toMatch(/No previous request/)
+      const size = screen.getByRole('combobox', { name: 'Size' })
+      expect(size.compareDocumentPosition(show) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+
+    it('New only keeps only blocks the backend flagged as new and composes with other filters', async () => {
+      mockBlocksAndDiff([2, 4])
+      renderWorkbench(makeRequest(), 'parent')
+      await screen.findByRole('button', { name: /User.*position 2/i })
+      const show = await waitFor(() => {
+        const element = screen.getByRole('combobox', { name: 'Show' }) as HTMLSelectElement
+        expect(element.disabled).toBe(false)
+        return element
+      })
+      await userEvent.selectOptions(show, 'new')
+      expect(screen.getByRole('button', { name: /User.*position 2/i })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: /System.*position 1/i })).toBeNull()
+      await userEvent.click(screen.getByRole('checkbox', { name: /Hide zero-token/i }))
+      expect(screen.queryByRole('button', { name: /Tool definition: empty_tool/i })).toBeNull()
+      expect(screen.getByRole('button', { name: /User.*position 2/i })).toBeTruthy()
+    })
+
+    it('Highlight new dims blocks already in the previous request but not new or selected ones', async () => {
+      mockBlocksAndDiff([2])
+      renderWorkbench(makeRequest(), 'parent')
+      const show = await waitFor(() => {
+        const element = screen.getByRole('combobox', { name: 'Show' }) as HTMLSelectElement
+        expect(element.disabled).toBe(false)
+        return element
+      })
+      await userEvent.selectOptions(show, 'highlight')
+      const system = screen.getByRole('button', { name: /System.*already in previous request/i })
+      expect(system.className).toContain('opacity-50')
+      const user = screen.getByRole('button', { name: /User.*position 2/i })
+      expect(user.className).not.toContain('opacity-50')
+      await userEvent.click(system)
+      expect(system.className).not.toContain('opacity-50')
+    })
+
+    it('is disabled on the Response tab', async () => {
+      mockBlocksAndDiff([2])
+      renderWorkbench(makeRequest(), 'parent')
+      await screen.findByRole('button', { name: /User.*position 2/i })
+      await userEvent.click(screen.getByRole('button', { name: /Response/i }))
+      expect((screen.getByRole('combobox', { name: 'Show' }) as HTMLSelectElement).disabled).toBe(true)
+    })
   })
 })

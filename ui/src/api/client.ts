@@ -351,6 +351,8 @@ export interface LineageGraph {
 export interface ContextDiffResponse {
   parent_request_id: string
   child_request_id: string
+  /** Child input block ids not already present in the parent (computed server-side). */
+  new_child_block_ids: number[]
   delta: {
     summary: LineageDeltaSummary
     persisted: Array<{ parent_block_id: number; child_block_id: number }>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Request, RequestBlock } from '../../api/client'
-import { useRequestBlocks } from '../../api/hooks'
+import { useContextDiff, useRequestBlocks } from '../../api/hooks'
 import type { ArrangementPreset } from '../../lib/blockArrangement'
 import { ARRANGEMENT_PRESETS, buildWorkbenchBlockModel } from '../../lib/blockArrangement'
 import type { BlockVisual } from '../../lib/blockVisuals'
@@ -10,9 +10,11 @@ import { SearchableContentViewer } from '../ui/SearchableContentViewer'
 import { BlockInspector } from './BlockInspector'
 import { BlockLegend } from './BlockLegend'
 import { BlockToolbar } from './BlockToolbar'
+import type { ShowMode } from './BlockToolbar'
 import { CompactBlockMap } from './CompactBlockMap'
 import { ProportionalBlockMap } from './ProportionalBlockMap'
 
+export type { ShowMode }
 export type WorkbenchDirection = 'input' | 'output'
 type WorkbenchView = 'compact' | 'proportional' | 'raw'
 
@@ -65,12 +67,19 @@ function RawPayload({ request, direction }: { request: Request; direction: Workb
   )
 }
 
-export function RequestWorkbench({ request, activeDirection, onDirectionChange }: {
+export function RequestWorkbench({ request, activeDirection, onDirectionChange, parentRequestId = null, lineageLoading = false, showMode = 'all', onShowModeChange }: {
   request: Request
   activeDirection: WorkbenchDirection
   onDirectionChange: (direction: WorkbenchDirection) => void
+  /** Lineage parent used as the "previous request" baseline for the Show control. */
+  parentRequestId?: string | null
+  lineageLoading?: boolean
+  /** Owned by the page so it survives parent/child navigation. */
+  showMode?: ShowMode
+  onShowModeChange?: (mode: ShowMode) => void
 }) {
   const blocksQuery = useRequestBlocks(request.id)
+  const diffQuery = useContextDiff(request.id, parentRequestId)
   const [view, setView] = useState<WorkbenchView>('proportional')
   const [activeTypes, setActiveTypes] = useState<Set<BlockVisual>>(() => new Set(ALL_VISUALS))
   const [search, setSearch] = useState('')
@@ -79,6 +88,14 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
   const [density, setDensity] = useState(26)
   const [selection, setSelection] = useState<Record<WorkbenchDirection, number | null>>({ input: null, output: null })
 
+  const showDisabledReason = activeDirection === 'output' ? 'Available for request blocks only'
+    : lineageLoading ? 'Loading comparison…'
+      : !parentRequestId ? 'No previous request in this conversation to compare against'
+        : diffQuery.isLoading ? 'Loading comparison…'
+          : diffQuery.data ? null : 'Could not load comparison'
+  const effectiveShow: ShowMode = showDisabledReason ? 'all' : showMode
+  const newIds = useMemo(() => new Set(diffQuery.data?.new_child_block_ids ?? []), [diffQuery.data])
+
   const effectivePreset: ArrangementPreset = activeDirection === 'output' ? 'sequence' : arrangement
   const blockModel = useMemo(() => buildWorkbenchBlockModel(blocksQuery.data?.blocks ?? [], {
     direction: activeDirection,
@@ -86,8 +103,12 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
     hideZero,
     query: search,
     arrangement: ARRANGEMENT_PRESETS[effectivePreset],
-  }), [activeDirection, activeTypes, blocksQuery.data?.blocks, effectivePreset, hideZero, search])
+    onlyIds: effectiveShow === 'new' ? newIds : null,
+  }), [activeDirection, activeTypes, blocksQuery.data?.blocks, effectivePreset, effectiveShow, hideZero, newIds, search])
   const { allBlocks, available, visibleBlocks } = blockModel
+  const dimmedIds = useMemo(() => effectiveShow === 'highlight'
+    ? new Set(visibleBlocks.filter((block) => !newIds.has(block.id)).map((block) => block.id))
+    : undefined, [effectiveShow, newIds, visibleBlocks])
   const tokenTotals = blocksQuery.data?.token_totals?.[activeDirection] ?? {}
 
   const selectedId = selection[activeDirection]
@@ -110,6 +131,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
     setSearch('')
     setActiveTypes((current) => new Set(current).add(visualOf(target)))
     if (target.token_count <= 0) setHideZero(false)
+    if (effectiveShow === 'new' && !newIds.has(target.id)) onShowModeChange?.('all')
     setSelection((current) => ({ ...current, [target.direction]: target.id }))
     revealBlock(target.id, view, 'nearest')
   }
@@ -165,6 +187,9 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
             arrangementDisabled={activeDirection === 'output'}
             hideZero={hideZero}
             density={density}
+            showMode={effectiveShow}
+            showDisabledReason={showDisabledReason}
+            onShowMode={onShowModeChange}
             onToggleType={(visual) => setActiveTypes((current) => {
               const next = new Set(current)
               if (next.has(visual)) next.delete(visual); else next.add(visual)
@@ -181,9 +206,9 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange }
               <div className="surface min-w-0 overflow-hidden rounded-md border border-[var(--border)]">
                 <div className="max-h-[480px] min-h-32 overflow-auto">
                   {view === 'compact' ? (
-                    <CompactBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={ARRANGEMENT_PRESETS[effectivePreset].grouping} onSelect={select} />
+                    <CompactBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} grouping={ARRANGEMENT_PRESETS[effectivePreset].grouping} dimmedIds={dimmedIds} onSelect={select} />
                   ) : (
-                    <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} onSelect={select} />
+                    <ProportionalBlockMap blocks={visibleBlocks} selectedId={selectedId} density={density} dimmedIds={dimmedIds} onSelect={select} />
                   )}
                 </div>
                 <BlockLegend blocks={visibleBlocks} />

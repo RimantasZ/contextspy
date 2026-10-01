@@ -5,6 +5,8 @@ import type { ArrangementPreset } from '../../lib/blockArrangement'
 const FILTERS: BlockVisual[] = ['system', 'user', 'assistant', 'thinking', 'tool_call', 'tool_result', 'tool_definition', 'prefill', 'other']
 const COMPACT_TOKENS = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 
+export type ShowMode = 'all' | 'new' | 'highlight'
+
 export function BlockToolbar({
   available,
   active,
@@ -14,11 +16,14 @@ export function BlockToolbar({
   arrangementDisabled = false,
   hideZero,
   density,
+  showMode = 'all',
+  showDisabledReason = null,
   onToggleType,
   onSearch,
   onArrangement,
   onHideZero,
   onDensity,
+  onShowMode,
   onLargest,
 }: {
   available: Set<BlockVisual>
@@ -29,11 +34,15 @@ export function BlockToolbar({
   arrangementDisabled?: boolean
   hideZero: boolean
   density: number
+  showMode?: ShowMode
+  /** When set, the Show control is disabled and this is its tooltip. */
+  showDisabledReason?: string | null
   onToggleType: (visual: BlockVisual) => void
   onSearch: (value: string) => void
   onArrangement: (value: ArrangementPreset) => void
   onHideZero: (value: boolean) => void
   onDensity: (value: number) => void
+  onShowMode?: (value: ShowMode) => void
   onLargest: () => void
 }) {
   return (
@@ -71,6 +80,20 @@ export function BlockToolbar({
             <option value={22}>Smaller</option>
             <option value={26}>Default</option>
             <option value={30}>Larger</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+          Show
+          <select
+            value={showDisabledReason ? 'all' : showMode}
+            disabled={showDisabledReason != null}
+            title={showDisabledReason ?? undefined}
+            onChange={(event) => onShowMode?.(event.target.value as ShowMode)}
+            className="app-field py-1.5"
+          >
+            <option value="all">All</option>
+            <option value="new">New only</option>
+            <option value="highlight">Highlight new</option>
           </select>
         </label>
         <label className="flex min-h-8 items-center gap-1.5 text-xs text-[var(--text-muted)]">

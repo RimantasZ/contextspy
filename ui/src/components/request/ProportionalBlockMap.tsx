@@ -8,8 +8,9 @@ const BLOCK_GAP_PX = 4
 const CANVAS_HORIZONTAL_PADDING_PX = 24
 const FALLBACK_ROW_CAPACITY = 12
 
-export function ProportionalBlockMap({ blocks, selectedId, density, onSelect }: {
+export function ProportionalBlockMap({ blocks, selectedId, density, dimmedIds, onSelect }: {
   blocks: RequestBlock[]
+  dimmedIds?: ReadonlySet<number>
   selectedId: number | null
   density: number
   onSelect: (block: RequestBlock | null) => void
@@ -93,6 +94,7 @@ export function ProportionalBlockMap({ blocks, selectedId, density, onSelect }: 
                 id={`block-segment-${item.blockId}`}
                 block={item.block}
                 selected={selected}
+                dimmed={dimmedIds?.has(item.blockId)}
                 tabIndex={selected || (selectedId == null && items[0]?.blockId === item.blockId) ? 0 : -1}
                 onSelect={() => onSelect(selected ? null : item.block)}
                 onKeyDown={(event) => onKeyDown(event, item.blockId)}

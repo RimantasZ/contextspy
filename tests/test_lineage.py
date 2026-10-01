@@ -7,8 +7,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from contextspy.analysis.blocks import BlockType, Direction
-from contextspy.analysis.context_diff import ContextBlock, diff_contexts
-from contextspy.analysis.lineage import LineageEdge, RequestSnapshot, _conversation_projection, build_lineage_graph
+from contextspy.analysis.context_diff import ContextBlock, diff_contexts, new_child_block_ids
+from contextspy.analysis.lineage import LineageEdge, RequestSnapshot, _conversation_projection, build_lineage_graph, context_diff_for_requests
 
 
 BASE_TIME = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
@@ -101,6 +101,47 @@ def test_context_diff_maps_persisted_promoted_added_removed_and_replaced():
     assert delta.replaced[0].slot == "system_prompt:0"
     assert delta.summary["added"]["blocks"] == 1
     assert delta.summary["promoted"]["blocks"] == 1
+
+
+def test_new_child_block_ids_excludes_persisted_and_promoted_only():
+    parent = [
+        _block("p", 1, Direction.INPUT, BlockType.SYSTEM_PROMPT, "old instructions", position=0, category="system_prompt"),
+        _block("p", 2, Direction.INPUT, BlockType.USER_MESSAGE, "first question", position=1),
+        _block("p", 4, Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, "first answer", position=0, category=None),
+    ]
+    child = [
+        _block("c", 5, Direction.INPUT, BlockType.SYSTEM_PROMPT, "new instructions", position=0, category="system_prompt"),
+        _block("c", 6, Direction.INPUT, BlockType.USER_MESSAGE, "first question", position=1),
+        _block("c", 7, Direction.INPUT, BlockType.ASSISTANT_MESSAGE, "first answer", position=2),
+        _block("c", 8, Direction.INPUT, BlockType.USER_MESSAGE, "second question", position=3),
+        _block("c", 9, Direction.INPUT, BlockType.USER_MESSAGE, "", position=4),
+        _block("c", 10, Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, "ignored output", position=0, category=None),
+    ]
+    delta = diff_contexts(parent, child)
+    # 5 replaced in place, 8 added, 9 unfingerprinted -> new; 6 persisted, 7 promoted -> not new.
+    assert new_child_block_ids(delta, child) == [5, 8, 9]
+
+
+def test_new_child_block_ids_unchanged_context_has_none():
+    blocks = [_block("p", i, Direction.INPUT, BlockType.USER_MESSAGE, f"msg {i}", position=i) for i in range(1, 4)]
+    child = [_block("c", i + 10, Direction.INPUT, BlockType.USER_MESSAGE, f"msg {i}", position=i) for i in range(1, 4)]
+    assert new_child_block_ids(diff_contexts(blocks, child), child) == []
+
+
+def test_new_child_block_ids_marks_extra_duplicate_occurrence_as_new():
+    parent = [_block("p", 1, Direction.INPUT, BlockType.USER_MESSAGE, "same", position=0)]
+    child = [_block("c", i, Direction.INPUT, BlockType.USER_MESSAGE, "same", position=i) for i in (11, 12)]
+    child = [replace(child[0], position=0), replace(child[1], position=1)]
+    assert new_child_block_ids(diff_contexts(parent, child), child) == [12]
+
+
+def test_context_diff_for_requests_includes_new_child_block_ids():
+    parent = _snapshot("p", 1, [_block("p", 1, Direction.INPUT, BlockType.USER_MESSAGE, "q1", position=0)])
+    child = _snapshot("c", 2, [
+        _block("c", 2, Direction.INPUT, BlockType.USER_MESSAGE, "q1", position=0),
+        _block("c", 3, Direction.INPUT, BlockType.USER_MESSAGE, "q2", position=1),
+    ])
+    assert context_diff_for_requests(parent, child)["new_child_block_ids"] == [3]
 
 
 def test_context_diff_keeps_unfingerprinted_blocks_out_of_change_claims():

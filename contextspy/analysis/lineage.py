@@ -12,7 +12,7 @@ from typing import Any, Iterable, Mapping
 
 from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.analysis.conversation_projection import _conversation_projection
-from contextspy.analysis.context_diff import ContextBlock, ContextDelta, diff_contexts, semantic_key
+from contextspy.analysis.context_diff import ContextBlock, ContextDelta, diff_contexts, new_child_block_ids, semantic_key
 from contextspy.analysis.lineage_types import (
     LineageEdge, RequestSnapshot, input_blocks as _input_blocks,
     output_blocks as _output_blocks, request_order as _request_order,
@@ -655,8 +655,10 @@ def build_lineage_graph(
 def context_diff_for_requests(
     parent: RequestSnapshot, child: RequestSnapshot,
 ) -> dict[str, Any]:
+    delta = diff_contexts(parent.blocks, child.blocks)
     return {
         "parent_request_id": parent.id,
         "child_request_id": child.id,
-        "delta": diff_contexts(parent.blocks, child.blocks).to_dict(include_mappings=True),
+        "delta": delta.to_dict(include_mappings=True),
+        "new_child_block_ids": new_child_block_ids(delta, child.blocks),
     }

@@ -265,3 +265,21 @@ def diff_contexts(
         },
     }
     return delta
+
+
+def new_child_block_ids(
+    delta: ContextDelta, child_blocks: Iterable[ContextBlock],
+) -> list[int]:
+    """Input blocks of the child that were not already present in the parent.
+
+    Everything the diff did not map to a parent block is new: added blocks,
+    blocks replaced in place, and blocks that could not be fingerprinted (so a
+    "new only" view never hides something that could not be verified).
+    """
+    already_present = {item.child_block_id for item in delta.persisted}
+    already_present.update(item.child_block_id for item in delta.promoted)
+    return [
+        block.id
+        for block in _ordered(child_blocks, Direction.INPUT)
+        if block.id not in already_present
+    ]
