@@ -27,7 +27,7 @@ function mockApi() {
     if (blocks) return json({ session_seq: 1, blocks: blocksFor[blocks[1]], token_totals: {} })
     if (url.includes('/tools')) return json({ tools: [] })
     if (url.includes('/lineage/revision')) return json({ revision: '1' })
-    if (url.includes('/lineage')) return json({ nodes: [], edges: [{ source_request_id: 'a', target_request_id: 'b', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 }] })
+    if (url.includes('/lineage')) return json({ nodes: [{ request_id: 'a', session_seq: 33, conversation_code: 'C1', external: false }, { request_id: 'b', session_seq: 34, conversation_code: 'AUX', external: false }], edges: [{ source_request_id: 'a', target_request_id: 'b', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 }] })
     const request = /\/requests\/(a|b)$/.exec(url)
     if (request) return json({ request: makeRequest({ id: request[1], session_id: 's1' }) })
     return new Response('{}', { status: 404 })
@@ -63,14 +63,16 @@ describe('RequestDetail Show mode lifetime', () => {
   it('persists across parent/child navigation and resets after leaving the page', async () => {
     mockApi()
     renderPage()
+    expect(await screen.findByLabelText('Request #AUX-34')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Parent #C1-33/ })).toBeTruthy()
     await userEvent.selectOptions(await showSelect(), 'new')
     expect(screen.queryByRole('button', { name: /System.*position 1/i })).toBeNull()
 
     // Parent has no parent of its own: control is disabled but the choice is retained.
-    await userEvent.click(await screen.findByRole('button', { name: /Parent/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /Parent #C1-33/ }))
     await waitFor(() => expect((screen.getByRole('combobox', { name: 'Show' }) as HTMLSelectElement).disabled).toBe(true))
 
-    await userEvent.click(await screen.findByRole('button', { name: /Child 1/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /Child #AUX-34/ }))
     expect(((await showSelect()) as HTMLSelectElement).value).toBe('new')
     expect(screen.queryByRole('button', { name: /System.*position 1/i })).toBeNull()
 

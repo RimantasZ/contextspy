@@ -1073,6 +1073,37 @@ def _sequence_order(node: dict) -> tuple:
             node["completed_at"], node["request_id"])
 
 
+def _conversation_code_resolver(graph: dict):
+    """Return ``node -> "C<n>" | "AUX"``, the label shown on request cards.
+
+    A request shown under several conversations takes its confirmed one first,
+    then its first membership; auxiliary requests are always ``AUX``.
+    """
+    auxiliary_ids = set((graph.get("auxiliary") or {}).get("request_ids", []))
+    codes = {group["key"]: f"C{index}" for index, group in enumerate(graph["conversations"], 1)}
+
+    def code_for(node: dict) -> str:
+        if node["request_id"] in auxiliary_ids:
+            return "AUX"
+        memberships = node["conversation_membership"]
+        confirmed = next((item["key"] for item in memberships if item["state"] == "confirmed"), None)
+        return codes.get(confirmed or (memberships[0]["key"] if memberships else ""), "AUX")
+
+    return code_for
+
+
+def lineage_nodes_with_conversation_codes(graph: dict) -> list[dict]:
+    """Copies of the graph's nodes plus ``conversation_code`` (None for external requests).
+
+    The graph itself is cached and shared, so it is never mutated here.
+    """
+    code_for = _conversation_code_resolver(graph)
+    return [
+        {**node, "conversation_code": None if node["external"] else code_for(node)}
+        for node in graph["nodes"]
+    ]
+
+
 def _session_sequence_projection(db: OrmSession, graph: dict, *, limit: int,
                                  cursor: str | None = None) -> dict:
     nodes = [node for node in graph["nodes"] if not node["external"]]
@@ -1089,14 +1120,7 @@ def _session_sequence_projection(db: OrmSession, graph: dict, *, limit: int,
     edges = {edge["target_request_id"]: edge for edge in graph["edges"]
              if edge["relation_type"] == "context_continuation"}
     auxiliary_ids = set((graph.get("auxiliary") or {}).get("request_ids", []))
-    codes = {group["key"]: f"C{index}" for index, group in enumerate(graph["conversations"], 1)}
-
-    def code_for(node: dict) -> str:
-        if node["request_id"] in auxiliary_ids:
-            return "AUX"
-        memberships = node["conversation_membership"]
-        confirmed = next((item["key"] for item in memberships if item["state"] == "confirmed"), None)
-        return codes.get(confirmed or (memberships[0]["key"] if memberships else ""), "AUX")
+    code_for = _conversation_code_resolver(graph)
 
     return {
         "request_flow": [

@@ -477,6 +477,19 @@ def test_diagnostics_reuses_dashboard_graph_until_revision_changes(db, monkeypat
     assert calls == 2
 
 
+def test_lineage_node_conversation_codes_match_request_cards_and_leave_graph_untouched(db):
+    _session(db, active=False)
+    for seq in range(1, 4):
+        _req(db, f"r{seq}", seq=seq, parent=f"r{seq - 1}" if seq > 1 else None)
+    graph = crud.get_session_lineage_graph(db, "s1")
+    nodes = crud.lineage_nodes_with_conversation_codes(graph)
+    card_codes = {item["id"]: item["conversation_code"]
+                  for item in crud._session_sequence_projection(db, graph, limit=10)["request_flow"]}
+    assert {node["request_id"]: node["conversation_code"] for node in nodes} == card_codes
+    assert set(card_codes.values()) <= {"C1", "AUX"} and "C1" in card_codes.values()
+    assert all("conversation_code" not in node for node in graph["nodes"])
+
+
 def test_lineage_revision_tracks_relevant_edits_without_unrelated_invalidations(db):
     _session(db)
     _session(db, "s2", active=False)

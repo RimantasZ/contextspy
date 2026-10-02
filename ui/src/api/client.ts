@@ -258,6 +258,8 @@ export interface LineageNode {
   provider_response_id: string | null
   predecessor_response_id: string | null
   external: boolean
+  /** "C<n>" / "AUX" as on conversation request cards; null for requests outside the session. */
+  conversation_code?: string | null
   parent_state: 'exact' | 'inferred' | 'ambiguous' | 'root' | 'unresolved_exact' | 'unavailable' | 'external'
   lineage_key: string
   lineage_number: number

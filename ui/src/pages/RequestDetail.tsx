@@ -9,6 +9,7 @@ import { CaptureNotice } from '../components/request/CaptureNotice'
 import { RequestSummaryHeader } from '../components/request/RequestSummaryHeader'
 import { RequestWorkbench } from '../components/request/RequestWorkbench'
 import type { ShowMode, WorkbenchDirection } from '../components/request/RequestWorkbench'
+import { conversationRequestLabel } from '../components/dashboard/dashboardFormat'
 import { formatDateTime, normalizeServerTimestamp } from '../lib/format'
 
 function categoryData(request: {
@@ -55,6 +56,10 @@ export default function RequestDetail() {
   const tools = toolStats.data?.tools ?? []
   const parentEdge = lineage.data?.edges.find((edge) => edge.target_request_id === request.id && edge.relation_type === 'context_continuation')
   const childEdges = lineage.data?.edges.filter((edge) => edge.source_request_id === request.id && edge.relation_type === 'context_continuation') ?? []
+  const nodeLabel = (requestId: string, fallbackSeq: number | null = null) => {
+    const node = lineage.data?.nodes.find((item) => item.request_id === requestId)
+    return conversationRequestLabel(node?.session_seq ?? fallbackSeq, requestId, node?.conversation_code ?? undefined)
+  }
   const startedAt = request.started_at
     ? new Date(normalizeServerTimestamp(request.started_at))
     : request.duration_ms != null
@@ -88,19 +93,19 @@ export default function RequestDetail() {
 
   return (
     <div className="page-shell">
-      <RequestSummaryHeader request={request} onBack={() => navigate(-1)} onDirection={setActiveDirection} />
+      <RequestSummaryHeader request={request} label={nodeLabel(request.id, request.session_seq)} onBack={() => navigate(-1)} onDirection={setActiveDirection} />
       <CaptureNotice request={request} />
       {(parentEdge || childEdges.length > 0) && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-3 text-xs">
           <span className="font-semibold">Conversations</span>
           {parentEdge && (
             <button type="button" className="app-button min-h-8 py-1" onClick={() => navigate(`/requests/${parentEdge.source_request_id}`)}>
-              ← Parent {parentEdge.certainty === 'inferred' ? `(${Math.round((parentEdge.confidence ?? 0) * 100)}% inferred)` : '(exact)'}
+              ← Parent {nodeLabel(parentEdge.source_request_id)} {parentEdge.certainty === 'inferred' ? `(${Math.round((parentEdge.confidence ?? 0) * 100)}% inferred)` : '(exact)'}
             </button>
           )}
-          {childEdges.map((edge, index) => (
+          {childEdges.map((edge) => (
             <button key={edge.target_request_id} type="button" className="app-button min-h-8 py-1" onClick={() => navigate(`/requests/${edge.target_request_id}`)}>
-              Child {index + 1} →
+              Child {nodeLabel(edge.target_request_id)} →
             </button>
           ))}
           {request.session_id && <button type="button" className="app-button-ghost ml-auto min-h-8 py-1" onClick={() => navigate(`/sessions/${request.session_id}?view=lineage`)}>Open session conversations</button>}

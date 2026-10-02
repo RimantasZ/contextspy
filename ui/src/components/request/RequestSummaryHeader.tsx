@@ -8,8 +8,10 @@ function statusTone(request: Request): string {
   return ''
 }
 
-export function RequestSummaryHeader({ request, onBack, onDirection }: {
+export function RequestSummaryHeader({ request, label, onBack, onDirection }: {
   request: Request
+  /** Conversation request id such as #C1-33 (same format as the conversation view). */
+  label?: string
   onBack: () => void
   onDirection: (direction: 'input' | 'output') => void
 }) {
@@ -22,6 +24,7 @@ export function RequestSummaryHeader({ request, onBack, onDirection }: {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight">Request detail</h1>
+            {label && <span className="app-badge font-mono" title="Conversation and session request number" aria-label={`Request ${label}`}>{label}</span>}
             <span className={`app-badge ${statusTone(request)}`}>{request.status_code ?? request.invocation_outcome}</span>
           </div>
           <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">{request.provider} · {request.model ?? 'Unknown model'} · {formatDateTime(request.timestamp)}</p>
