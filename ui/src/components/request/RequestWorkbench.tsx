@@ -67,12 +67,14 @@ function RawPayload({ request, direction }: { request: Request; direction: Workb
   )
 }
 
-export function RequestWorkbench({ request, activeDirection, onDirectionChange, parentRequestId = null, lineageLoading = false, showMode = 'all', onShowModeChange }: {
+export function RequestWorkbench({ request, activeDirection, onDirectionChange, parentRequestId = null, baselineIsFallback = false, lineageLoading = false, showMode = 'all', onShowModeChange }: {
   request: Request
   activeDirection: WorkbenchDirection
   onDirectionChange: (direction: WorkbenchDirection) => void
   /** Lineage parent used as the "previous request" baseline for the Show control. */
   parentRequestId?: string | null
+  /** The baseline is the previous request in the conversation, not an established parent. */
+  baselineIsFallback?: boolean
   lineageLoading?: boolean
   /** Owned by the page so it survives parent/child navigation. */
   showMode?: ShowMode
@@ -189,6 +191,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange, 
             density={density}
             showMode={effectiveShow}
             showDisabledReason={showDisabledReason}
+            showNote={baselineIsFallback ? 'Compared with the previous request in this conversation (no direct parent was established)' : null}
             onShowMode={onShowModeChange}
             onToggleType={(visual) => setActiveTypes((current) => {
               const next = new Set(current)

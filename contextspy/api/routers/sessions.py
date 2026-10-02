@@ -88,7 +88,7 @@ def get_session_lineage(session_id: str):
             "capture": session.to_dict(),
             "session": session.to_dict(),
             **graph,
-            "nodes": crud.lineage_nodes_with_conversation_codes(graph),
+            "nodes": crud.annotated_lineage_nodes(graph),
         }
 
 

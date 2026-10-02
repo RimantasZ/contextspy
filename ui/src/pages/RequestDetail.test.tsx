@@ -16,6 +16,7 @@ const blocksFor: Record<string, ReturnType<typeof makeBlock>[]> = {
     makeBlock({ id: 11, position: 0, block_type: 'system_prompt', content: 'rules' }),
     makeBlock({ id: 12, position: 1, block_type: 'user_message', content: 'next question' }),
   ],
+  c: [makeBlock({ id: 21, position: 0, block_type: 'user_message', content: 'side request' })],
 }
 
 function mockApi() {
@@ -23,22 +24,22 @@ function mockApi() {
     const url = String(input)
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
     if (url.includes('/context-diff')) return json({ parent_request_id: 'a', child_request_id: 'b', delta: {}, new_child_block_ids: [12] })
-    const blocks = /\/requests\/(a|b)\/blocks/.exec(url)
+    const blocks = /\/requests\/(a|b|c)\/blocks/.exec(url)
     if (blocks) return json({ session_seq: 1, blocks: blocksFor[blocks[1]], token_totals: {} })
     if (url.includes('/tools')) return json({ tools: [] })
     if (url.includes('/lineage/revision')) return json({ revision: '1' })
-    if (url.includes('/lineage')) return json({ nodes: [{ request_id: 'a', session_seq: 33, conversation_code: 'C1', external: false }, { request_id: 'b', session_seq: 34, conversation_code: 'AUX', external: false }], edges: [{ source_request_id: 'a', target_request_id: 'b', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 }] })
-    const request = /\/requests\/(a|b)$/.exec(url)
+    if (url.includes('/lineage')) return json({ nodes: [{ request_id: 'a', session_seq: 33, conversation_code: 'C1', external: false }, { request_id: 'b', session_seq: 34, conversation_code: 'AUX', external: false }, { request_id: 'c', session_seq: 35, conversation_code: 'C1', external: false, conversation_previous_request_id: 'b', conversation_next_request_id: 'd' }, { request_id: 'd', session_seq: 36, conversation_code: 'C1', external: false }], edges: [{ source_request_id: 'a', target_request_id: 'b', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 }] })
+    const request = /\/requests\/(a|b|c)$/.exec(url)
     if (request) return json({ request: makeRequest({ id: request[1], session_id: 's1' }) })
     return new Response('{}', { status: 404 })
   })
 }
 
-function renderPage() {
+function renderPage(path = '/requests/b') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/requests/b']}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/requests/:id" element={<RequestDetail />} />
           <Route path="*" element={<Link to="/requests/b">Back to request</Link>} />
@@ -79,5 +80,18 @@ describe('RequestDetail Show mode lifetime', () => {
     await userEvent.click(screen.getByRole('link', { name: 'Leave' }))
     await userEvent.click(await screen.findByRole('link', { name: 'Back to request' }))
     expect(((await showSelect()) as HTMLSelectElement).value).toBe('all')
+  })
+
+  it('falls back to the previous/next request in the conversation when no direct link exists', async () => {
+    mockApi()
+    renderPage('/requests/c')
+    expect(await screen.findByRole('heading', { name: 'Request #C1-35' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^← Parent/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Next in conversation #C1-36/ })).toBeTruthy()
+    // The Show baseline is the fallback request and the control says so.
+    const show = await showSelect()
+    expect(show.title).toMatch(/previous request in this conversation/)
+    await userEvent.click(screen.getByRole('button', { name: /Previous in conversation #AUX-34/ }))
+    expect(await screen.findByRole('heading', { name: 'Request #AUX-34' })).toBeTruthy()
   })
 })

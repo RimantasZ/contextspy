@@ -60,6 +60,10 @@ export default function RequestDetail() {
     const node = lineage.data?.nodes.find((item) => item.request_id === requestId)
     return conversationRequestLabel(node?.session_seq ?? fallbackSeq, requestId, node?.conversation_code ?? undefined)
   }
+  const currentNode = lineage.data?.nodes.find((item) => item.request_id === request.id)
+  // No direct edge: fall back to the neighbour in the same conversation and label it as such.
+  const previousFallbackId = !parentEdge ? currentNode?.conversation_previous_request_id ?? null : null
+  const nextFallbackId = childEdges.length === 0 ? currentNode?.conversation_next_request_id ?? null : null
   const startedAt = request.started_at
     ? new Date(normalizeServerTimestamp(request.started_at))
     : request.duration_ms != null
@@ -95,7 +99,7 @@ export default function RequestDetail() {
     <div className="page-shell">
       <RequestSummaryHeader request={request} label={nodeLabel(request.id, request.session_seq)} onBack={() => navigate(-1)} onDirection={setActiveDirection} />
       <CaptureNotice request={request} />
-      {(parentEdge || childEdges.length > 0) && (
+      {(parentEdge || childEdges.length > 0 || previousFallbackId || nextFallbackId) && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-3 text-xs">
           <span className="font-semibold">Conversations</span>
           {parentEdge && (
@@ -103,11 +107,21 @@ export default function RequestDetail() {
               ← Parent {nodeLabel(parentEdge.source_request_id)} {parentEdge.certainty === 'inferred' ? `(${Math.round((parentEdge.confidence ?? 0) * 100)}% inferred)` : '(exact)'}
             </button>
           )}
+          {previousFallbackId && (
+            <button type="button" className="app-button min-h-8 py-1" title="No direct parent was established; this is the previous request in the same conversation" onClick={() => navigate(`/requests/${previousFallbackId}`)}>
+              ← Previous in conversation {nodeLabel(previousFallbackId)}
+            </button>
+          )}
           {childEdges.map((edge) => (
             <button key={edge.target_request_id} type="button" className="app-button min-h-8 py-1" onClick={() => navigate(`/requests/${edge.target_request_id}`)}>
               Child {nodeLabel(edge.target_request_id)} →
             </button>
           ))}
+          {nextFallbackId && (
+            <button type="button" className="app-button min-h-8 py-1" title="No direct child was established; this is the next request in the same conversation" onClick={() => navigate(`/requests/${nextFallbackId}`)}>
+              Next in conversation {nodeLabel(nextFallbackId)} →
+            </button>
+          )}
           {request.session_id && <button type="button" className="app-button-ghost ml-auto min-h-8 py-1" onClick={() => navigate(`/sessions/${request.session_id}?view=lineage`)}>Open session conversations</button>}
         </div>
       )}
@@ -115,7 +129,8 @@ export default function RequestDetail() {
         request={request}
         activeDirection={activeDirection}
         onDirectionChange={setActiveDirection}
-        parentRequestId={parentEdge?.source_request_id ?? null}
+        parentRequestId={parentEdge?.source_request_id ?? previousFallbackId}
+        baselineIsFallback={!parentEdge && previousFallbackId != null}
         lineageLoading={lineage.isLoading}
         showMode={showMode}
         onShowModeChange={setShowMode}

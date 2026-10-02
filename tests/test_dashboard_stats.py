@@ -482,12 +482,37 @@ def test_lineage_node_conversation_codes_match_request_cards_and_leave_graph_unt
     for seq in range(1, 4):
         _req(db, f"r{seq}", seq=seq, parent=f"r{seq - 1}" if seq > 1 else None)
     graph = crud.get_session_lineage_graph(db, "s1")
-    nodes = crud.lineage_nodes_with_conversation_codes(graph)
+    nodes = crud.annotated_lineage_nodes(graph)
     card_codes = {item["id"]: item["conversation_code"]
                   for item in crud._session_sequence_projection(db, graph, limit=10)["request_flow"]}
     assert {node["request_id"]: node["conversation_code"] for node in nodes} == card_codes
     assert set(card_codes.values()) <= {"C1", "AUX"} and "C1" in card_codes.values()
     assert all("conversation_code" not in node for node in graph["nodes"])
+
+
+def test_annotated_lineage_nodes_give_conversation_neighbours():
+    def node(rid, seq, key, state="confirmed", external=False):
+        return {"request_id": rid, "session_seq": seq, "completed_at": f"2026-01-01T00:00:{seq:02d}",
+                "external": external,
+                "conversation_membership": [{"key": key, "state": state}] if key else []}
+    graph = {
+        "conversations": [{"key": "g1", "request_ids": ["a", "b", "c"]},
+                          {"key": "g2", "request_ids": ["x", "c"]}],
+        "auxiliary": {"key": "aux", "request_ids": ["z"]},
+        "nodes": [node("c", 3, "g1"), node("a", 1, "g1"), node("b", 2, "g1", "unassigned"),
+                  node("x", 4, "g2"), node("z", 5, "aux", "provisional_unassigned"),
+                  node("e", 0, None, external=True)],
+    }
+    nodes = {n["request_id"]: n for n in crud.annotated_lineage_nodes(graph)}
+    assert [(n["conversation_previous_request_id"], n["conversation_next_request_id"])
+            for n in (nodes["a"], nodes["b"], nodes["c"])] == [(None, "b"), ("a", "c"), ("b", None)]
+    assert nodes["a"]["conversation_code"] == "C1" and nodes["x"]["conversation_code"] == "C2"
+    # Auxiliary and external requests have no conversation neighbours.
+    for rid in ("z", "e"):
+        assert nodes[rid]["conversation_previous_request_id"] is None
+        assert nodes[rid]["conversation_next_request_id"] is None
+    assert nodes["e"]["conversation_code"] is None and nodes["z"]["conversation_code"] == "AUX"
+    assert all("conversation_code" not in n for n in graph["nodes"])
 
 
 def test_lineage_revision_tracks_relevant_edits_without_unrelated_invalidations(db):

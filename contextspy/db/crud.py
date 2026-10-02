@@ -1073,35 +1073,74 @@ def _sequence_order(node: dict) -> tuple:
             node["completed_at"], node["request_id"])
 
 
-def _conversation_code_resolver(graph: dict):
-    """Return ``node -> "C<n>" | "AUX"``, the label shown on request cards.
+def _node_group_key(node: dict, auxiliary_ids: set[str]) -> str | None:
+    """Key of the conversation a request card is filed under (None for auxiliary).
 
     A request shown under several conversations takes its confirmed one first,
-    then its first membership; auxiliary requests are always ``AUX``.
+    then its first membership.
     """
+    if node["request_id"] in auxiliary_ids:
+        return None
+    memberships = node["conversation_membership"]
+    return next((item["key"] for item in memberships if item["state"] == "confirmed"),
+                memberships[0]["key"] if memberships else None)
+
+
+def _conversation_code_resolver(graph: dict):
+    """Return ``node -> "C<n>" | "AUX"``, the label shown on request cards."""
     auxiliary_ids = set((graph.get("auxiliary") or {}).get("request_ids", []))
     codes = {group["key"]: f"C{index}" for index, group in enumerate(graph["conversations"], 1)}
 
     def code_for(node: dict) -> str:
-        if node["request_id"] in auxiliary_ids:
-            return "AUX"
-        memberships = node["conversation_membership"]
-        confirmed = next((item["key"] for item in memberships if item["state"] == "confirmed"), None)
-        return codes.get(confirmed or (memberships[0]["key"] if memberships else ""), "AUX")
+        key = _node_group_key(node, auxiliary_ids)
+        return codes.get(key, "AUX") if key is not None else "AUX"
 
     return code_for
 
 
-def lineage_nodes_with_conversation_codes(graph: dict) -> list[dict]:
-    """Copies of the graph's nodes plus ``conversation_code`` (None for external requests).
+def annotated_lineage_nodes(graph: dict) -> list[dict]:
+    """Copies of the graph's nodes with presentation facts for the request detail page.
+
+    - ``conversation_code``: ``C<n>`` / ``AUX`` as on request cards (None for external requests).
+    - ``conversation_previous_request_id`` / ``conversation_next_request_id``: the
+      neighbouring requests in the same conversation, in session order. Used by the UI as
+      a labelled fallback when no direct parent/child edge was established. They are
+      neighbours, not proven links, and are None for auxiliary and external requests.
 
     The graph itself is cached and shared, so it is never mutated here.
     """
     code_for = _conversation_code_resolver(graph)
-    return [
-        {**node, "conversation_code": None if node["external"] else code_for(node)}
-        for node in graph["nodes"]
-    ]
+    auxiliary_ids = set((graph.get("auxiliary") or {}).get("request_ids", []))
+    by_id = {node["request_id"]: node for node in graph["nodes"]}
+
+    def order(rid: str) -> tuple:
+        node = by_id[rid]
+        return (node["session_seq"] if node["session_seq"] is not None else -1,
+                node["completed_at"], rid)
+
+    ordered_by_group = {
+        group["key"]: sorted((rid for rid in group["request_ids"]
+                              if rid in by_id and not by_id[rid]["external"]), key=order)
+        for group in graph["conversations"]
+    }
+    neighbours: dict[str, tuple[str | None, str | None]] = {}
+    for key, ids in ordered_by_group.items():
+        for index, rid in enumerate(ids):
+            node = by_id[rid]
+            if _node_group_key(node, auxiliary_ids) != key:
+                continue  # filed under another conversation; use that one's neighbours
+            neighbours[rid] = (ids[index - 1] if index > 0 else None,
+                               ids[index + 1] if index + 1 < len(ids) else None)
+    result = []
+    for node in graph["nodes"]:
+        previous_id, next_id = neighbours.get(node["request_id"], (None, None))
+        result.append({
+            **node,
+            "conversation_code": None if node["external"] else code_for(node),
+            "conversation_previous_request_id": previous_id,
+            "conversation_next_request_id": next_id,
+        })
+    return result
 
 
 def _session_sequence_projection(db: OrmSession, graph: dict, *, limit: int,

@@ -260,6 +260,9 @@ export interface LineageNode {
   external: boolean
   /** "C<n>" / "AUX" as on conversation request cards; null for requests outside the session. */
   conversation_code?: string | null
+  /** Neighbouring requests in the same conversation (session order); not proven parent/child links. */
+  conversation_previous_request_id?: string | null
+  conversation_next_request_id?: string | null
   parent_state: 'exact' | 'inferred' | 'ambiguous' | 'root' | 'unresolved_exact' | 'unavailable' | 'external'
   lineage_key: string
   lineage_number: number

@@ -18,6 +18,7 @@ export function BlockToolbar({
   density,
   showMode = 'all',
   showDisabledReason = null,
+  showNote = null,
   onToggleType,
   onSearch,
   onArrangement,
@@ -37,6 +38,8 @@ export function BlockToolbar({
   showMode?: ShowMode
   /** When set, the Show control is disabled and this is its tooltip. */
   showDisabledReason?: string | null
+  /** Tooltip while enabled, e.g. to say the baseline is only the previous request in the conversation. */
+  showNote?: string | null
   onToggleType: (visual: BlockVisual) => void
   onSearch: (value: string) => void
   onArrangement: (value: ArrangementPreset) => void
@@ -87,7 +90,7 @@ export function BlockToolbar({
           <select
             value={showDisabledReason ? 'all' : showMode}
             disabled={showDisabledReason != null}
-            title={showDisabledReason ?? undefined}
+            title={showDisabledReason ?? showNote ?? undefined}
             onChange={(event) => onShowMode?.(event.target.value as ShowMode)}
             className="app-field py-1.5"
           >
