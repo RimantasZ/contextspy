@@ -1,8 +1,6 @@
 # Plan: "Show" control — new-only / highlight-new blocks in Request detail
 
-Status: Show control implemented, including the conversation-ID title and the previous/next fallback described below.
-Decided but **not yet implemented**: the warning icon on fallback buttons and showing Previous/Next alongside Parent/Child
-(see *Follow-ups*).
+Status: implemented, including the conversation-ID title, the previous/next fallback and the warning icon / Previous+Next alongside Parent+Child.
 
 ## Goal
 
@@ -129,11 +127,11 @@ Why neighbours rather than only edges: in a real session (bf5ccccf…) #94 and #
 
 Tests (`ui/src/pages/RequestDetail.test.tsx`): heading shows the code; Parent button carries the parent's id; fallback Previous/Next buttons and the Show tooltip when there is no edge; navigating through the fallback button.
 
-## Follow-ups (decided, not yet implemented)
+## Previous/Next buttons: warning icon and coexistence with Parent/Child (implemented)
 
-1. **"Previous" instead of "Parent" is the right wording for the fallback; add a warning icon.** The fallback is a neighbour in session order, not a proven predecessor, so the label alone understates the difference. Add a small warning icon (⚠, using the existing `--warning` tone as the card's uncertain lineage marker does) to the Previous/Next fallback buttons with a tooltip: "No direct parent was established. This is the previous request in the same conversation. It may not be the request this one actually continued, for example when subagent or side requests are interleaved." Same wording adapted for Next. The tooltip should be keyboard-reachable (focus) and the button's `aria-label` should include the same text, since the icon alone is not accessible. The Show control tooltip (already worded this way) stays.
+1. **"Previous" instead of "Parent" is the right wording for the fallback; add a warning icon.** The fallback is a neighbour in session order, not a proven predecessor, so the label alone understates the difference. Add a small warning icon (⚠, using the existing `--warning` tone as the card's uncertain lineage marker does) to the Previous/Next fallback buttons with a tooltip: "No direct parent was established. This is the previous request in the same conversation. It may not be the request this one actually continued, for example when subagent or side requests are interleaved." Same wording adapted for Next. The tooltip should be keyboard-reachable (focus) and the button points to the tooltip with `aria-describedby`, so the explanation is announced and the decorative icon is `aria-hidden`. The tooltip is a CSS group tooltip shown on hover and `focus-within`. The Show control tooltip (already worded this way) stays.
 2. **Show Previous/Next alongside Parent/Child, not only as a fallback.** A direct child or parent can be further away in the chain than the adjacent request (for example #95's exact parent is #93 while its neighbour is #94), so replacing the fallback with edges only hides the adjacent request, and "Next" with a real child present may be a different request. New rule: render the edge buttons as today, and additionally render Previous/Next in conversation whenever that neighbour exists **and is not already the parent/one of the children** (dedupe by id so the same request never appears twice). The warning icon applies only when the neighbour is shown *because there is no edge*; when an edge exists and the neighbour is a different request, show the plain `Previous in conversation` / `Next in conversation` buttons without a warning. This also applies the same rule symmetrically to Previous (not only Next), which is an assumption to confirm.
-3. Tests for both: fallback with warning icon + tooltip; Parent and Previous both present when they differ; deduped when they are the same request; Next present with children.
+3. Implemented as `NeighbourButton` in `RequestDetail.tsx`. Tests (`RequestDetail.test.tsx`): fallback with warning icon + tooltip; Parent and Previous both present when they differ; deduped when they are the same request; Next present with children.
 4. The Show baseline stays "parent edge, else previous in conversation" regardless of which buttons are rendered.
 
 ## Show-mode lifetime (decided)
@@ -151,7 +149,7 @@ Test: render `RequestDetail` at `/requests/a`, set Show = New only, navigate to 
 ## Edge cases
 
 - **No lineage parent** (unresolved/ambiguous predecessor): Show compares with the previous request in the same conversation and its tooltip says so. **No parent and no conversation neighbour** (first request in a conversation, `AUX`, external, or no session): Show is disabled, behaves as All.
-- **Fallback neighbour is not the real predecessor:** possible when side/subagent requests are interleaved; accepted by decision, mitigated by the labels and tooltips above (warning icon is a follow-up).
+- **Fallback neighbour is not the real predecessor:** possible when side/subagent requests are interleaved; accepted by decision, mitigated by the labels and tooltips above (mitigated by the warning icon on fallback buttons).
 - **Inferred parent** (`certainty === 'inferred'`): works the same; the header already labels it "(N% inferred)". Optionally add that qualifier to the control's tooltip.
 - **Parent request deleted or blocks purged**: backend returns 404 / `unavailable_*` ids; 404 → control disabled with "Could not load comparison"; unavailable blocks count as new.
 - **Selection**: the existing effect in `RequestWorkbench` already clears selection when the selected block leaves `visibleBlocks`, so hiding via "New only" is handled.

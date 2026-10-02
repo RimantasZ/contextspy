@@ -24,12 +24,17 @@ function mockApi() {
     const url = String(input)
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
     if (url.includes('/context-diff')) return json({ parent_request_id: 'a', child_request_id: 'b', delta: {}, new_child_block_ids: [12] })
-    const blocks = /\/requests\/(a|b|c)\/blocks/.exec(url)
-    if (blocks) return json({ session_seq: 1, blocks: blocksFor[blocks[1]], token_totals: {} })
+    const blocks = /\/requests\/(a|b|c|e|f)\/blocks/.exec(url)
+    if (blocks) return json({ session_seq: 1, blocks: (blocksFor[blocks[1]] ?? blocksFor.c), token_totals: {} })
     if (url.includes('/tools')) return json({ tools: [] })
     if (url.includes('/lineage/revision')) return json({ revision: '1' })
-    if (url.includes('/lineage')) return json({ nodes: [{ request_id: 'a', session_seq: 33, conversation_code: 'C1', external: false }, { request_id: 'b', session_seq: 34, conversation_code: 'AUX', external: false }, { request_id: 'c', session_seq: 35, conversation_code: 'C1', external: false, conversation_previous_request_id: 'b', conversation_next_request_id: 'd' }, { request_id: 'd', session_seq: 36, conversation_code: 'C1', external: false }], edges: [{ source_request_id: 'a', target_request_id: 'b', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 }] })
-    const request = /\/requests\/(a|b|c)$/.exec(url)
+    if (url.includes('/lineage')) return json({ nodes: [{ request_id: 'a', session_seq: 33, conversation_code: 'C1', external: false }, { request_id: 'b', session_seq: 34, conversation_code: 'AUX', external: false }, { request_id: 'c', session_seq: 35, conversation_code: 'C1', external: false, conversation_previous_request_id: 'b', conversation_next_request_id: 'd' }, { request_id: 'd', session_seq: 36, conversation_code: 'C1', external: false },
+      { request_id: 'e', session_seq: 37, conversation_code: 'C1', external: false, conversation_previous_request_id: 'b', conversation_next_request_id: 'f' },
+      { request_id: 'f', session_seq: 38, conversation_code: 'C1', external: false, conversation_previous_request_id: 'e', conversation_next_request_id: 'g' }], edges: [{ source_request_id: 'a', target_request_id: 'b', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 },
+      { source_request_id: 'a', target_request_id: 'e', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 },
+      { source_request_id: 'e', target_request_id: 'f', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 },
+      { source_request_id: 'e', target_request_id: 'g', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 }] })
+    const request = /\/requests\/(a|b|c|e|f)$/.exec(url)
     if (request) return json({ request: makeRequest({ id: request[1], session_id: 's1' }) })
     return new Response('{}', { status: 404 })
   })
@@ -93,5 +98,35 @@ describe('RequestDetail Show mode lifetime', () => {
     expect(show.title).toMatch(/previous request in this conversation/)
     await userEvent.click(screen.getByRole('button', { name: /Previous in conversation #AUX-34/ }))
     expect(await screen.findByRole('heading', { name: 'Request #AUX-34' })).toBeTruthy()
+  })
+
+  it('marks fallback neighbours with a warning and explains them in a keyboard-reachable tooltip', async () => {
+    mockApi()
+    renderPage('/requests/c')
+    const previous = await screen.findByRole('button', { name: /Previous in conversation #AUX-34/ })
+    expect(previous.textContent).toContain('⚠')
+    expect(previous.getAttribute('aria-describedby')).toBe('neighbour-tip-previous')
+    expect(document.getElementById('neighbour-tip-previous')?.textContent).toMatch(/No direct parent was established.*may not be the request this one actually continued/)
+    expect(screen.getByRole('button', { name: /Next in conversation #C1-36/ }).textContent).toContain('⚠')
+  })
+
+  it('shows Previous/Next beside Parent/Child when they are different requests, without a warning', async () => {
+    mockApi()
+    renderPage('/requests/e')
+    // e's parent is a (#C1-33) but the adjacent request is b (#AUX-34); its children are f and g, and the adjacent next is f.
+    expect(await screen.findByRole('button', { name: /Parent #C1-33/ })).toBeTruthy()
+    const previous = screen.getByRole('button', { name: /Previous in conversation #AUX-34/ })
+    expect(previous.textContent).not.toContain('⚠')
+    expect(document.getElementById('neighbour-tip-previous')?.textContent).toBe('The previous request in the same conversation.')
+    expect(screen.getByRole('button', { name: /Child #C1-38/ })).toBeTruthy()
+    // The adjacent next request (f) is already a child, so it is not duplicated.
+    expect(screen.queryByRole('button', { name: /Next in conversation/ })).toBeNull()
+  })
+
+  it('does not repeat the parent as Previous when they are the same request', async () => {
+    mockApi()
+    renderPage('/requests/f')
+    expect(await screen.findByRole('button', { name: /Parent #C1-37/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Previous in conversation/ })).toBeNull()
   })
 })

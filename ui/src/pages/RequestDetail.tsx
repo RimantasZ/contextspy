@@ -38,6 +38,30 @@ function Disclosure({ title, children }: { title: string; children: ReactNode })
   )
 }
 
+/** Previous/Next-in-conversation button. `warning` marks a stand-in for a missing direct parent/child. */
+function NeighbourButton({ label, direction, warning, onOpen }: {
+  label: string; direction: 'previous' | 'next'; warning: boolean; onOpen: () => void
+}) {
+  const noun = direction === 'previous' ? 'parent' : 'child'
+  const explanation = warning
+    ? `No direct ${noun} was established. This is the ${direction} request in the same conversation. It may not be the request this one actually ${direction === 'previous' ? 'continued' : 'led to'}, for example when subagent or side requests are interleaved.`
+    : `The ${direction} request in the same conversation.`
+  const text = `${direction === 'previous' ? 'Previous' : 'Next'} in conversation ${label}`
+  const tooltipId = `neighbour-tip-${direction}`
+  return (
+    <span className="group relative inline-flex">
+      <button type="button" className="app-button min-h-8 py-1" aria-describedby={tooltipId} onClick={onOpen}>
+        {direction === 'previous' && '← '}
+        {warning && <span aria-hidden="true" className="mr-1 text-[var(--warning)]">⚠</span>}
+        {text}{direction === 'next' && ' →'}
+      </button>
+      <span id={tooltipId} role="tooltip" className="pointer-events-none absolute left-0 top-full z-50 mt-1 hidden w-64 max-w-[calc(100vw-2rem)] rounded-md border border-[var(--border)] bg-[var(--chart-tooltip)] p-2.5 text-xs leading-relaxed text-[var(--chart-tooltip-text)] shadow-lg group-focus-within:block group-hover:block">
+        {explanation}
+      </span>
+    </span>
+  )
+}
+
 export default function RequestDetail() {
   const { id = '' } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -61,9 +85,13 @@ export default function RequestDetail() {
     return conversationRequestLabel(node?.session_seq ?? fallbackSeq, requestId, node?.conversation_code ?? undefined)
   }
   const currentNode = lineage.data?.nodes.find((item) => item.request_id === request.id)
-  // No direct edge: fall back to the neighbour in the same conversation and label it as such.
-  const previousFallbackId = !parentEdge ? currentNode?.conversation_previous_request_id ?? null : null
-  const nextFallbackId = childEdges.length === 0 ? currentNode?.conversation_next_request_id ?? null : null
+  // Neighbours in the same conversation. They stand in for a missing direct edge (and then carry a warning),
+  // and are otherwise shown next to the edge buttons when they are a different request.
+  const previousId = currentNode?.conversation_previous_request_id ?? null
+  const nextId = currentNode?.conversation_next_request_id ?? null
+  const previousFallbackId = !parentEdge ? previousId : null
+  const showPrevious = previousId != null && previousId !== parentEdge?.source_request_id
+  const showNext = nextId != null && !childEdges.some((edge) => edge.target_request_id === nextId)
   const startedAt = request.started_at
     ? new Date(normalizeServerTimestamp(request.started_at))
     : request.duration_ms != null
@@ -99,7 +127,7 @@ export default function RequestDetail() {
     <div className="page-shell">
       <RequestSummaryHeader request={request} label={nodeLabel(request.id, request.session_seq)} onBack={() => navigate(-1)} onDirection={setActiveDirection} />
       <CaptureNotice request={request} />
-      {(parentEdge || childEdges.length > 0 || previousFallbackId || nextFallbackId) && (
+      {(parentEdge || childEdges.length > 0 || showPrevious || showNext) && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-3 text-xs">
           <span className="font-semibold">Conversations</span>
           {parentEdge && (
@@ -107,20 +135,16 @@ export default function RequestDetail() {
               ← Parent {nodeLabel(parentEdge.source_request_id)} {parentEdge.certainty === 'inferred' ? `(${Math.round((parentEdge.confidence ?? 0) * 100)}% inferred)` : '(exact)'}
             </button>
           )}
-          {previousFallbackId && (
-            <button type="button" className="app-button min-h-8 py-1" title="No direct parent was established; this is the previous request in the same conversation" onClick={() => navigate(`/requests/${previousFallbackId}`)}>
-              ← Previous in conversation {nodeLabel(previousFallbackId)}
-            </button>
+          {showPrevious && previousId && (
+            <NeighbourButton direction="previous" label={nodeLabel(previousId)} warning={!parentEdge} onOpen={() => navigate(`/requests/${previousId}`)} />
           )}
           {childEdges.map((edge) => (
             <button key={edge.target_request_id} type="button" className="app-button min-h-8 py-1" onClick={() => navigate(`/requests/${edge.target_request_id}`)}>
               Child {nodeLabel(edge.target_request_id)} →
             </button>
           ))}
-          {nextFallbackId && (
-            <button type="button" className="app-button min-h-8 py-1" title="No direct child was established; this is the next request in the same conversation" onClick={() => navigate(`/requests/${nextFallbackId}`)}>
-              Next in conversation {nodeLabel(nextFallbackId)} →
-            </button>
+          {showNext && nextId && (
+            <NeighbourButton direction="next" label={nodeLabel(nextId)} warning={childEdges.length === 0} onOpen={() => navigate(`/requests/${nextId}`)} />
           )}
           {request.session_id && <button type="button" className="app-button-ghost ml-auto min-h-8 py-1" onClick={() => navigate(`/sessions/${request.session_id}?view=lineage`)}>Open session conversations</button>}
         </div>
