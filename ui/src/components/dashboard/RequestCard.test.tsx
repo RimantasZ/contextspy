@@ -21,13 +21,21 @@ describe('RequestCard as a standalone display primitive', () => {
     expect(onActivate).toHaveBeenCalledOnce()
   })
 
-  it('explains lineage on keyboard focus only in detailed mode', () => {
+  it('explains lineage on keyboard focus in detailed and compact mode', () => {
     const linked = { ...item, lineage_relation: 'inferred' as const }
-    const { rerender } = render(<RequestCard item={linked} onActivate={() => {}} />)
-    const card = screen.getByRole('button')
-    fireEvent.focus(card)
+    const { unmount } = render(<RequestCard item={linked} onActivate={() => {}} />)
+    fireEvent.focus(screen.getByRole('button'))
     expect(screen.getByRole('tooltip').textContent).toContain('inferred a direct predecessor')
-    rerender(<RequestCard item={linked} compact onActivate={() => {}} />)
+    unmount()
+    render(<RequestCard item={linked} compact onActivate={() => {}} />)
+    fireEvent.focus(screen.getByRole('button'))
+    expect(screen.getByRole('tooltip').textContent).toContain('inferred a direct predecessor')
+  })
+
+  it('shows the lineage tooltip on hovering the icon in compact mode', () => {
+    render(<RequestCard item={{ ...item, lineage_relation: 'exact' as const }} compact onActivate={() => {}} />)
     expect(screen.queryByRole('tooltip')).toBeNull()
+    fireEvent.mouseEnter(screen.getByRole('button').querySelector('span[aria-hidden="true"]:not([class*="rounded-full"])')!)
+    expect(screen.getByRole('tooltip').textContent).toContain('Exact predecessor')
   })
 })

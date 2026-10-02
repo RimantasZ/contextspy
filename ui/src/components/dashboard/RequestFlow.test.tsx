@@ -112,11 +112,12 @@ describe('RequestFlow', () => {
     expect(screen.getByText('Request detail reached')).toBeTruthy()
   })
 
-  it('keeps compact cards small and suppresses icon hover tooltips', () => {
+  it('keeps compact cards small and shows the lineage tooltip only on the parent-type icon', () => {
     render(<MemoryRouter><RequestFlow items={[{ ...item(), lineage_relation: 'exact' }]} compact /></MemoryRouter>)
     expect(screen.getByRole('listitem').className).toContain('w-32')
-    fireEvent.mouseEnter(screen.getByText('↳'))
     expect(screen.queryByRole('tooltip')).toBeNull()
+    fireEvent.mouseEnter(screen.getByText('↳'))
+    expect(screen.getByRole('tooltip').textContent).toContain('Exact predecessor')
     expect(screen.getByRole('button').getAttribute('aria-label')).toContain('Exact predecessor')
   })
 

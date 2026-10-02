@@ -30,7 +30,7 @@ function statusOf(item: DashboardRequestFlowItem): { text: string; className: st
   return null
 }
 
-function LineageIcon({ marker, compact, focused }: { marker: Marker; compact: boolean; focused: boolean }) {
+function LineageIcon({ marker, focused }: { marker: Marker; focused: boolean }) {
   const iconRef = useRef<HTMLSpanElement>(null)
   const [tooltip, setTooltip] = useState<{ left: number; top: number; above: boolean } | null>(null)
 
@@ -46,9 +46,9 @@ function LineageIcon({ marker, compact, focused }: { marker: Marker; compact: bo
   }
 
   useEffect(() => {
-    if (compact || !focused) setTooltip(null)
+    if (!focused) setTooltip(null)
     else showTooltip()
-  }, [compact, focused])
+  }, [focused])
 
   useEffect(() => {
     if (!tooltip) return
@@ -63,7 +63,7 @@ function LineageIcon({ marker, compact, focused }: { marker: Marker; compact: bo
 
   return <>
     <span ref={iconRef} aria-hidden="true"
-      onMouseEnter={compact ? undefined : showTooltip}
+      onMouseEnter={showTooltip}
       onMouseLeave={() => { if (!focused) setTooltip(null) }}
       className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-semibold ${marker.uncertain ? 'border-[var(--warning)] text-[var(--warning)]' : 'border-[var(--border)] text-[var(--accent-soft-text)]'}`}
     >{marker.icon}</span>
@@ -103,7 +103,7 @@ export function RequestCard({ item, compact = false, selected = false, selectabl
       <span className="flex items-center gap-1">
         {compact && status && <span aria-hidden="true"
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${status.className === 'status-danger' ? 'bg-[var(--danger)]' : 'bg-[var(--warning)]'}`} />}
-        {marker && <LineageIcon marker={marker} compact={compact} focused={focused} />}
+        {marker && <LineageIcon marker={marker} focused={focused} />}
       </span>
     </div>
     {compact ? <>
