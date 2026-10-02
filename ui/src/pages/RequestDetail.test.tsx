@@ -63,7 +63,7 @@ describe('RequestDetail Show mode lifetime', () => {
   it('persists across parent/child navigation and resets after leaving the page', async () => {
     mockApi()
     renderPage()
-    expect(await screen.findByLabelText('Request #AUX-34')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Request #AUX-34' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Parent #C1-33/ })).toBeTruthy()
     await userEvent.selectOptions(await showSelect(), 'new')
     expect(screen.queryByRole('button', { name: /System.*position 1/i })).toBeNull()
