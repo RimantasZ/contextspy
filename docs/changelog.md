@@ -1,5 +1,36 @@
 # What's New
 
+## Unreleased
+
+### Request detail
+
+- Added a **Show** control next to **Size** in the block toolbar: **All**, **New only** (only
+  blocks that were not in the previous request) and **Highlight new** (blocks already present in
+  the previous request are drawn at 50% opacity). The previous request is the lineage parent, or
+  the previous request in the same conversation when no parent was established. It applies to the
+  Request direction only, and the choice survives Parent/Child navigation but resets when you
+  leave the page.
+- The page title is now the request's conversation ID, such as `Request #C1-33` or
+  `Request #AUX-34`, matching the conversation request cards. Parent and child buttons show the
+  same IDs.
+- When no direct parent or child was established, **Previous in conversation** / **Next in
+  conversation** buttons let you step through the conversation anyway. They carry a warning icon
+  because a neighbour is not necessarily the request that was actually continued; when a real
+  parent or child exists the neighbour is shown as an extra button when it is a different request.
+- The block inspector shows a **Per-request header** row for system prompts that carried one.
+
+### Capture
+
+- Claude Code's `x-anthropic-billing-header: …` line, which changes on every request, no longer
+  makes the system prompt look like a new block each time. The header is kept in the block's
+  attributes, the block's identity and stored text use the stable remainder, and token counts
+  still describe what was sent. **Run `contextspy db-upgrade`** (schema v8) to apply this to
+  existing data; blocks whose content was already purged cannot be re-keyed.
+
+### Conversations
+
+- Compact request cards now show the top-right lineage icon tooltip on hover and focus.
+
 ## v0.5.3
 
 ### Capture

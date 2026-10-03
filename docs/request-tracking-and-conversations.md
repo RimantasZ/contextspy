@@ -215,7 +215,7 @@ calculate session totals.
   without expanding the others. Sequence and each conversation default to Compact independently;
   explicit card-density choices are kept only for that session until the page is reloaded.
   A fresh load returns to Compact. Detailed cards
-  show additional metadata and icon tooltips.
+  show additional metadata; both modes explain the top-right icon in a tooltip.
   Click a card once to select it and update the context panel; click it again, or use “Open
   request” in the panel, for Request Detail. As new requests arrive, selection follows the
   newest request automatically. The panel can grow to include request actions in the future.
@@ -248,9 +248,9 @@ opens **Lineage diagnostics**.
 
 ## Request-card corner icons
 
-In detailed mode, hover over a request card's top-right icon for its full explanation. Compact
-mode intentionally has no icon hover tooltip; switch to detailed mode to read one. The
-explanation is also included in the card's accessible label. The same glyph may represent two
+Hover over (or keyboard-focus) a request card's top-right icon for its full explanation, in
+compact and detailed mode alike. Other tooltips, such as the full timestamp, remain
+detailed-mode only. The explanation is also included in the card's accessible label. The same glyph may represent two
 related states, so read the detailed explanation rather than interpreting the shape alone.
 
 | Icon | Tooltip heading and explanation | What it means |

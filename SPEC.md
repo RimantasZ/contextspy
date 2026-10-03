@@ -257,6 +257,11 @@ operates on those types regardless of which provider or wire format produced the
   input blocks only), `content_hash` (sha256, auto-computed by `Block.make()`), `token_count`
   (auto-computed via the tokenizer unless a provider-reported count is passed explicitly),
   `tool_name`, `tool_call_id`, and a free-form `attrs` dict (e.g. `{"is_prefill": true}`).
+  A system prompt that starts with a per-request header line (Claude Code's
+  `x-anthropic-billing-header: …`, see `split_volatile_header()`) is split by `Block.make()`:
+  `content` and `content_hash` describe the stable remainder, so the block keeps one identity across
+  requests, the line is kept in `attrs["volatile_header"]`, and `token_count` is still computed on
+  the full text that was sent.
 - **`BlockType`**: `system_prompt`, `tool_definition`, `user_message`, `assistant_message`,
   `tool_call`, `tool_result`, `assistant_prefill` (reserved — prefill is currently expressed via
   `attrs["is_prefill"]` on an `assistant_message` block, not this type), `thinking`, `other`.
@@ -599,7 +604,7 @@ both of:
    user at `db-upgrade` or `reset-db`) if any data migration is pending — this prevents the app
    from running against a DB with stale/missing derived data.
 
-Currently `SCHEMA_VERSION = 5`; `_migrate_to_v2` backfills `session_seq` (per-session request
+Currently `SCHEMA_VERSION = 8`; `_migrate_to_v2` backfills `session_seq` (per-session request
 ordinal, assigned by `timestamp` order) and reconstructs `blocks`/`block_contents` rows for
 pre-existing requests from their still-present `raw_request_body`/`raw_response_body` (re-running
 the adapter → classify → insert_blocks pipeline). `_migrate_to_v3` copies retained provider JSON
@@ -609,7 +614,12 @@ succeeds. Missing predecessors remain explicitly partial. `_migrate_to_v4` reana
 requests containing inline base64 media so transport encodings are no longer counted as text.
 `_migrate_to_v5` repairs only captures with duplicate or missing request ordinals, preserves valid
 historical labels (including gaps), initializes each capture's atomic sequence counter, and adds
-the uniqueness index.
+the uniqueness index. `_migrate_to_v6` backfills compact conversation stream hints and
+`_migrate_to_v7` re-analyzes retained Anthropic thread requests through exact ID lineage.
+`_migrate_to_v8` re-keys retained system-prompt blocks that start with a per-request header
+(see `Block`): the stable text is stored under its own hash, the header moves to
+`attrs["volatile_header"]`, token counts are untouched, and the now-unreferenced per-request
+content copies are deleted. Blocks whose content was purged keep their old hash.
 
 ---
 
@@ -626,7 +636,7 @@ the uniqueness index.
 | `POST` | `/api/sessions` | Create and start a new session. Body: `{ "name": "string" }`. Returns session object. If another session is active, it is automatically ended first (warning included in response). |
 | `GET` | `/api/sessions` | List all sessions (newest first). |
 | `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session. 404 if missing. |
-| `GET` | `/api/sessions/{id}/lineage` | Complete session lineage graph. Returns exact/inferred continuation edges, diagnostic root-to-leaf paths, conservative conversation groups and membership, uncertainty diagnostics, timing, and per-edge context-delta summaries. Exact parents captured outside the selected session are external nodes. |
+| `GET` | `/api/sessions/{id}/lineage` | Complete session lineage graph. Returns exact/inferred continuation edges, diagnostic root-to-leaf paths, conservative conversation groups and membership, uncertainty diagnostics, timing, and per-edge context-delta summaries. Exact parents captured outside the selected session are external nodes. Each node also carries `conversation_code` (`C<n>` / `AUX`, as on request cards; `null` for external nodes) and `conversation_previous_request_id` / `conversation_next_request_id`, the neighbouring requests in its conversation in session order (`null` for auxiliary and external nodes; neighbours are not proven parent/child links). |
 | `PATCH` | `/api/sessions/{id}` | Rename a session. Body: `{ "name": "string" }`. 422 if blank, 404 if missing. |
 | `POST` | `/api/sessions/{id}/end` | End a session. Retained content is unchanged until the next startup retention pass. 404 if missing. |
 | `DELETE` | `/api/sessions/{id}?delete_requests=bool` | Delete session, optionally cascading its request records. 404 if missing. |
@@ -638,7 +648,7 @@ the uniqueness index.
 | `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
 | `GET` | `/api/requests/{id}` | Full transport-neutral request detail. `request_body`/`response_body` resolve to the stored canonical documents, with outcome, context fidelity/accounting, usage, and compatibility diagnostics when retained. Block data is fetched from the companion `/blocks` endpoint. 404 if missing. |
 | `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, linked_call_id, linked_definition_id, linked_previous_message_id, first_seen_session_seq`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. `first_seen_session_seq` is `null` for session-less or content-less blocks. 404 if request missing. |
-| `GET` | `/api/requests/{id}/context-diff?parent_id={id}` | Occurrence-aware parent/child block mapping with persisted, parent-output-promoted, added, removed, replaced, and unavailable groups plus token/category/type summaries. |
+| `GET` | `/api/requests/{id}/context-diff?parent_id={id}` | Occurrence-aware parent/child block mapping with persisted, parent-output-promoted, added, removed, replaced, and unavailable groups plus token/category/type summaries. Also returns `new_child_block_ids`: the child's input block IDs not already present in the parent (everything except persisted and promoted blocks, so replaced and unclassifiable blocks count as new), which the request-detail **Show** control uses. |
 
 #### Stats
 
@@ -781,8 +791,9 @@ button (always visible, highlighted while paused) above the theme toggle.
 
 ##### `/requests/:id` — Request Detail
 
-- Compact header with status/provider/model/time plus context, generated, duration, model, and
-  cache summary cards. Capture/fidelity/reconstruction warnings appear directly below it.
+- The title is the request's conversation ID (`Request #C1-33`, `Request #AUX-34`, matching the
+  conversation request cards). Compact header with status/provider/model/time plus context,
+  generated, duration, model, and cache summary cards. Capture/fidelity/reconstruction warnings appear directly below it.
 - The request-composition workbench is open by default. Top-level **Request** / **Response**
   direction controls share three views:
   - **Compact:** one equal-size, ordered tile per visible block.
@@ -791,12 +802,23 @@ button (always visible, highlighted while paused) above the theme toggle.
     large blocks usable, so the view is intentionally not an exact area chart.
   - **Raw:** the canonical request/response payload, with the normalized event log available for
     streamed responses.
-- Block controls include content/tool search, type filters, three tile-size choices, a zero-token
-  visibility toggle, and **Jump to largest**. Compact view also marks sequence/turn/tool grouping;
+- A **Conversations** bar links to the lineage **Parent** and **Child** requests, labelled with
+  their IDs. When no direct parent/child was established it offers **Previous in conversation** /
+  **Next in conversation** instead, marked with a warning icon and tooltip (a neighbour is not
+  necessarily the request that was continued); when a real parent/child exists a different
+  neighbour is shown without the warning.
+- Block controls include content/tool search, type filters, three tile-size choices, a **Show**
+  selector (**All**, **New only**, **Highlight new**), a zero-token visibility toggle, and
+  **Jump to largest**. **Show** compares the Request direction with the lineage parent, or with the
+  previous request in the conversation when there is no parent (its tooltip says so); the backend
+  decides which blocks are new (`new_child_block_ids`). **New only** hides blocks already present;
+  **Highlight new** draws them at 50% opacity (a selected block is never faded). It is disabled
+  on the Response tab and when there is no baseline, and its choice persists across Parent/Child
+  navigation but resets when leaving the page. Type-chip token totals stay request-wide. Compact view also marks sequence/turn/tool grouping;
   Proportional view preserves sequence without group separators. Zero-token blocks remain visible
   by default with muted category colours.
 - Selecting a block opens an inspector with type, tokens, position, message, first-seen request,
-  content state, tool-call ID, and jumpable tool/previous-message relationships. Available block
+  content state, tool-call ID, the per-request header when the block had one, and jumpable tool/previous-message relationships. Available block
   content appears in a bounded viewer with JSON pretty-printing, search with next/previous match,
   and copy support. Purged and structural empty content have distinct states.
 - Collapsible **Analytics** contains request-level category composition and tool treemap/table.
