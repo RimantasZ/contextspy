@@ -1,6 +1,19 @@
 # Keep Claude Code's per-request billing header out of block identity
 
-Status: postponed (not started). Tracked in a GitHub issue on the origin repo.
+Status: implemented (GitHub issue #65). Verified on a copy of a real database: first-system-block hashes went from
+413 distinct to 134 across 419 blocks, no stored content starts with the header any more, the two requests from the
+example (#33, #34) share one hash with their original token counts (1653 / 1608), and a second run changes nothing.
+Existing databases need `contextspy db-upgrade` (schema v8).
+
+Implementation notes / deviations from the draft below:
+- `split_volatile_header` and the `Block.make` change only apply to **input system-prompt** blocks (a user message that
+  quotes the header is left alone).
+- `_migrate_to_v8` deletes the per-request `block_contents` copies it replaced once nothing references them. Checked
+  `startup_vacuum`: it only runs when `block_content_days > 0`, so with retention disabled the copies would otherwise
+  stay forever.
+- Tests that hard-coded schema version 7 (`tests/test_backups.py`, `tests/test_migrations.py`) now use
+  `migrations.SCHEMA_VERSION` or version 8; new tests are in `tests/test_volatile_header.py`.
+- UI: `BlockInspector` shows `attrs.volatile_header` as "Per-request header (not part of block identity)".
 
 ## Problem
 

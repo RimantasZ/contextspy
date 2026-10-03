@@ -22,6 +22,7 @@ semantic ``category``; ``db/crud.py`` persists them content-addressed.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -73,6 +74,30 @@ def block_visual_token_totals(blocks: list[dict[str, Any]]) -> dict[str, dict[st
     return totals
 
 
+# Per-request lines an agent injects at the very start of a system prompt. Their values
+# (hashes, previous request ids, turn counters) change on every request, so they must not
+# be part of block identity. Keep this list explicit: add a pattern deliberately when
+# another agent turns out to do the same.
+_VOLATILE_HEADER_PATTERNS = (
+    # Claude Code: "x-anthropic-billing-header: cc_version=…; cch=…; cc_prev_req=…;"
+    re.compile(r"x-anthropic-billing-header:[^\r\n]*(?:\r?\n|$)"),
+)
+
+
+def split_volatile_header(content: str) -> tuple[str, str | None]:
+    """Split a leading per-request header line off ``content``.
+
+    Returns ``(stable_text, header)``; ``header`` is None (and the text untouched) when the
+    content does not start with a known volatile header. Only a header at the very start is
+    removed, so the same text quoted elsewhere in a prompt is left alone.
+    """
+    for pattern in _VOLATILE_HEADER_PATTERNS:
+        match = pattern.match(content)
+        if match:
+            return content[match.end():], match.group(0)
+    return content, None
+
+
 def content_hash(content: str) -> str | None:
     """sha256 of normalised content; None for empty/hidden content."""
     if not content:
@@ -112,7 +137,19 @@ class Block:
         Pass an explicit ``token_count`` for blocks whose content is hidden by
         the provider (e.g. OpenAI reasoning summaries) — content stays "" and
         content_hash stays None, but the provider-reported count is preserved.
+
+        A leading per-request header on a system prompt (see ``split_volatile_header``) is
+        moved to ``attrs["volatile_header"]``: ``content`` and ``content_hash`` describe the
+        stable text so the block keeps its identity across requests, while ``token_count`` is
+        still counted on the full text that was actually sent.
         """
+        if block_type == BlockType.SYSTEM_PROMPT and direction == Direction.INPUT:
+            stable, header = split_volatile_header(content)
+            if header is not None:
+                if token_count is None:
+                    token_count = count_tokens(content)
+                attrs = {**(attrs or {}), "volatile_header": header}
+                content = stable
         return cls(
             direction=direction,
             block_type=block_type,

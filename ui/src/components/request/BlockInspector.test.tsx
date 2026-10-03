@@ -24,4 +24,17 @@ describe('BlockInspector', () => {
     render(<BlockInspector block={null} blocks={[]} onJump={() => {}} onClear={() => {}} />)
     expect(screen.getByText(/metadata and relationships/i)).toBeTruthy()
   })
+
+  it('shows a per-request header stored outside the block content', () => {
+    const block = makeBlock({ id: 1, block_type: 'system_prompt', attrs: { volatile_header: 'x-anthropic-billing-header: cch=1;\n' } })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.getByText('Per-request header (not part of block identity)')).toBeTruthy()
+    expect(screen.getByText('x-anthropic-billing-header: cch=1;')).toBeTruthy()
+  })
+
+  it('omits the header row for ordinary blocks', () => {
+    const block = makeBlock({ id: 1, block_type: 'system_prompt' })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.queryByText(/Per-request header/)).toBeNull()
+  })
 })

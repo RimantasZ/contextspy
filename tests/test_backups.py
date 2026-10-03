@@ -14,6 +14,10 @@ from contextspy import cli
 from contextspy.config import Settings
 from contextspy.db import backups, database, migrations
 
+SCHEMA = migrations.SCHEMA_VERSION
+# Data migrations a database restored from a v6 backup still needs (v7 onwards).
+PENDING_LIST = list(range(7, SCHEMA + 1))
+
 
 def _database(path):
     database.init_db(path)
@@ -53,11 +57,11 @@ def test_manual_backup_includes_uncheckpointed_wal_and_is_standalone(tmp_path):
         source.execute("PRAGMA wal_autocheckpoint=0")
         source.execute("INSERT INTO backup_marker VALUES ('from-wal')")
         source.commit()
-        backup = backups.create_backup(path, 7)
-        assert backup.name.startswith("contextspy_backup_v7_")
+        backup = backups.create_backup(path, SCHEMA)
+        assert backup.name.startswith(f"contextspy_backup_v{SCHEMA}_")
         assert backup.suffix == ".back"
         assert _markers(backup) == ["original", "from-wal"]
-        assert backups.inspect_backup(backup) == 7
+        assert backups.inspect_backup(backup) == SCHEMA
         assert not (tmp_path / f"{backup.name}-wal").exists()
         assert not (tmp_path / f"{backup.name}-shm").exists()
     finally:
@@ -67,9 +71,9 @@ def test_manual_backup_includes_uncheckpointed_wal_and_is_standalone(tmp_path):
 def test_backup_collision_and_failed_copy_never_replace_existing(tmp_path, monkeypatch):
     path = _database(tmp_path / "contextspy.db")
     timestamp = datetime(2026, 9, 30, 18, 15, 4, tzinfo=timezone.utc)
-    first = backups.create_backup(path, 7, timestamp=timestamp)
-    second = backups.create_backup(path, 7, timestamp=timestamp)
-    assert second.name == "contextspy_backup_v7_2026-09-30-181504Z-1.back"
+    first = backups.create_backup(path, SCHEMA, timestamp=timestamp)
+    second = backups.create_backup(path, SCHEMA, timestamp=timestamp)
+    assert second.name == f"contextspy_backup_v{SCHEMA}_2026-09-30-181504Z-1.back"
 
     def fail_copy(_source, destination):
         destination.write_bytes(b"incomplete")
@@ -77,7 +81,7 @@ def test_backup_collision_and_failed_copy_never_replace_existing(tmp_path, monke
 
     monkeypatch.setattr(backups, "_copy_sqlite", fail_copy)
     with pytest.raises(OSError, match="interrupted"):
-        backups.create_backup(path, 7, timestamp=timestamp)
+        backups.create_backup(path, SCHEMA, timestamp=timestamp)
     assert _markers(first) == ["original"]
     assert _markers(second) == ["original"]
     assert not list(tmp_path.glob(".contextspy-backup-*.tmp"))
@@ -99,7 +103,7 @@ def test_list_backups_includes_manual_restore_and_migration_only_for_db(tmp_path
 
 def test_restore_preserves_current_database_without_changing_source(tmp_path):
     path = _database(tmp_path / "contextspy.db")
-    backup = backups.create_backup(path, 7)
+    backup = backups.create_backup(path, SCHEMA)
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("INSERT INTO backup_marker VALUES ('newer')")
         conn.commit()
@@ -110,10 +114,10 @@ def test_restore_preserves_current_database_without_changing_source(tmp_path):
     assert _markers(path) == ["original"]
     assert _markers(backup) == ["original"]
     assert result.rollback_path.name == (
-        "contextspy_backup_v7_pre_restore_2026-09-30-182001Z.back"
+        f"contextspy_backup_v{SCHEMA}_pre_restore_2026-09-30-182001Z.back"
     )
     assert _markers(result.rollback_path) == ["original", "newer"]
-    assert backups.inspect_backup(result.rollback_path) == 7
+    assert backups.inspect_backup(result.rollback_path) == SCHEMA
     database.init_db(path)
     with database.get_engine().connect() as conn:
         assert conn.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
@@ -122,7 +126,7 @@ def test_restore_preserves_current_database_without_changing_source(tmp_path):
 
 def test_restore_refuses_running_database_and_keeps_files(tmp_path):
     path = _database(tmp_path / "contextspy.db")
-    backup = backups.create_backup(path, 7)
+    backup = backups.create_backup(path, SCHEMA)
     database.init_db(path)
     try:
         with pytest.raises(RuntimeError, match="in use"):
@@ -135,7 +139,7 @@ def test_restore_refuses_running_database_and_keeps_files(tmp_path):
 
 def test_restore_refuses_another_open_sqlite_connection(tmp_path):
     path = _database(tmp_path / "contextspy.db")
-    backup = backups.create_backup(path, 7)
+    backup = backups.create_backup(path, SCHEMA)
     reader = sqlite3.connect(path)
     reader.execute("SELECT COUNT(*) FROM requests").fetchone()
     try:
@@ -148,7 +152,7 @@ def test_restore_refuses_another_open_sqlite_connection(tmp_path):
 
 def test_restore_swap_failure_puts_current_database_back(tmp_path, monkeypatch):
     path = _database(tmp_path / "contextspy.db")
-    backup = backups.create_backup(path, 7)
+    backup = backups.create_backup(path, SCHEMA)
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("INSERT INTO backup_marker VALUES ('newer')")
         conn.commit()
@@ -170,7 +174,7 @@ def test_restore_swap_failure_puts_current_database_back(tmp_path, monkeypatch):
 
 def test_restore_reports_rollback_location_if_automatic_rollback_fails(tmp_path, monkeypatch):
     path = _database(tmp_path / "contextspy.db")
-    backup = backups.create_backup(path, 7)
+    backup = backups.create_backup(path, SCHEMA)
     original_rename = Path.rename
 
     def fail_swap_and_rollback(source, destination):
@@ -224,9 +228,9 @@ def test_cli_restore_older_schema_reports_required_migration(tmp_path, monkeypat
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("UPDATE schema_meta SET value = '6' WHERE key = 'schema_version'")
         conn.commit()
-    backup = migrations.create_migration_backup(path, 6, 7)
+    backup = migrations.create_migration_backup(path, 6, SCHEMA)
     with closing(sqlite3.connect(path)) as conn:
-        conn.execute("UPDATE schema_meta SET value = '7' WHERE key = 'schema_version'")
+        conn.execute(f"UPDATE schema_meta SET value = '{SCHEMA}' WHERE key = 'schema_version'")
         conn.commit()
     settings = Settings(config_dir=tmp_path)
     settings.storage.db_path = path
@@ -235,15 +239,15 @@ def test_cli_restore_older_schema_reports_required_migration(tmp_path, monkeypat
 
     result = CliRunner().invoke(cli.app, ["db-restore", backup.name, "--yes"])
     assert result.exit_code == 0, result.output
-    assert "Data migrations required after restore: [7]" in result.output
+    assert f"Data migrations required after restore: {PENDING_LIST}" in result.output
     assert "contextspy db-upgrade" in result.output
-    assert migrations.inspect_migration_state(path) == (6, [7])
-    assert backups.inspect_backup(backups.list_backups(path)[-1]) == 7
+    assert migrations.inspect_migration_state(path) == (6, PENDING_LIST)
+    assert backups.inspect_backup(backups.list_backups(path)[-1]) == SCHEMA
 
 
 def test_cli_status_lists_backups_even_when_server_is_offline(tmp_path, monkeypatch):
     path = _database(tmp_path / "contextspy.db")
-    backup = backups.create_backup(path, 7)
+    backup = backups.create_backup(path, SCHEMA)
     settings = Settings(config_dir=tmp_path)
     settings.storage.db_path = path
     monkeypatch.setattr(Settings, "load", classmethod(lambda cls: settings))
@@ -267,7 +271,7 @@ def test_restore_rejects_non_contextspy_or_newer_database(tmp_path):
         backups.restore_backup(path, wrong)
     assert _markers(path) == ["original"]
 
-    too_new = backups.create_backup(path, 7)
+    too_new = backups.create_backup(path, SCHEMA)
     with closing(sqlite3.connect(too_new)) as conn:
         conn.execute("UPDATE schema_meta SET value = '999' WHERE key = 'schema_version'")
         conn.commit()

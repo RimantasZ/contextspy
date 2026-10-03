@@ -31,7 +31,7 @@ import logging
 import re
 import sqlite3
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, Session, ToolStat
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 logger = logging.getLogger(__name__)
 
@@ -880,6 +880,77 @@ def _migrate_to_v7(db: OrmSession) -> None:
     logger.info("Anthropic thread backfill: %s", counts)
 
 
+# ---------------------------------------------------------------------------
+# v8: per-request system-prompt headers are not part of block identity
+# ---------------------------------------------------------------------------
+
+def _migrate_to_v8(db: OrmSession) -> None:
+    """Re-key retained system prompts that start with a per-request header.
+
+    Claude Code's ``x-anthropic-billing-header`` line changes on every request, so the
+    same system prompt used to get a new content hash each time. For each retained
+    system-prompt block whose stored content starts with such a header, store the stable
+    text under its own hash, point the block at it and keep the header in
+    ``attrs["volatile_header"]``. ``token_count`` is left alone (it was counted on the
+    full text). Blocks whose content was already purged cannot be recovered. Idempotent:
+    a rewritten block no longer starts with the header. Keyset batches bound memory.
+    """
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    from contextspy.analysis.blocks import content_hash, split_volatile_header
+    from contextspy.db.models import BlockContent
+
+    replaced_hashes: set[str] = set()
+    last_id = 0
+    while True:
+        rows = db.execute(
+            select(BlockRecord.id, BlockRecord.content_hash, BlockRecord.attrs, BlockContent.content)
+            .join(BlockContent, BlockRecord.content_hash == BlockContent.hash)
+            .where(
+                BlockRecord.id > last_id,
+                BlockRecord.block_type == "system_prompt",
+                BlockRecord.direction == "input",
+                BlockContent.content.like("x-anthropic-billing-header:%"),
+            )
+            .order_by(BlockRecord.id)
+            .limit(200)
+        ).all()
+        if not rows:
+            break
+        for row in rows:
+            last_id = row.id
+            stable, header = split_volatile_header(row.content)
+            if header is None:
+                continue
+            new_hash = content_hash(stable)
+            if new_hash is not None:
+                db.execute(sqlite_insert(BlockContent).values(
+                    hash=new_hash, content=stable, created_at=datetime.now(timezone.utc),
+                ).on_conflict_do_nothing(index_elements=["hash"]))
+            try:
+                attrs = json.loads(row.attrs) if row.attrs else {}
+            except json.JSONDecodeError:
+                attrs = {}
+            attrs["volatile_header"] = header
+            db.execute(
+                update(BlockRecord).where(BlockRecord.id == row.id)
+                .values(content_hash=new_hash, attrs=json.dumps(attrs))
+            )
+            replaced_hashes.add(row.content_hash)
+        db.flush()
+
+    # The per-request copies are now unreferenced; drop them instead of waiting for retention
+    # cleanup, which does not run when block-content retention is disabled.
+    for old_hash in replaced_hashes:
+        still_used = db.execute(
+            select(BlockRecord.id).where(BlockRecord.content_hash == old_hash).limit(1)
+        ).first()
+        if still_used is None:
+            db.execute(delete(BlockContent).where(BlockContent.hash == old_hash))
+    db.flush()
+    logger.info("v8: re-keyed system prompts with a volatile header (%d content copies)", len(replaced_hashes))
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
@@ -887,4 +958,5 @@ _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     5: _migrate_to_v5,
     6: _migrate_to_v6,
     7: _migrate_to_v7,
+    8: _migrate_to_v8,
 }
