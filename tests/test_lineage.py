@@ -840,10 +840,14 @@ def test_capture_lineage_api_uses_persisted_requests_and_blocks(tmp_path):
     assert detail["delta"]["added"]
 
 
-def test_capture_sequence_allocation_is_unique_under_concurrent_writes(tmp_path):
-    from contextspy.db import crud
+def test_capture_sequence_allocation_is_unique_under_concurrent_writes(tmp_path, monkeypatch):
+    from contextspy.db import crud, database
     from contextspy.db.database import get_db, init_db
 
+    # This test checks sequence uniqueness, not lock latency. It writes through get_db()
+    # directly, without the capture writer's retry, so the production 250 ms busy timeout
+    # would make it fail on a runner where one commit stalls while seven writers wait.
+    monkeypatch.setattr(database, "_SQLITE_BUSY_TIMEOUT_MS", 5000)
     init_db(tmp_path / "concurrent-sequences.db")
     with get_db() as db:
         capture = crud.create_session(db, "concurrent capture")
