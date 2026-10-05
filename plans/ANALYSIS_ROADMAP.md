@@ -1,0 +1,106 @@
+# Context-window analysis roadmap (entry point)
+
+Status: living document. Created 2026-10-05 from a product brainstorm. **Read this first** if you are
+an agent picking up any of the plans listed below; it records the reasoning, the decisions already
+taken with the user, and the dependency order between plans.
+
+## Why this roadmap exists
+
+Capture (proxy, adapters, conversations, lineage) is considered good. The next phase is **analysis
+of the context window across subsequent requests of one agent conversation**:
+
+- what information is added on each request,
+- how long it stays in the context window,
+- what its total token cost is,
+- and how it could be optimised.
+
+The user wants to act as an expert debugging and analysing LLM context windows. Every plan below
+serves one of those four questions.
+
+## Decisions already taken (do not re-litigate without asking the user)
+
+| # | Decision | Notes |
+|---|----------|-------|
+| D1 | **Cost = tokens only.** No monetary values now or in the near future. | The tool's purpose is comparing token cost. |
+| D2 | **No cache-aware cost weighting.** Cache read/write tokens are already stored per request (`requests.cache_read_tokens`, `cache_creation_tokens`) and stay request-level facts. Cache reporting in the new views is **postponed until after the initial implementation**. | Nothing in these plans may allocate cache tokens to blocks. Adding cache columns later is purely additive. |
+| D3 | **Analysis must keep working when content is purged.** Block rows (hash, type, tokens) are kept forever; only content/raw bodies go. Purged blocks render as greyed nodes with token counts, never hidden. | |
+| D4 | **Retention becomes explicit.** Replace implicit "N days at startup" purge with a session lifecycle `active → ended → archived`. Archive is a user action on the session screen, **one-way, with confirmation**. No auto-archive rule in the first version. | See `unconfirmed_drafts/session-archive.md`. |
+| D5 | **Scope of analysis = per conversation by default, with a switch to whole session**, mirroring the dashboard. Conversation membership **must reuse the existing dashboard/lineage definition** (`db/session_lineage_service.py`, `crud._node_group_key`, `annotated_lineage_nodes`), not a new one. | Lineage breaks (compaction, client restart, uncaptured request) are *events the user wants to see*, not things to hide. |
+| D6 | **Drop `plans/postponed/SESSION_ANALYSIS_PLAN.md`** (deleted). It predates lineage, conversations and many other changes. Ideas worth keeping from it are folded into the individual plans (typed `json_path` per block, one bulk query instead of N+1, lazy tokenization of the selected block only, controlled JSON viewer that can reveal a path). | `REQUEST_LINEAGE_PLAN.md` lines ~22 and ~954 still link to the deleted file; fix when that plan is next touched. |
+| D7 | **Classification must be extensible**: future work will differentiate tools, MCP servers, subagents, etc. Use coarse stable enums + free-form JSON detail + `classifier_version`, never a growing enum. | See `request-purpose.md`. |
+| D8 | **Info panel is the shared surface for actions/insights** on blocks and requests (cost/"present in", compare, etc.). Existing panels (block inspector in Request detail, context-change panel in the conversation view) are enough for now; the tree page gets the panel as its right-hand pane, reacting to node selection. No drawer variant, no new panel framework. | See `info-panel.md`. |
+| D9 | **Tree/compare pages must visually match the Request detail page.** Earlier attempts looked bad. Focus: tree representation, node icons, collapse/expand animation, lightweight minimal node labels; details live in the info panel. | See `unconfirmed_drafts/context-tree.md`. |
+| D10 | One plan file per feature. Plans that are confirmed live in `plans/`; plans still being refined live in `plans/unconfirmed_drafts/`. | |
+
+## Repository policies that constrain every plan (from `AGENTS.md`)
+
+- **Analysis logic lives in Python** (`analysis/`, `db/`, routers under `api/routers/`). The frontend
+  only formats and displays what the API computed; it must not re-derive tokens, aggregates,
+  categories, "first seen", "present in", etc.
+- Any `db/models.py` change **must** be accompanied by `db/database.py:_migrate()` (additive column)
+  and/or `db/migrations.py` (`_migrate_to_vN` + `SCHEMA_VERSION` bump; currently 8) for backfill.
+- After changing `ui/src/`, rebuild with `make ui`; run `pytest` and `cd ui && npm test`.
+- Lineage/conversation membership is **derived at read time and never persisted**
+  (`session_lineage_service.py` header). Do not add persisted columns that encode conversation
+  membership (this is why `turn_id` is *derived*, not stored — see `request-purpose.md`).
+
+## Existing building blocks (verified 2026-10-05)
+
+- Block identity: `BlockRecord` (`content_hash`, `token_count`, `tool_name`, `tool_call_id`,
+  `message_index`, `position`, `attrs` JSON); content deduplicated in `block_contents`.
+  Equal non-null `content_hash` within a session = same block (`crud.get_blocks`
+  computes `first_seen_session_seq`).
+- Lineage and diff: `analysis/lineage.py` (`build_lineage_graph`, `context_diff_for_requests`),
+  `analysis/context_diff.py` (occurrence-aware `diff_contexts`: persisted / promoted / replaced / added),
+  `db/session_lineage_service.py` (cached derived graph), `crud.annotated_lineage_nodes`
+  (`conversation_code`, previous/next request in conversation).
+- Block presentation in UI: `ui/src/lib/blockVisuals.ts` (labels, colours, `visualOf`),
+  `ui/src/components/request/BlockInspector.tsx` (block info panel in Request detail),
+  `ui/src/components/dashboard/ContextChangePanel.tsx` (request-level panel in conversation view),
+  `RequestWorkbench`, `ParsedViewer`/`RawViewer`/content viewers under `components/ui/`.
+- Request-level cache fields and `context_accounting` already exist (shown in Request detail metadata).
+- Prior related plan, implemented: `plans/show-new-block-only.md` (baseline = lineage parent, falling
+  back to previous request in the conversation). Reuse its baseline rule wherever a "previous request" is needed.
+
+## Plans and order
+
+```
+                ┌────────────────────┐
+                │ 1 info-panel       │──────────────┐
+                └────────────────────┘              │
+                ┌────────────────────┐              ▼
+                │ 2 request-purpose  │────►  5 context-tree ───► 6 request-compare
+                └────────────────────┘              ▲
+                ┌────────────────────┐              │
+                │ 3 session-archive  │──► 4 hot-spots ──► 7 optimisation-hints (later)
+                └────────────────────┘
+```
+
+| # | Plan | File | Status | Depends on |
+|---|------|------|--------|-----------|
+| 1 | Info panel: shared pieces + "present in"/totals | [`info-panel.md`](info-panel.md) | **confirmed, not started** | — |
+| 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) | **confirmed, not started** | — |
+| 3 | Session lifecycle & explicit archive | [`unconfirmed_drafts/session-archive.md`](unconfirmed_drafts/session-archive.md) | draft | — |
+| 4 | Hot spots (per conversation / per session) | [`unconfirmed_drafts/hot-spots.md`](unconfirmed_drafts/hot-spots.md) | draft | 1, 3 |
+| 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
+| 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
+| 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | idea only | 4 |
+
+Plans 1, 2 and 3 are independent and can proceed in parallel. 1 and 2 set contracts others use,
+so they were written first.
+
+## How to continue
+
+1. Read this file, then the plan you are asked to work on, then `AGENTS.md`.
+2. If the plan is a **draft**, it is *not* an approved spec: list its "Open questions", ask the user,
+   fold the answers in, then move the file from `unconfirmed_drafts/` to `plans/` and update the
+   status table above.
+3. Verify every code reference in a plan before relying on it; plans record the state on 2026-10-05.
+4. When a plan is implemented, mark its status here and in the plan, update `SPEC.md`,
+   `docs/development.md`, `docs/changelog.md` as relevant.
+
+## Cross-cutting open questions
+
+- Verify all adapters (Anthropic, OpenAI chat/responses, Ollama) populate cache fields consistently
+  (follow-up, after initial implementation; see D2).
+- Definition of "dead weight" for hints (plan 7) needs product input.
