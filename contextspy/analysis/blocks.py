@@ -25,7 +25,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from contextspy.analysis.tokenizer import count_tokens
 
@@ -118,6 +118,12 @@ class Block:
     tool_name: str | None = None
     tool_call_id: str | None = None
     attrs: dict = field(default_factory=dict)
+    # What produced the block ("tool:Read", "mcp:server/tool", "bash:git", "user", ...); set by
+    # analysis/purpose.py:classify_request, persisted as blocks.source_key.
+    source_key: str | None = None
+    # Typed path into the canonical request (input blocks) or response (output blocks) JSON
+    # document the block derives from, e.g. ("messages", 3, "content", 1). None = no honest location.
+    json_path: tuple[str | int, ...] | None = None
 
     @classmethod
     def make(
@@ -131,6 +137,7 @@ class Block:
         tool_call_id: str | None = None,
         attrs: dict | None = None,
         token_count: int | None = None,
+        json_path: tuple[str | int, ...] | None = None,
     ) -> "Block":
         """Construct a block, auto-computing content_hash and token_count from content.
 
@@ -160,7 +167,39 @@ class Block:
             tool_name=tool_name,
             tool_call_id=tool_call_id,
             attrs=attrs or {},
+            json_path=json_path,
         )
+
+
+class BlockView(Protocol):
+    """The read-only block shape the classification code needs.
+
+    ``Block`` satisfies it, and so does ``BlockSnapshot`` (built from stored rows), which
+    lets capture and the v9 backfill share one implementation.
+    """
+
+    direction: str
+    block_type: str
+    message_index: int | None
+    tool_name: str | None
+    tool_call_id: str | None
+    attrs: dict
+    content: str | None
+
+
+@dataclass
+class BlockSnapshot:
+    """A ``BlockView`` rebuilt from a persisted block row (content may be purged = None)."""
+
+    direction: str
+    block_type: str
+    message_index: int | None = None
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+    attrs: dict = field(default_factory=dict)
+    content: str | None = None
+    # A hash exists only for non-empty content, so it tells "has text" when content was not loaded.
+    content_hash: str | None = None
 
 
 @dataclass

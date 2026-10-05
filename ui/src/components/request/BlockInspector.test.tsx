@@ -37,4 +37,24 @@ describe('BlockInspector', () => {
     render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
     expect(screen.queryByText(/Per-request header/)).toBeNull()
   })
+
+  it('shows source, activity and the raw JSON location when they are known', () => {
+    const block = makeBlock({
+      id: 5, block_type: 'tool_call', tool_name: 'exec', source_key: 'exec:multi', activity: 'command',
+      json_path: ['input', 4, 'content', 1], attrs: { source: { calls: ['git', 'rg'] } },
+    })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.getByText('exec:multi')).toBeTruthy()
+    expect(screen.getByText('command')).toBeTruthy()
+    expect(screen.getByText('git, rg')).toBeTruthy()
+    expect(screen.getByText('input[4].content[1]')).toBeTruthy()
+  })
+
+  it('omits source rows for blocks that were captured before classification existed', () => {
+    const block = makeBlock({ id: 6 })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.queryByText('Source')).toBeNull()
+    expect(screen.queryByText('Activity')).toBeNull()
+    expect(screen.queryByText('Raw JSON location')).toBeNull()
+  })
 })

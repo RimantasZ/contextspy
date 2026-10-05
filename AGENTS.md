@@ -80,6 +80,11 @@ Both proxy modes feed the same pipeline. The key sequence to understand spans th
    `assistant_prefill`, `uncategorized`, plus `tokens_output_text`/`tokens_output_thinking` on the
    output side. Priority order for category assignment is documented in `classify_blocks()`.
    `per_tool_tokens` produces per-tool breakdowns.
+   Right after classification, `analysis/purpose.py: classify_request` stamps each block's
+   `source_key` (`analysis/sources.py`) and derives the request's `purpose` (structural baseline plus
+   registered agent plug-ins); each adapter also records every block's `json_path`. `analysis/activity.py`
+   maps a `source_key` to an activity label at read time. See docs/development.md ("Request purpose,
+   block source and block location").
 4. **`analysis/tokenizer.py`** — `count_tokens` via tiktoken `o200k_base` (`ENCODING_NAME`; was `cl100k_base` up to 0.3.3). **All counts are
    estimates** (see docs/development.md for per-provider error bands); when the provider reports
    exact counts they are stored alongside.

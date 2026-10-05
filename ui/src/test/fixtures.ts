@@ -14,6 +14,9 @@ export function makeBlock(overrides: Partial<RequestBlock> = {}): RequestBlock {
     tool_name: null,
     tool_call_id: null,
     attrs: {},
+    source_key: null,
+    activity: null,
+    json_path: null,
     linked_call_id: null,
     linked_definition_id: null,
     linked_previous_message_id: null,
@@ -31,7 +34,7 @@ export function makeRequest(overrides: Partial<Request> = {}): Request {
     tokens_file_contents: 0, tokens_conversation_history: 0, tokens_current_user_message: 10, tokens_assistant_prefill: 0, tokens_uncategorized: 0,
     tokens_total_input: 30, tokens_total_output: 5, tokens_output_text: 5, tokens_output_thinking: 0, provider_input_tokens: 30,
     provider_output_tokens: 5, provider_reasoning_tokens: null, cache_read_tokens: 0, cache_creation_tokens: 0, usage_extra: null, session_seq: 1,
-    tokenizer: 'o200k_base', context_accounting: { visible_input_tokens: 30, provider_input_tokens: 30, cached_input_tokens: 0, cache_write_tokens: 0, unattributed_difference: 0, visible_coverage_pct: 100, cached_share_pct: 0 },
+    tokenizer: 'o200k_base', purpose: null, purpose_detail: null, classifier_version: null, context_accounting: { visible_input_tokens: 30, provider_input_tokens: 30, cached_input_tokens: 0, cache_write_tokens: 0, unattributed_difference: 0, visible_coverage_pct: 100, cached_share_pct: 0 },
     request_body: '{"prompt":"hello"}', response_body: '{"text":"hi"}', response_events: null,
     ...overrides,
   }

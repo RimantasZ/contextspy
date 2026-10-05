@@ -195,6 +195,44 @@ Each block's semantic `category` (one of the 8 breakdown categories) and structu
 are kept forever; only the block's `content` (in `block_contents`, deduplicated by content hash
 across requests) is subject to the retention window above.
 
+### Request purpose, block source and block location
+
+Capture stamps three derived facts, all in Python (`analysis/`), none computed in the UI:
+
+- **`requests.purpose` / `purpose_detail` / `classifier_version`** (`analysis/purpose.py`,
+  `classify_request`). The baseline is structural and provider-neutral: it finds the last
+  *conversational* message (messages made only of system/developer instructions or reasoning items are
+  skipped, because providers append them after the real last turn) and returns `tool_continuation`
+  when it carries tool results, `user_turn` when it carries user text, `compaction` when it contains
+  a `compaction_trigger` item, otherwise `unknown`. `purpose_detail` adds the trailing tool names,
+  whether user text accompanied them, and what the response was (`tool_calls`, `mixed`,
+  `final_text`, `empty`). A request whose analysis produced no blocks stays unclassified (NULL).
+  To teach it an agent-specific case, call `register_purpose_detector(agents=..., detector=...)`; a
+  detector may return any purpose (e.g. `housekeeping`). Bump `CLASSIFIER_VERSION` when the logic
+  changes and add a migration that re-derives rows below the new version.
+- **`blocks.source_key`** (`analysis/sources.py`, `resolve_sources`): what produced the block. The
+  baseline is `system|user|assistant|reasoning|other`, `tool:<name>` and `mcp:<server>/<tool>`.
+  Tool calls can be refined by registered parsers (`register_source_parser`), which currently cover
+  JSON-argument shell tools (`Bash`) and Codex's JavaScript `exec`/`js` snippets. Parsers return the
+  program name only (`bash:git`, `exec:rg`, `exec:multi`) and must never record arguments, paths or
+  other command content: the key outlives the block's text. Results inherit the key of their call.
+  A parser that raises, or content that was purged, falls back to the baseline.
+- **`blocks.json_path`**: typed path into the canonical request (input blocks) or response (output
+  blocks) JSON, set by each adapter (`Block.make(..., json_path=(...))`). It points at the smallest
+  node the block derives from: a content-part object, the string value for plain-string content, or
+  the enclosing container when several parts were joined. `None` means there is no honest location
+  (for example the block synthesised for provider-reported reasoning tokens). New adapters must set
+  it and add an exact-path test (`tests/test_json_path.py`), which also checks that every path resolves.
+
+`BlockRecord.to_dict` also returns `activity`, derived at read time from `source_key` by
+`analysis/activity.py` (a plain table, so it can be refined without a migration).
+
+`contextspy db-upgrade` (schema v9) backfills existing rows with the same functions: classification
+from the stored block rows, and `json_path` by re-parsing a retained canonical document and copying
+paths only when the parse matches the stored blocks exactly (same count, block types and content
+hashes per direction). It processes requests in keyset batches, prints progress, and is safe to
+re-run.
+
 ---
 
 ## Token estimation accuracy

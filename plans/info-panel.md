@@ -1,6 +1,6 @@
 # Plan 1: Info panel — shared pieces and "present in" / totals
 
-Status: confirmed, not started. Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md) (read it for decisions D1–D10).
+Status: confirmed, **not started** (it is *Plan 1* of the roadmap, not a slice of WI-0; it follows WI-0). Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md) (read it for decisions D1–D16).
 
 ## Goal
 
@@ -22,7 +22,7 @@ Dependency: shows `source_key`/`activity` from [wi0-data-foundation.md](wi0-data
 
 ## Deliverables
 
-### 1. Backend: block occurrences (no schema change)
+### 1. Backend: block occurrences (no schema change; WI-0's v9 columns are enough — the `source_key` in the response is optional and NULL until WI-0 slice 3)
 
 New pure function module `contextspy/analysis/block_occurrences.py` (aggregation logic belongs in
 Python per `AGENTS.md`), fed by a `crud.py` query that bulk-loads the relevant `BlockRecord` rows.
@@ -45,7 +45,7 @@ Response (all computed server-side; **bounded: run-length ranges, never one row 
 ```json
 {
   "scope": "conversation",
-  "identity": {"kind": "content_hash", "block_type": "tool_result", "tool_name": "Read", "source_key": "builtin:Read"},
+  "identity": {"kind": "content_hash", "block_type": "tool_result", "tool_name": "Read", "source_key": "tool:Read"},
   "ranges": [
     {"from_seq": 12, "to_seq": 40, "occurrence_count": 29, "request_count": 29},
     {"from_seq": 44, "to_seq": 44, "occurrence_count": 2, "request_count": 1}

@@ -32,10 +32,10 @@ serves one of those four questions.
 | D9 | **Tree/compare pages must visually match the Request detail page.** Earlier attempts looked bad. Focus: tree representation, node icons, collapse/expand animation, lightweight minimal node labels; details live in the info panel. | See `unconfirmed_drafts/context-tree.md`. |
 | D16 | **Provider neutrality (user, 2026-10-05):** requests come from Anthropic, OpenAI, Copilot, Ollama, llama.cpp, vLLM and any OpenAI-compatible API. **No decision may be justified by the contents of the author's local DB** (heavily Codex). Agent/provider-specific logic is a pluggable enhancement over a generic baseline; fixtures must cover every adapter. | `analysis-architecture.md` §0. |
 | D11 | **Fidelity:** include `opaque`/`partial` requests in all analysis views, show a per-request fidelity badge, label totals "visible tokens". | See `analysis-architecture.md` §4. |
-| D12 | **Source/purpose at request and block level.** Persist `blocks.source_key` computed at capture via a generic baseline plus a pluggable parser registry (first parser: Codex `exec`/`js`; others name-based, expand with data/feedback from other agents); derive block `activity` from it via a mapping table. | Revises the "derive on read" idea in `request-purpose.md`: args are purged on archive. |
+| D12 | **Source/purpose at request and block level.** Persist `blocks.source_key` computed at capture via a generic baseline plus a pluggable parser registry (parsers shipped: Codex `exec`/`js` and JSON-argument `Bash`; everything else name-based, expand with data/feedback from other agents); derive block `activity` from it via a mapping table. | Revises the "derive on read" idea in `request-purpose.md`: args are purged on archive. |
 | D13 | **`json_path` implemented for all adapters in one change.** | |
 | D14 | **Retention:** time-based purge defaults to off (`0`), setting kept as legacy; explicit archive is the main path. | |
-| D15 | **Batched schema migration v9** for all new columns (requests purpose fields, blocks `source_key`/`json_path`, sessions `archived_at`). | See `analysis-architecture.md` §5. |
+| D15 | **Batched schema migration v9** for all new columns (requests purpose fields, blocks `source_key`/`json_path`, sessions `archived_at`). | **Done** (columns, backfill, tests). See `analysis-architecture.md` §5. |
 | D10 | One plan file per feature. Plans that are confirmed live in `plans/`; plans still being refined live in `plans/unconfirmed_drafts/`. | |
 
 ## Repository policies that constrain every plan (from `AGENTS.md`)
@@ -44,7 +44,7 @@ serves one of those four questions.
   only formats and displays what the API computed; it must not re-derive tokens, aggregates,
   categories, "first seen", "present in", etc.
 - Any `db/models.py` change **must** be accompanied by `db/database.py:_migrate()` (additive column)
-  and/or `db/migrations.py` (`_migrate_to_vN` + `SCHEMA_VERSION` bump; currently 8) for backfill.
+  and/or `db/migrations.py` (`_migrate_to_vN` + `SCHEMA_VERSION` bump; currently 9) for backfill.
 - After changing `ui/src/`, rebuild with `make ui`; run `pytest` and `cd ui && npm test`.
 - Lineage/conversation membership is **derived at read time and never persisted**
   (`session_lineage_service.py` header). Do not add persisted columns that encode conversation
@@ -75,7 +75,23 @@ implementing any plan.** Where it conflicts with an individual plan, it wins and
 - Prior related plan, implemented: `plans/show-new-block-only.md` (baseline = lineage parent, falling
   back to previous request in the conversation). Reuse its baseline rule wherever a "previous request" is needed.
 
+## What is implemented right now (2026-10-05)
+
+Implemented (WI-0, tests green, not released): schema v9; per-request `purpose`/`purpose_detail`/`classifier_version`; per-block
+`source_key` (+ derived `activity`) and `json_path` for all four adapters; the v9 backfill (`contextspy db-upgrade`, ~3 min on a
+7k-request database); `GET /api/requests?purpose=`; purpose chip and block Source/Activity/JSON-location rows in Request detail; docs.
+
+**Not implemented:** everything in Plans 1, 3, 4, 5, 6, 7 (info panel "present in", archive, hot spots, context tree, compare, hints);
+`housekeeping` detection and any agent purpose detectors; source parsers beyond Codex `exec`/`js` and `Bash`; purpose in the request
+list/conversation cards; any use of `json_path` beyond displaying it; cache reporting (D2); the retention-default change (D14).
+Nothing from this roadmap has been released, and the real database has not been upgraded.
+
+**Known issue to resolve:** the author's live DB already contains a `blocks.json_path` column with 6,794 values in a different (leaf-level)
+convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Findings".
+
 ## Plans and order
+
+> **Naming:** *Plans 1–7* are the feature plans in the table below. *WI-0* is the data-foundation work item that precedes them; its own sub-steps are called *slices 1–5* inside `wi0-data-foundation.md`. "Slice" never refers to a numbered plan.
 
 ```
                 ┌────────────────────┐
@@ -91,10 +107,10 @@ implementing any plan.** Where it conflicts with an individual plan, it wins and
 
 | # | Plan | File | Status | Depends on |
 |---|------|------|--------|-----------|
-| 0 | Data foundation: migration v9, capture-time classification, `json_path` | [`wi0-data-foundation.md`](wi0-data-foundation.md) | **spec ready, not started** | — |
-| 1 | Info panel: shared pieces + "present in"/totals | [`info-panel.md`](info-panel.md) | **confirmed, not started** | — |
-| 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **specified in WI-0** | — |
-| 3 | Session lifecycle & explicit archive | [`unconfirmed_drafts/session-archive.md`](unconfirmed_drafts/session-archive.md) | draft | — |
+| 0 | Data foundation: migration v9, capture-time classification, `json_path` | [`wi0-data-foundation.md`](wi0-data-foundation.md) | **implemented** (5/5 slices; slice 1 committed, 2–5 uncommitted; not released; no browser check or real-DB `db-upgrade` yet) | — |
+| 1 | Info panel: shared pieces + "present in"/totals | [`info-panel.md`](info-panel.md) | **confirmed, not started** (WI-0 data it consumes now exists) | WI-0 |
+| 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **baseline implemented in WI-0** (`user_turn`, `tool_continuation`, `compaction`, `unknown`; `housekeeping` and agent detectors NOT implemented; UI shows it in Request detail only) | — |
+| 3 | Session lifecycle & explicit archive | [`unconfirmed_drafts/session-archive.md`](unconfirmed_drafts/session-archive.md) | draft; only the `sessions.archived_at` column exists (WI-0), nothing sets it | — |
 | 4 | Hot spots (per conversation / per session) | [`unconfirmed_drafts/hot-spots.md`](unconfirmed_drafts/hot-spots.md) | draft | 1, 3 |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
 | 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
@@ -105,7 +121,11 @@ so they were written first.
 
 ## How to continue
 
-Implementation order starts with **WI-0** ([`wi0-data-foundation.md`](wi0-data-foundation.md)); it is the agent-ready spec. Its follow-ups (housekeeping/compaction detectors, more source parsers) wait for captures from Copilot, Ollama, llama.cpp and vLLM.
+**WI-0 ([`wi0-data-foundation.md`](wi0-data-foundation.md)) is implemented**; its §17 is the authoritative record of what exists and how it
+differs from its own spec. Next candidates: Plan 1 (info panel "present in") and Plan 3 (archive), which are independent; both can start now.
+WI-0 follow-ups that still wait for captures from Copilot, Ollama, llama.cpp and vLLM: housekeeping/compaction detectors per agent and more
+source parsers. Review the `compaction_trigger` rule (a judgement call) and decide what to do with the legacy leaf-form `json_path` values in
+the author's DB (see WI-0 §17) before treating either as settled.
 
 1. Read this file, then the plan you are asked to work on, then `AGENTS.md`.
 2. If the plan is a **draft**, it is *not* an approved spec: list its "Open questions", ask the user,

@@ -58,14 +58,14 @@ class AnthropicAdapter(WireFormatAdapter):
             if text:
                 blocks.append(Block.make(
                     Direction.INPUT, BlockType.SYSTEM_PROMPT, text,
-                    message_index=-1, attrs=attrs,
+                    message_index=-1, attrs=attrs, json_path=("system",),
                 ))
 
-        for tool in req_body.get("tools", []) or []:
+        for tool_index, tool in enumerate(req_body.get("tools", []) or []):
             name = tool.get("name") or (tool.get("function") or {}).get("name") or "unknown"
             blocks.append(Block.make(
                 Direction.INPUT, BlockType.TOOL_DEFINITION, json.dumps(tool),
-                tool_name=name, attrs=_cache_attrs(tool),
+                tool_name=name, attrs=_cache_attrs(tool), json_path=("tools", tool_index),
             ))
 
         raw_messages = req_body.get("messages", [])
@@ -88,15 +88,17 @@ class AnthropicAdapter(WireFormatAdapter):
                     blocks.append(Block.make(
                         Direction.INPUT, msg_block_type, content, message_index=i,
                         attrs={"is_prefill": True} if is_prefill else {},
+                        json_path=("messages", i, "content"),
                     ))
                 continue
 
             if not isinstance(content, list):
                 continue
 
-            for part in content:
+            for part_index, part in enumerate(content):
                 if not isinstance(part, dict):
                     continue
+                part_path = ("messages", i, "content", part_index)
                 ptype = part.get("type")
                 attrs = _cache_attrs(part)
                 if is_prefill:
@@ -107,7 +109,7 @@ class AnthropicAdapter(WireFormatAdapter):
                     if text:
                         blocks.append(Block.make(
                             Direction.INPUT, msg_block_type, text,
-                            message_index=i, attrs=attrs,
+                            message_index=i, attrs=attrs, json_path=part_path,
                         ))
                 elif ptype == "tool_use":
                     call_id = part.get("id")
@@ -118,12 +120,14 @@ class AnthropicAdapter(WireFormatAdapter):
                         Direction.INPUT, BlockType.TOOL_CALL,
                         json.dumps(part.get("input", {})),
                         message_index=i, tool_name=name, tool_call_id=call_id, attrs=attrs,
+                        json_path=part_path,
                     ))
                 elif ptype == "tool_result":
                     b = Block.make(
                         Direction.INPUT, BlockType.TOOL_RESULT,
                         flatten_content(part.get("content", "")),
                         message_index=i, tool_call_id=part.get("tool_use_id"), attrs=attrs,
+                        json_path=part_path,
                     )
                     blocks.append(b)
                     pending_tool_results.append(b)
@@ -135,13 +139,13 @@ class AnthropicAdapter(WireFormatAdapter):
                         attrs["hidden"] = True  # thinking.display: "omitted" (default on newest models)
                     blocks.append(Block.make(
                         Direction.INPUT, BlockType.THINKING, thinking_text,
-                        message_index=i, attrs=attrs,
+                        message_index=i, attrs=attrs, json_path=part_path,
                     ))
                 elif ptype == "redacted_thinking":
                     attrs["redacted"] = True
                     blocks.append(Block.make(
                         Direction.INPUT, BlockType.THINKING, "",
-                        message_index=i, attrs=attrs,
+                        message_index=i, attrs=attrs, json_path=part_path,
                     ))
                 else:
                     if contains_media_content(part):
@@ -149,6 +153,7 @@ class AnthropicAdapter(WireFormatAdapter):
                     blocks.append(Block.make(
                         Direction.INPUT, BlockType.OTHER, flatten_content(part),
                         message_index=i, attrs={**attrs, "content_type": ptype},
+                        json_path=part_path,
                     ))
 
         # Resolve tool_result -> tool_name now that tool_call_map is complete.
@@ -163,12 +168,15 @@ class AnthropicAdapter(WireFormatAdapter):
     def parse_response(self, resp_body: dict) -> tuple[list[Block], Usage]:
         blocks: list[Block] = []
         content = resp_body.get("content", [])
-        if isinstance(content, str):
+        string_content = isinstance(content, str)
+        if string_content:
             content = [{"type": "text", "text": content}] if content else []
-        for part in content if isinstance(content, list) else []:
+        for part_index, part in enumerate(content if isinstance(content, list) else []):
             if not isinstance(part, dict):
                 continue
-            blocks.append(self._output_block_from_part(part))
+            blocks.append(self._output_block_from_part(
+                part, ("content",) if string_content else ("content", part_index),
+            ))
 
         blocks = [b for b in blocks if b is not None]
         usage_raw = resp_body.get("usage", {}) or {}
@@ -176,26 +184,33 @@ class AnthropicAdapter(WireFormatAdapter):
         reconcile_thinking(blocks, usage)
         return blocks, usage
 
-    def _output_block_from_part(self, part: dict) -> Block | None:
+    def _output_block_from_part(self, part: dict, path: tuple[str | int, ...]) -> Block | None:
         ptype = part.get("type")
         if ptype == "text":
             text = part.get("text", "")
-            return Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, text) if text else None
+            return Block.make(
+                Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, text, json_path=path,
+            ) if text else None
         if ptype == "tool_use":
             name = part.get("name", "")
             return Block.make(
                 Direction.OUTPUT, BlockType.TOOL_CALL, json.dumps(part.get("input", {})),
-                tool_name=name, tool_call_id=part.get("id"),
+                tool_name=name, tool_call_id=part.get("id"), json_path=path,
             )
         if ptype == "thinking":
             text = part.get("thinking", "")
             attrs = {"signature": part["signature"]} if part.get("signature") else {}
             if not text:
                 attrs["hidden"] = True  # thinking.display: "omitted" (default on newest models)
-            return Block.make(Direction.OUTPUT, BlockType.THINKING, text, attrs=attrs)
+            return Block.make(Direction.OUTPUT, BlockType.THINKING, text, attrs=attrs, json_path=path)
         if ptype == "redacted_thinking":
-            return Block.make(Direction.OUTPUT, BlockType.THINKING, "", attrs={"redacted": True})
-        return Block.make(Direction.OUTPUT, BlockType.OTHER, json.dumps(part), attrs={"content_type": ptype})
+            return Block.make(
+                Direction.OUTPUT, BlockType.THINKING, "", attrs={"redacted": True}, json_path=path,
+            )
+        return Block.make(
+            Direction.OUTPUT, BlockType.OTHER, json.dumps(part),
+            attrs={"content_type": ptype}, json_path=path,
+        )
 
     @staticmethod
     def _usage_from_dict(usage: dict) -> Usage:

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Analysis
+
+- Every request now gets an inferred **purpose**: `user_turn` (the last message is the user's),
+  `tool_continuation` (the last message carries tool results, with the tool names), `compaction`
+  (the request ends in an explicit provider compaction trigger) or `unknown`. The request detail
+  header shows it with a one-line summary such as "results from Read, Grep → calls Edit", and
+  `GET /api/requests` accepts `?purpose=`. Trailing system/developer instruction messages and
+  reasoning items are not treated as the last turn.
+- Every block now records a **source** (`tool:Read`, `mcp:github/create_issue`, `bash:git`,
+  `exec:rg`, `user`, `system`, ...) and an **activity** derived from it (read, search, edit, vcs,
+  test, command, web, orchestration, mcp, other). Shell tools are reduced to the program name
+  only; arguments are never stored. The block inspector shows both.
+- Every block records **where in the request or response JSON it came from** (`messages[3].content[1]`),
+  for all four wire formats, and the block inspector shows it. Blocks whose retained documents no
+  longer match what was analysed keep no location rather than a guessed one.
+- Sessions gained an `archived_at` column. Nothing sets it yet.
+- **Run `contextspy db-upgrade`** (schema v9) to fill these in for existing data. It makes a backup
+  first, prints progress, and took about three minutes on a database with ~7,000 requests and
+  1.4 million blocks. Source keys for tool calls whose text was already purged fall back to the
+  tool name; locations are only recoverable where the canonical request/response was retained.
+
 ### Request detail
 
 - Added a **Show** control next to **Size** in the block toolbar: **All**, **New only** (only

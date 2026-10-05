@@ -99,7 +99,7 @@ In the sample only ~31% of distinct input tool_call hashes still have retained c
 In the author's sample most Codex requests are `opaque`, and some partial Claude Code requests show visible/provider ratios ≈ 0.34. The general point: whenever context is held server-side or capture is lossy, visible tokens can be well below provider-reported tokens. 
 User chose (provider-neutral rule): include opaque/partial requests everywhere, show a per-request fidelity badge, and label every total **"visible tokens"**. The synthetic "unaccounted gap" row was offered and **not** chosen (may be revisited). Rule: occurrence/total token numbers are **visible-block tokens**, labelled as such, never presented as the provider's total.
 
-## 5. Batched schema change (one migration, `SCHEMA_VERSION` 8 → 9) — [PROPOSED]
+## 5. Batched schema change (one migration, `SCHEMA_VERSION` 8 → 9) — [DECIDED; **implemented 2026-10-05**: columns, indexes and backfill — see `wi0-data-foundation.md` §17]
 
 Do all at once to avoid repeated migrations while this area is under development:
 

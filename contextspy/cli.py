@@ -874,7 +874,11 @@ def db_upgrade() -> None:
             )
             return
         console.print(f"[bold]Applying data migrations:[/bold] {pending}")
-        applied = migrations.apply_data_migrations(db)
+        migrations.progress_reporter = console.print
+        try:
+            applied = migrations.apply_data_migrations(db)
+        finally:
+            migrations.progress_reporter = None
         thread_backfill = getattr(db, "info", {}).get("anthropic_thread_backfill")
 
     console.print(f"[green]Done.[/green] Applied migrations: {applied}")

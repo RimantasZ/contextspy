@@ -34,6 +34,16 @@ export interface Session {
   started_at: string
   ended_at: string | null
   is_active: boolean
+  /** Set once the session has been archived (one-way); null otherwise. Nothing archives yet. */
+  archived_at?: string | null
+}
+
+/** Request-local refinements of `purpose`; every key is optional and new keys may appear. */
+export interface PurposeDetail {
+  has_user_text?: boolean
+  trailing_tool_results?: string[]
+  response?: { kind: 'tool_calls' | 'mixed' | 'final_text' | 'empty'; tool_calls?: string[] }
+  [key: string]: unknown
 }
 
 export interface Request {
@@ -80,6 +90,10 @@ export interface Request {
   usage_extra: Record<string, unknown> | null
   session_seq: number | null
   tokenizer: string
+  /** Inferred main purpose (user_turn, tool_continuation, compaction, housekeeping, unknown); null = not classified. */
+  purpose: string | null
+  purpose_detail: PurposeDetail | null
+  classifier_version: number | null
   context_accounting: {
     visible_input_tokens: number
     provider_input_tokens: number | null
@@ -213,6 +227,12 @@ export interface RequestBlock {
   tool_name: string | null
   tool_call_id: string | null
   attrs: Record<string, unknown>
+  /** What produced the block, e.g. `tool:Read`, `mcp:github/create_issue`, `bash:git`; null before classification. */
+  source_key: string | null
+  /** Kind of work the source represents (read, search, edit, vcs, test, command, web, orchestration, mcp, other). */
+  activity: string | null
+  /** Typed path into the canonical request/response JSON this block came from; null when unknown. */
+  json_path: (string | number)[] | null
   linked_call_id: number | null
   linked_definition_id: number | null
   linked_previous_message_id: number | null

@@ -335,6 +335,7 @@ def list_requests(
     model: str | None = None,
     q: str | None = None,
     status_category: str | None = None,
+    purpose: str | None = None,
     sort_by: str = 'timestamp',
     sort_dir: str = 'desc',
     limit: int = 50,
@@ -356,6 +357,12 @@ def list_requests(
             stmt = stmt.where(Request.agent == agent)
     if model:
         stmt = stmt.where(Request.model == model)
+    if purpose:
+        # Requests that were never classified read as "unknown", like the agent filter.
+        if purpose == "unknown":
+            stmt = stmt.where(or_(Request.purpose.is_(None), Request.purpose == purpose))
+        else:
+            stmt = stmt.where(Request.purpose == purpose)
     if q:
         like = f"%{q}%"
         stmt = stmt.where(
@@ -592,6 +599,11 @@ def insert_blocks(db: OrmSession, request_id: str, blocks: list["Block"]) -> Non
             tool_name=b.tool_name,
             tool_call_id=b.tool_call_id,
             attrs=json.dumps(b.attrs) if b.attrs else None,
+            source_key=b.source_key,
+            json_path=(
+                json.dumps(list(b.json_path), separators=(",", ":"))
+                if b.json_path is not None else None
+            ),
         ))
     db.flush()
 
@@ -919,7 +931,7 @@ _DISPLAY_REQUEST_COLUMNS = (
     Request.model, Request.duration_ms, Request.status_code,
     Request.invocation_outcome, Request.context_fidelity,
     Request.tokens_total_input, Request.tokens_total_output,
-    Request.provider_input_tokens,
+    Request.provider_input_tokens, Request.purpose,
 )
 
 
@@ -1040,6 +1052,7 @@ def _flow_item(r: Request) -> dict:
         "status_code": r.status_code, "invocation_outcome": r.invocation_outcome,
         "tokens_total_input": r.tokens_total_input,
         "tokens_total_output": r.tokens_total_output,
+        "purpose": r.purpose,
     }
 
 

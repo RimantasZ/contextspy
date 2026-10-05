@@ -28,6 +28,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from contextspy.analysis.activity import activity_for
 from contextspy.analysis.tokenizer import TOKENIZER_ID
 
 
@@ -355,6 +356,7 @@ class BlockRecord(Base):
             "tool_call_id": self.tool_call_id,
             "attrs": json.loads(self.attrs) if self.attrs else {},
             "source_key": self.source_key,
+            "activity": activity_for(self.source_key),
             "json_path": json.loads(self.json_path) if self.json_path else None,
             "linked_call_id": linked_call_id,
             "linked_definition_id": linked_definition_id,

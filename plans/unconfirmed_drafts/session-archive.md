@@ -46,7 +46,7 @@ Options: (a) remove `[retention]` purge entirely (disk grows until user archives
 
 ## Migration
 
-Additive column in `_migrate()`; no backfill required. Existing sessions whose content was already
+**`sessions.archived_at` already exists (added by WI-0, schema v9, committed in `528f3db`; `Session.to_dict` returns `archived_at`; nothing sets it yet).** The archive action itself, status derivation and UI are still to do. No backfill required. Existing sessions whose content was already
 purged by the old policy remain `ended` (not marked archived) — consider whether to show them as
 "content expired" in the UI via existing `content_purged` flags.
 

@@ -1,6 +1,19 @@
 # WI-0: Data foundation — migration v9, capture-time classification, `json_path`
 
-Status: **confirmed spec, ready to implement.** Written 2026-10-05.
+Status: **implemented (all five slices) on 2026-10-05. Slice 1 is committed (`528f3db`); slices 2–5 are in the working tree, uncommitted. Not released.**
+Spec written 2026-10-05. Where the code differs from the text below, §17 (Implementation log) is authoritative.
+
+| Slice (§13) | Status |
+|-------------|--------|
+| 1. Schema v9 | **done** |
+| 2. `Block` fields, `insert_blocks`, `json_path` in all adapters | **done** |
+| 3. `sources.py` / `purpose.py` / `activity.py` + capture integration | **done** |
+| 4. Backfill (`_migrate_to_v9`) | **done**, dry-run on a copy of a real 6.6 GB database (see §17) |
+| 5. API filter + UI surfaces + docs | **done** (UI covers Request detail only; see §17 for what is *not* surfaced) |
+
+Verification at completion: `pytest` 467 passed; `cd ui && npm run check` (types, lint, 142 tests, knip, build) passed.
+Not done: a manual check of the new UI in a running browser, and a run of `contextspy db-upgrade` on the real database.
+
 Parent: [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md) (decisions D1–D16). Rationale and measurements:
 [analysis-architecture.md](analysis-architecture.md) (it wins on conflicts). Refines: [request-purpose.md](request-purpose.md).
 
@@ -309,3 +322,72 @@ New: `tests/test_sources.py`, `tests/test_purpose.py`, `tests/test_activity.py`,
 - Backfill duration on large DBs: batch + progress logging; measure on a copy before release.
 - `exec` parsing is heuristic: the NULL/`exec:js`/baseline fallbacks are deliberate, and wrong keys must be impossible to cause data loss (they only affect labels).
 - `evidence_revision` (lineage cache key) does not include these columns; they do not affect lineage.
+
+## 17. Implementation log
+
+### Slice 1 — schema v9 (done 2026-10-05)
+Implemented as specified in §2, with these specifics (verify in code before relying on them):
+- `db/models.py`: `Request.purpose/purpose_detail/classifier_version`, `BlockRecord.source_key/json_path`, `Session.archived_at`;
+  indexes `idx_blocks_source_key`, `idx_requests_session_purpose (session_id, purpose)`.
+  `Request.to_dict` adds `purpose`, `purpose_detail` (decoded dict|None), `classifier_version`;
+  `BlockRecord.to_dict` adds `source_key`, `json_path` (decoded list|None); `Session.to_dict` adds `archived_at` (no `status` yet).
+  **Not yet added:** `BlockRecord.to_dict["activity"]` — arrives with `analysis/activity.py` in slice 3.
+  Consequence: §9 backend payload work for these fields is already done; remaining in slice 5 are the `?purpose=` filter, any hand-built request dicts (dashboard/conversation cards) and the UI.
+- `db/database.py:_migrate()`: six `ALTER TABLE … ADD COLUMN` entries (idempotent via the existing try/except) and two `CREATE INDEX IF NOT EXISTS`.
+- `db/migrations.py`: `SCHEMA_VERSION = 9`; `_migrate_to_v9` registered as a **logging no-op** (replaced in slice 4).
+- Tests: new `tests/test_schema_v9.py` (v8-shaped DB upgrade + idempotency, NULL tolerance of pre-upgrade rows, round-trip of v9 values through `to_dict`, registration). Updated hard-coded expectations in `tests/test_migrations.py` (`pending == [2..9]`, backup name `v1_to_v9`) and `tests/test_volatile_header.py` (`SCHEMA_VERSION >= 8`).
+- Full suite at the time: 325 passed. (The real-database dry run was done with slice 4; see below.)
+- Operational effect to remember: any database below v9 now has pending migration 9, so `contextspy start` refuses to run until `contextspy db-upgrade` is executed (existing gating behaviour, `cli.py:_abort_if_migrations_pending`).
+
+### Slices 2–5 (done 2026-10-05) — what exists, and how it differs from the spec above
+
+**Slice 2** — `Block.json_path`/`Block.source_key` and `Block.make(json_path=)`; `crud.insert_blocks` persists both;
+all four adapters set `json_path` at every `Block.make` call site. Block order, hashes, tokens and categories are unchanged
+(the whole pre-existing suite passes untouched). `tests/test_json_path.py` asserts exact paths for every block type and that
+every path resolves and holds the block's text. Differences from §6.2: Ollama request paths are `["messages", i, "content"]`
+(not `["messages", i]`); a bare-string Responses `input` has path `["input"]`; a single-object `input` has `["input", "content"]`;
+an Anthropic string response `content` has path `["content"]`; Chat uses the choice's list position, not its `index` field.
+The block synthesised by `reconcile_thinking` for provider-reported reasoning has no path (by design).
+
+**Slice 3** — new `analysis/sources.py`, `analysis/purpose.py`, `analysis/activity.py`; wired into `proxy/addon.py:_save_request`.
+Differences from §4–§5:
+- `resolve_sources` is pure (returns `list[SourceInfo]`); `classify_request` applies the result. It returns **`None`** (not a
+  classification) when the analysis produced no blocks, so unparsed requests stay NULL, including when an adapter failed.
+- **Tool definitions keep the baseline key (`tool:Bash`)** while calls/results carry the parsed key (`bash:git`); §4.1's
+  "definition, call and result share one key" only holds without a parser.
+- **Both parsers shipped**: Codex `exec`/`js` (§4.3) and `Bash`/`bash` (§4.4). Shared `shell_program` also skips
+  `sudo -u x`, `env -u X`, `nice -n`, full-path wrappers and `(cd x && cmd)` forms.
+- `purpose_detail.response.tool_calls` lists **tool names** (not source keys).
+- **Baseline purpose rule was extended after testing on real data** (not in §5.2): messages consisting only of
+  `system_prompt` or `thinking` blocks are skipped when finding the last conversational message (providers append
+  system/developer instruction messages and reasoning items after the real last turn; without this ~460 Claude Code requests were
+  `unknown`), and a tail containing a `provider_item_type == "compaction_trigger"` item yields `compaction`. This is a
+  wire-format signal the OpenAI Responses adapter already models, not an agent heuristic, but it is a judgement call: review it.
+  `housekeeping` is still reserved and never emitted.
+- `BlockSnapshot` carries `content_hash` so "assistant produced text" is known for stored rows whose content was not loaded.
+- `activity_for` vocabulary: read, search, edit, vcs, test, command, web, orchestration, mcp, other. `BlockRecord.to_dict` now
+  returns `activity`.
+
+**Slice 4** — `_migrate_to_v9` as specified in §8: keyset batches of 100 requests, bulk `UPDATE`s by primary key, progress via the log and
+`migrations.progress_reporter` (set by `contextspy db-upgrade`), summary in `db.info["v9_backfill"]`. Only fills NULL `json_path`
+values. **No `--skip-json-path` option** (the spec's fallback was not needed).
+Dry run on a copy of the author's database (6,949 requests, 1.37M blocks, schema v8): **174 s**, 1,372,152 source keys, 458,964 paths,
+0 mismatches, 0 re-parse failures (a second run with classification reset took 38 s because paths already existed).
+
+**Slice 5** — `GET /api/requests?purpose=` (+ `crud.list_requests(purpose=)`; `unknown` also matches NULL); `purpose` added to the
+conversation flow items (`crud._flow_item`; the UI does not use it yet); UI: types, `lib/purpose.ts`, `lib/jsonPath.ts`,
+purpose chip + one-line summary in `RequestSummaryHeader`, Source / Activity / Commands-in-call / Raw JSON location rows in
+`BlockInspector`. Docs: `SPEC.md`, `docs/development.md`, `docs/changelog.md`, `AGENTS.md`.
+**Not surfaced in the UI:** purpose chips in the request list (`RequestTable`) or conversation cards, a purpose filter control,
+and jumping from the JSON location to the raw JSON viewer (that is the future context-tree plan).
+
+### Findings from the dry run (read before releasing)
+1. **The live database already has a `blocks.json_path` column** that this work did not add (live schema is still v8, with none of the other
+   v9 columns). 6,794 blocks from 2026-08-28 (7 requests) hold values in a *different convention*: leaf paths such as
+   `["input", 55, "input"]` or `["input", 259, "output"]`, where this implementation records the item (`["input", 259]`). They come from an
+   earlier prototype, probably in the `contextspy-gpt` worktree. The backfill never overwrites existing values, so those rows keep the
+   leaf form (still valid paths, just more specific); new and backfilled rows use the item/part form. Decide whether to normalise them.
+2. Real-data purpose distribution after the final rule: Claude Code 366 `tool_continuation` / 215 `user_turn` / 4 `unknown`;
+   Codex 5,612 / 295 / 405 `unknown` / 40 `compaction`; 12 requests without blocks stay NULL.
+3. `tool:exec` remains the key for Codex calls whose content was purged; only retained tool-call text can be parsed.
+

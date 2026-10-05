@@ -256,7 +256,9 @@ operates on those types regardless of which provider or wire format produced the
   for turn-independent blocks like the system prompt), `category` (assigned by the classifier,
   input blocks only), `content_hash` (sha256, auto-computed by `Block.make()`), `token_count`
   (auto-computed via the tokenizer unless a provider-reported count is passed explicitly),
-  `tool_name`, `tool_call_id`, and a free-form `attrs` dict (e.g. `{"is_prefill": true}`).
+  `tool_name`, `tool_call_id`, a free-form `attrs` dict (e.g. `{"is_prefill": true}`), `source_key`
+  (what produced the block, §5.2 *Request purpose and block source*) and `json_path` (typed path into
+  the canonical request/response JSON the block derives from, or `None`).
   A system prompt that starts with a per-request header line (Claude Code's
   `x-anthropic-billing-header: …`, see `split_volatile_header()`) is split by `Block.make()`:
   `content` and `content_hash` describe the stable remainder, so the block keeps one identity across
@@ -332,6 +334,31 @@ are derived from those documents once. `raw_request_body` retains observed trans
 `raw_response_body` remains a compatibility field, and `response_events` optionally stores the
 normalized application event/frame log. Reconstruction and analysis have separate error
 boundaries, so a parser failure does not discard canonical JSON.
+
+#### Request purpose and block source (`analysis/purpose.py`, `sources.py`, `activity.py`)
+
+Derived at capture time, in Python, and persisted (§5.4):
+
+- **Request purpose.** `classify_request(analyzed, agent=..., has_response=...)` returns a
+  `RequestClassification(purpose, purpose_detail, classifier_version)`, or `None` when the analysis
+  produced no blocks. The structural baseline looks at the last *conversational* message (messages made
+  only of `system_prompt` or `thinking` blocks are skipped): tool results ⇒ `tool_continuation`, a
+  non-prefill user message ⇒ `user_turn`, a `compaction_trigger` item ⇒ `compaction`, otherwise
+  `unknown`. `purpose_detail` (JSON object, all keys optional): `trailing_tool_results` (tool names of
+  the trailing run of result messages), `has_user_text`, and `response` = `{kind: tool_calls|mixed|final_text|empty,
+  tool_calls: [names]}` when a response was captured. `housekeeping` is reserved for agent plug-ins
+  registered with `register_purpose_detector`. `classifier_version` records which logic produced the row.
+- **Block source.** `resolve_sources(blocks, agent=...)` returns one `SourceInfo(key, detail)` per block.
+  Keys: `system`, `user`, `assistant`, `reasoning`, `other`, `tool:<name>`, `mcp:<server>/<tool>` (from
+  `mcp__<server>__<tool>`), and `<wrapper>:<program>` from registered tool-call parsers
+  (`register_source_parser`; shipped: JSON-argument `Bash` ⇒ `bash:<program>`, Codex `exec`/`js` JavaScript
+  snippets ⇒ `exec:<program>`, `exec:multi` with `attrs["source"] = {"calls": [...]}`, or `exec:js`).
+  A tool result inherits its call's key. Parsers store program names only, never arguments.
+- **Activity.** `activity_for(source_key)` maps a key to `read|search|edit|vcs|test|command|web|orchestration|mcp|other`
+  (`None` for conversational keys). Derived at read time and not stored.
+- **JSON location.** Adapters set `Block.json_path` as they traverse the canonical document, pointing at
+  the smallest node the content derives from (a content-part object, a plain string, or the enclosing
+  container when parts were joined); `None` when there is no honest location.
 
 #### Content Categories (`analysis/classifier.py`)
 
@@ -447,7 +474,8 @@ CREATE TABLE sessions (
     started_at  DATETIME NOT NULL,
     ended_at    DATETIME,
     is_active   INTEGER NOT NULL DEFAULT 1, -- 1 = active, 0 = ended
-    next_request_seq INTEGER NOT NULL DEFAULT 1
+    next_request_seq INTEGER NOT NULL DEFAULT 1,
+    archived_at DATETIME                    -- reserved for the explicit archive action; NULL for now
 );
 
 CREATE TABLE requests (
@@ -502,6 +530,10 @@ CREATE TABLE requests (
 
     session_seq                     INTEGER,            -- this request's ordinal within its session
 
+    purpose                         TEXT,               -- user_turn | tool_continuation | compaction | housekeeping | unknown; NULL = not classified
+    purpose_detail                  TEXT,               -- JSON object, see §5.2
+    classifier_version              INTEGER,            -- version of the logic that produced purpose/purpose_detail
+
     tokenizer                       TEXT NOT NULL DEFAULT 'tiktoken/o200k_base',
 
     -- Raw content — purged per [retention] settings
@@ -518,6 +550,7 @@ CREATE INDEX idx_requests_provider ON requests(provider);
 CREATE INDEX idx_requests_provider_response ON requests(provider, provider_response_id);
 CREATE INDEX idx_requests_predecessor_response ON requests(predecessor_response_id);
 CREATE UNIQUE INDEX idx_requests_session_seq_unique ON requests(session_id, session_seq);
+CREATE INDEX idx_requests_session_purpose ON requests(session_id, purpose);
 
 CREATE TABLE tool_stats (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -551,12 +584,15 @@ CREATE TABLE blocks (
     token_count   INTEGER NOT NULL DEFAULT 0,
     tool_name     TEXT,
     tool_call_id  TEXT,
-    attrs         TEXT                -- JSON, e.g. {"is_prefill": true}
+    attrs         TEXT,               -- JSON, e.g. {"is_prefill": true}
+    source_key    TEXT,               -- what produced the block, e.g. 'tool:Read', 'bash:git'; see §5.2
+    json_path     TEXT                -- JSON array: path into the canonical request/response document, or NULL
 );
 
 CREATE INDEX idx_blocks_request ON blocks(request_id);
 CREATE INDEX idx_blocks_content_hash ON blocks(content_hash);
 CREATE INDEX idx_blocks_type ON blocks(block_type);
+CREATE INDEX idx_blocks_source_key ON blocks(source_key);
 
 -- Tracks the schema/data-migration state (see "Schema Migrations" below)
 CREATE TABLE schema_meta (
@@ -604,7 +640,7 @@ both of:
    user at `db-upgrade` or `reset-db`) if any data migration is pending — this prevents the app
    from running against a DB with stale/missing derived data.
 
-Currently `SCHEMA_VERSION = 8`; `_migrate_to_v2` backfills `session_seq` (per-session request
+Currently `SCHEMA_VERSION = 9`; `_migrate_to_v2` backfills `session_seq` (per-session request
 ordinal, assigned by `timestamp` order) and reconstructs `blocks`/`block_contents` rows for
 pre-existing requests from their still-present `raw_request_body`/`raw_response_body` (re-running
 the adapter → classify → insert_blocks pipeline). `_migrate_to_v3` copies retained provider JSON
@@ -620,6 +656,13 @@ the uniqueness index. `_migrate_to_v6` backfills compact conversation stream hin
 (see `Block`): the stable text is stored under its own hash, the header moves to
 `attrs["volatile_header"]`, token counts are untouched, and the now-unreferenced per-request
 content copies are deleted. Blocks whose content was purged keep their old hash.
+`_migrate_to_v9` backfills request `purpose`/`purpose_detail`/`classifier_version`, block `source_key`
+(and `attrs["source"]` detail) and block `json_path` for existing rows. Classification runs from the stored
+block rows with the same functions capture uses (tool-call arguments are only available where block content
+was not purged; otherwise the key falls back to `tool:<name>`). `json_path` is copied from a re-parse of a
+retained canonical request/response only when the parse matches the stored blocks exactly per direction;
+otherwise it stays NULL. Requests without block rows are left untouched. Batched, idempotent, with progress
+reporting through `db-upgrade`; the `archived_at` session column is added by `_migrate()` and needs no backfill.
 
 ---
 
@@ -645,9 +688,9 @@ content copies are deleted. Blocks whose content was purged keep their old hash.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
+| `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `purpose` (`user_turn`\|`tool_continuation`\|`compaction`\|`housekeeping`\|`unknown`; `unknown` also matches unclassified requests), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
 | `GET` | `/api/requests/{id}` | Full transport-neutral request detail. `request_body`/`response_body` resolve to the stored canonical documents, with outcome, context fidelity/accounting, usage, and compatibility diagnostics when retained. Block data is fetched from the companion `/blocks` endpoint. 404 if missing. |
-| `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, linked_call_id, linked_definition_id, linked_previous_message_id, first_seen_session_seq`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. `first_seen_session_seq` is `null` for session-less or content-less blocks. 404 if request missing. |
+| `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, source_key, activity, json_path, linked_call_id, linked_definition_id, linked_previous_message_id, first_seen_session_seq`. Request payloads additionally carry `purpose`, `purpose_detail` and `classifier_version`; session payloads carry `archived_at`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. `first_seen_session_seq` is `null` for session-less or content-less blocks. 404 if request missing. |
 | `GET` | `/api/requests/{id}/context-diff?parent_id={id}` | Occurrence-aware parent/child block mapping with persisted, parent-output-promoted, added, removed, replaced, and unavailable groups plus token/category/type summaries. Also returns `new_child_block_ids`: the child's input block IDs not already present in the parent (everything except persisted and promoted blocks, so replaced and unclassifiable blocks count as new), which the request-detail **Show** control uses. |
 
 #### Stats
