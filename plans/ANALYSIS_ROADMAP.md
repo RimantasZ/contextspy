@@ -30,6 +30,11 @@ serves one of those four questions.
 | D7 | **Classification must be extensible**: future work will differentiate tools, MCP servers, subagents, etc. Use coarse stable enums + free-form JSON detail + `classifier_version`, never a growing enum. | See `request-purpose.md`. |
 | D8 | **Info panel is the shared surface for actions/insights** on blocks and requests (cost/"present in", compare, etc.). Existing panels (block inspector in Request detail, context-change panel in the conversation view) are enough for now; the tree page gets the panel as its right-hand pane, reacting to node selection. No drawer variant, no new panel framework. | See `info-panel.md`. |
 | D9 | **Tree/compare pages must visually match the Request detail page.** Earlier attempts looked bad. Focus: tree representation, node icons, collapse/expand animation, lightweight minimal node labels; details live in the info panel. | See `unconfirmed_drafts/context-tree.md`. |
+| D11 | **Fidelity:** include `opaque`/`partial` requests in all analysis views, show a per-request fidelity badge, label totals "visible tokens". 80% of captured Codex requests are opaque. | See `analysis-architecture.md` §4. |
+| D12 | **Source/purpose at request and block level.** Persist `blocks.source_key` computed at capture (args-aware for `exec`/`js` now, name-based for others, expand with data/feedback); derive block `activity` from it via a mapping table. | Revises the "derive on read" idea in `request-purpose.md`: args are purged on archive. |
+| D13 | **`json_path` implemented for all adapters in one change.** | |
+| D14 | **Retention:** time-based purge defaults to off (`0`), setting kept as legacy; explicit archive is the main path. | |
+| D15 | **Batched schema migration v9** for all new columns (requests purpose fields, blocks `source_key`/`json_path`, sessions `archived_at`). | See `analysis-architecture.md` §5. |
 | D10 | One plan file per feature. Plans that are confirmed live in `plans/`; plans still being refined live in `plans/unconfirmed_drafts/`. | |
 
 ## Repository policies that constrain every plan (from `AGENTS.md`)
@@ -43,6 +48,13 @@ serves one of those four questions.
 - Lineage/conversation membership is **derived at read time and never persisted**
   (`session_lineage_service.py` header). Do not add persisted columns that encode conversation
   membership (this is why `turn_id` is *derived*, not stored — see `request-purpose.md`).
+
+## Architecture review
+
+[`analysis-architecture.md`](analysis-architecture.md) holds measured data facts (Codex = 93% of requests, a
+4,032-request / 791k-block session, 80% opaque), the data-model decisions, API contracts (bounded,
+run-length occurrences, revision-cached, fidelity-aware) and the batched migration. **Read it before
+implementing any plan.** Where it conflicts with an individual plan, it wins and the plan must be updated.
 
 ## Existing building blocks (verified 2026-10-05)
 
@@ -78,6 +90,7 @@ serves one of those four questions.
 
 | # | Plan | File | Status | Depends on |
 |---|------|------|--------|-----------|
+| 0 | Migration v9 + capture-time classification (data foundation) | [`analysis-architecture.md`](analysis-architecture.md) §5, [`request-purpose.md`](request-purpose.md) | spec ready | — |
 | 1 | Info panel: shared pieces + "present in"/totals | [`info-panel.md`](info-panel.md) | **confirmed, not started** | — |
 | 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) | **confirmed, not started** | — |
 | 3 | Session lifecycle & explicit archive | [`unconfirmed_drafts/session-archive.md`](unconfirmed_drafts/session-archive.md) | draft | — |

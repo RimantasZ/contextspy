@@ -1,6 +1,6 @@
 # Plan 2: Request purpose and extensible classification
 
-Status: confirmed, not started. Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md) (decisions D1–D10).
+Status: confirmed, not started. **Revised 2026-10-05 per `analysis-architecture.md` (read it first; it wins on conflicts).** Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md) (decisions D1–D10).
 
 > Naming: this was "C. Request purpose inference" in the brainstorm and briefly called "classification
 > plan". It is deliberately **not** about `analysis/classifier.py` token *categories*; those stay as they are.
@@ -71,7 +71,14 @@ Instead:
   (`crud.annotated_lineage_nodes`), cached with the graph. Bump `ANALYSIS_VERSION` if graph output changes.
 - Breaks in lineage (compaction, restarts) start a new turn run and are surfaced, not hidden (D5).
 
-### Block source (derived at read time: no storage)
+> **REVISION (D12/D13/D15):** block `source` is now **persisted** as `blocks.source_key` (see
+> `analysis-architecture.md` §2.2) because Codex's generic `exec` tool needs argument parsing and args
+> content is purged on archive. The section below describes the original read-time idea and is kept
+> for the descriptor shape; implement persistence + `activity` mapping as in the architecture doc.
+> Schema changes are part of the batched v9 migration, not an independent `_migrate_to_v9`.
+> Housekeeping/compaction heuristics must be validated on **Codex** captures too (93% of data).
+
+### Block source (originally: derived at read time)
 
 `BlockRecord.tool_name` is already stored, so a block's *source* can be computed on read:
 

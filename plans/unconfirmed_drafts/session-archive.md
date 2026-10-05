@@ -38,12 +38,11 @@ long-running process never purges at all (inconsistent). Retention should be exp
 - Request detail states: raw/canonical body purged because archived vs capture failed vs paused.
 - CLI parity: `contextspy session archive <id>` (check existing session commands in `cli.py`).
 
-## Retention settings fate (open)
+## Retention settings fate (DECIDED, D14: option b)
 
 Options: (a) remove `[retention]` purge entirely (disk grows until user archives/deletes);
 (b) keep it but default to `0` (off) and document as legacy; (c) replace with an optional
-"auto-archive ended sessions older than N days" later. Recommend (b) for compatibility, then (c) if
-users ask. Needs user decision.
+"auto-archive ended sessions older than N days" later. **User chose (b):** default both retention values to `0` (off), keep the setting as legacy. (c) stays a possible later addition. Evidence: stored bodies ≈ 2 GB locally, canonical request bodies 1.09 GB (see `analysis-architecture.md`).
 
 ## Migration
 

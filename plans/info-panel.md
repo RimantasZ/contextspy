@@ -38,34 +38,45 @@ Endpoint (additive):
 GET /api/requests/{request_id}/blocks/{block_id}/occurrences?scope=conversation|session
 ```
 
-Response (all computed server-side):
+Response (all computed server-side; **bounded: run-length ranges, never one row per occurrence** — the heaviest
+real block occurs 32,254 times, see `analysis-architecture.md` §1/§3):
 
 ```json
 {
   "scope": "conversation",
-  "identity": {"kind": "content_hash", "block_type": "tool_result", "tool_name": "Read"},
-  "occurrences": [
-    {"request_id": "...", "session_seq": 12, "conversation_code": "C1",
-     "position": 4, "token_count": 1830, "content_purged": false}
+  "identity": {"kind": "content_hash", "block_type": "tool_result", "tool_name": "Read", "source_key": "builtin:Read"},
+  "ranges": [
+    {"from_seq": 12, "to_seq": 40, "occurrence_count": 29, "request_count": 29},
+    {"from_seq": 44, "to_seq": 44, "occurrence_count": 2, "request_count": 1}
+  ],
+  "requests_sample": [
+    {"request_id": "...", "session_seq": 12, "conversation_code": "C1", "token_count": 1830, "context_fidelity": "complete"}
   ],
   "totals": {
-    "occurrence_count": 9,
+    "occurrence_count": 31,
+    "request_count": 30,
     "tokens_per_occurrence": 1830,
-    "total_tokens": 16470,
+    "total_visible_tokens": 56730,
     "first_seen_session_seq": 12,
-    "last_seen_session_seq": 31,
+    "last_seen_session_seq": 44,
     "in_latest_request_of_scope": true,
-    "scope_request_count": 20
+    "scope_request_count": 60,
+    "fidelity_counts": {"complete": 20, "partial": 4, "opaque": 6}
   }
 }
 ```
+
+- `ranges` are contiguous runs of `session_seq` where the block is present (gaps = absent). `requests_sample`
+  holds at most ~50 requests (first, last, and the current request); the rest is fetched with
+  `GET .../occurrences?from_seq=&to_seq=&limit=&cursor=` when the user expands a range.
+- Totals are **visible tokens** (D11) and occurrence-aware (a block repeated within one request counts each time).
 
 Notes:
 - `scope=conversation` uses the conversation membership already computed for the dashboard
   (`session_lineage_service.graph_for_session`, `crud._node_group_key`, `annotated_lineage_nodes`).
   A request in several conversations: use the same "confirmed first, then first membership" rule as
   `annotated_lineage_nodes`. **Reuse those helpers; do not re-implement membership.**
-- `token_count` is taken per occurrence (it can differ from the first occurrence, e.g. system prompts
+- Per-occurrence `token_count` is taken from each row (it can differ from the first occurrence, e.g. system prompts
   with a volatile header are counted on the full text sent).
 - `scope_request_count` lets the UI say "present in 9 of 20 requests".
 - Must be a bounded, single bulk query per call (no N+1) and work when content is purged (D3).
