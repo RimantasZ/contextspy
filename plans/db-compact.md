@@ -31,7 +31,7 @@ Steps:
 4. **Nothing to do**: if `auto_vacuum == 2` (INCREMENTAL) and `freelist_count * page_size` < 1% of the file (or < 16 MB) → "Already compact", exit 0.
 5. **Free-space preflight**: VACUUM writes a full copy of the live data before replacing the file. Require `shutil.disk_usage(db_dir).free >= live_bytes * 1.25 + 64 MB`; otherwise abort *before touching anything*, printing the numbers needed and available.
 6. Print what will happen (current size, expected size ≈ `live_bytes`, "stop ContextSpy first", estimated duration order of magnitude) and ask for confirmation unless `--yes`.
-7. `--backup`: take a snapshot first with `db/backups.create_backup` (extend `BackupPurpose` with `"compact"` and `backup_name`; check `list_backups` / restore discovery still recognise the new name). Without `--backup` no copy is made: `VACUUM` is atomic (the original file is untouched until it commits), so the preflight is the safety net.
+7. `--backup`: take a snapshot first with `db/backups.create_backup(db_path, current_schema_version, purpose="pre_compact")`. This **requires** extending `BackupPurpose` and `backup_name` (name `{stem}_backup_v{N}_pre_compact_{stamp}.back`) **and** the second pattern in `list_backups` (`(?:_pre_restore|_pre_compact)?`), otherwise the snapshot is not listed by `db-restore` and cannot be found again. `create_backup` already verifies the snapshot's schema version equals `N` for non-migration purposes. Without `--backup` no copy is made: `VACUUM` is atomic (the original file is untouched until it commits), so the preflight is the safety net.
 8. Run: `PRAGMA wal_checkpoint(TRUNCATE)`, `PRAGMA auto_vacuum = INCREMENTAL`, `VACUUM`, `PRAGMA wal_checkpoint(TRUNCATE)`. Verify `PRAGMA auto_vacuum` == 2 afterwards and run `PRAGMA quick_check` (fail loudly if it is not `ok`).
 9. Report before/after file size, reclaimed bytes and elapsed time. Release the lock in a `finally`.
 
@@ -44,6 +44,11 @@ In `db/database.py:init_db`, when the file is new/empty (`PRAGMA page_count == 0
 - `contextspy db-stats` prints file size, free (reclaimable) space and auto-vacuum mode under the table counts, and suggests `db-compact` when reclaimable space is ≥ 20% of the file.
 - `docs/cli.md`, `docs/faq.md` (where `[retention]` is discussed), `docs/changelog.md`, `docs/development.md` ("Data storage"): document the command, why the file never shrank, and that `startup_vacuum` frees pages without shrinking the file.
 
+## Backups and restore (existing backups are unaffected)
+- Backups (`db/backups.py`) are complete standalone rollback-journal copies made with SQLite's backup API; `VACUUM` rewrites only the live file, so every existing `.back` file (including pre-v9 ones) stays valid. Restore validates a backup by file format, `quick_check`, required tables and schema version <= this build; page layout and `auto_vacuum` play no part.
+- A restored backup comes back **as it was**: not compacted, `auto_vacuum` 0, its old schema version (then `db-upgrade`). Compaction must be re-run to shrink it and re-enable incremental mode; archive (Plan 3b) detects the non-incremental mode and says so instead of shrinking.
+- A backup copies every page including free ones: compacting first makes later backups smaller (the author's 6.6 GB file would back up as ~2.4 GB).
+
 ## Tests (`tests/test_db_compact.py`)
 1. Build a DB with `init_db`, add large rows, delete them: `freelist_count` grows and the file does not shrink; `compact()` shrinks it, row data is unchanged, `auto_vacuum == 2`, `quick_check == ok`.
 2. A database created with `auto_vacuum = 0` (legacy shape, built directly with sqlite3) is converted to 2 by compaction.
@@ -54,6 +59,7 @@ In `db/database.py:init_db`, when the file is new/empty (`PRAGMA page_count == 0
 7. Missing/empty database; WAL file left behind is checkpointed away.
 8. `init_db` on a new path → `auto_vacuum == 2`; on an existing legacy file → unchanged.
 9. `db-stats` output includes size/free/auto-vacuum lines (CliRunner with a temp DB).
+10. **Backups survive compaction**: create a pre-compaction backup (older schema shape included), compact, then `list_backups` still lists it and `restore_backup` of it succeeds; the restored database has `auto_vacuum == 0` and its original rows. A `--backup` snapshot is listed by `list_backups` and restorable (round trip).
 
 ## Not in scope
 Auto-compaction at startup (needs exclusive access and can take minutes on large files), a UI button, background incremental vacuum timers. Online shrinking after deletions belongs to the archive action (Plan 3b).

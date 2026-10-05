@@ -53,7 +53,7 @@ and visible, and deleting content must actually give disk back (Plan 3a).
 
 ### UI
 - **Archive** button beside **End session** / **Delete** in `pages/SessionDetail.tsx` and on each row of `pages/Sessions.tsx`; disabled with a tooltip for the active session; hidden once archived. An **Archived** badge in the header and the list. **End session** is hidden for archived sessions.
-- `components/ArchiveSessionModal.tsx` (pattern: `DeleteSessionModal`, focus on Cancel, Escape closes): states what is removed (raw request/response payloads and block text) and what stays (token counts, block structure and categories, source and JSON paths, lineage and conversation analysis), that it cannot be undone, and the primary button reads "Archive session". After success it shows the `freed` and `space` figures in place before closing.
+- `components/ArchiveSessionModal.tsx` (pattern: `DeleteSessionModal`, focus on Cancel, Escape closes): states what is removed (raw request/response payloads and block text) and what stays (token counts, block structure and categories, source and JSON paths, lineage and conversation analysis), that it cannot be undone **and that only a database backup made earlier (`contextspy db-backup`) still contains the removed content**, and the primary button reads "Archive session". After success it shows the `freed` and `space` figures in place before closing.
 - Hooks in `api/hooks.ts` (`useArchiveSession`, invalidating `sessions`, the session, and request queries) and types in `api/client.ts` (`Session.status`, `archived_at`; `Request.content_state`).
 
 ### CLI
