@@ -5,14 +5,23 @@ Items marked **[PROPOSED]** await user confirmation; items marked **[DECIDED]** 
 or are forced by measured data. Section 5 lists the schema changes as one batched migration.
 User answers of 2026-10-05 (fidelity, tool source, json_path order, retention) are folded in below.
 
-## 1. Measured facts about real data (local DB, read-only, 2026-10-05)
+## 0. Ground rule: no design decision may depend on one user's database
 
-Use these to size designs; re-measure before relying on them.
+ContextSpy captures Anthropic, OpenAI (chat + responses), GitHub Copilot, Ollama, llama.cpp, vLLM and any
+OpenAI-compatible API, from many different agents. The author's local DB (below) is **one sample, heavily Codex**.
+It is used only to (a) sanity-check performance order of magnitude and (b) show that certain *shapes* of data exist.
+Every rule in this document must be justified by the wire formats/adapters and by the shape being *possible*,
+not by how common it is locally. Agent- or provider-specific logic (e.g. Codex `exec` parsing) is an **optional,
+pluggable enhancement** on top of a generic baseline that works for every provider.
+
+## 1. Sample measurements (author's local DB, read-only, 2026-10-05) — illustrative only
+
+Do not size, prioritise or specialise on these; they show shapes that can occur.
 
 | Fact | Value | Consequence |
 |------|-------|-------------|
 | Requests / sessions | 6,865 / 14 | |
-| Agents | codex 6,364 (93%), claude_code 502 | **Codex is the primary dataset**, not Claude Code. Designs must not be Anthropic-first. |
+| Agents in this sample | codex 6,364, claude_code 502 | Sample bias. Designs must be provider-neutral; test fixtures must cover every adapter. |
 | Block rows | 1,351,655 (avg 197/request, max 864) | Never load all blocks of a session into the UI. |
 | Largest session | 4,032 requests, 791,039 block rows | Tree, hot spots and "present in" must be server-aggregated, paginated, and lazy. |
 | Heaviest single block hash | 32,254 occurrences | "Present in" must **not** return one row per occurrence: return run-length ranges + totals (see §3). |
@@ -21,12 +30,12 @@ Use these to size designs; re-measure before relying on them.
 | Same hash used under >1 block type | 4 hashes of 15,174 | Keeping identity = `content_hash` is safe (no composite key needed). |
 | Same hash repeated *within one request* | 31,120 (request, hash) pairs | Occurrence counting must be occurrence-aware (count rows, not distinct requests) — matches `context_diff`'s occurrence-aware matching. |
 | Hashes shared across sessions | 1,167 | Always scope identity queries by session. |
-| `context_fidelity` | codex: 5,518 opaque, 553 partial, 293 complete; claude_code: 306 complete, 195 partial, 5 opaque | **Most Codex requests are `opaque`** (server-held context via predecessor/WS). Visible blocks are not the whole window. See §4. |
+| `context_fidelity` | codex: 5,518 opaque, 553 partial, 293 complete; claude_code: 306 complete, 195 partial, 5 opaque | Opaque/partial context is **possible for any provider** that supports server-held state (OpenAI Responses `previous_response_id`, WS delta transports) or lossy capture. Visible blocks are then not the whole window. See §4. |
 | `predecessor_response_id` | codex 4,666 / 6,364 | Lineage by exact parent is common for Codex. |
-| Tool names | Codex: `exec` = 605k of 1.35M block rows, `js`, `send_message`, `wait_agent`, `spawn_agent`… | **Tool-name-based "source" is nearly useless for Codex**: one generic `exec` tool carries everything. Needs args-aware sub-identity (see §2). No `mcp__*` names present in this DB. |
-| Block `attrs` | Codex adds `provider_item_type`, `tool_namespace` (e.g. `collaboration`), `hidden`, `opaque` | Source descriptor can use `attrs`. |
-| Stored bodies (retained for 1,938 requests) | raw req 181 MB, **canonical req 1,091 MB**, raw resp 175 MB, canonical resp 175 MB, events 442 MB | Bodies dominate DB size (~2 GB); raw==canonical for only 269 of 1,938. Strong motivation for explicit archive (D4). Canonical request bodies exist for only 1,938 of 6,865 requests → `json_path` traceability is available for few historical requests. |
-| Cache fields | populated for 464/502 claude_code and 6,223/6,364 codex requests | D2 is cheap to add later (data is there). |
+| Tool names | one agent funnels most work through a generic `exec` wrapper tool (605k of 1.35M rows) | Shows that **a generic tool wrapper can hide the real operation in its arguments**; tool-name-only attribution can be too coarse for such agents. Other agents (Claude Code: `Read`/`Edit`/`Bash`, MCP `mcp__server__tool`) are well described by name. No MCP names in this sample, but the format must be supported. |
+| Block `attrs` | adapters add provider-specific keys (`provider_item_type`, `tool_namespace`, `hidden`, `opaque`, `cache_control`, `is_prefill`) | Source descriptor may use `attrs`; keys differ per adapter. |
+| Stored bodies (retained for 1,938 requests) | raw req 181 MB, **canonical req 1,091 MB**, raw resp 175 MB, canonical resp 175 MB, events 442 MB | Bodies dominate DB size (~2 GB); raw==canonical for only 269 of 1,938. Strong motivation for explicit archive (D4). Canonical request bodies exist for only 1,938 of 6,865 requests (7-day retention default) → `json_path` can only be backfilled where bodies survive. |
+| Cache fields | populated for most Anthropic and OpenAI requests in the sample | D2 is cheap to add later; availability varies by provider (Ollama/llama.cpp/vLLM may report none). |
 
 ## 2. Data-model decisions
 
@@ -34,34 +43,35 @@ Use these to size designs; re-measure before relying on them.
 No composite key. Hash-less blocks (27%) are *unidentifiable* and are reported as such (counted in totals, never merged).
 Hash-less + `tool_call_id` (tool results with empty output; 9,568 rows) group by `(block_type, tool_call_id)` only inside one request pairing (call↔result linking already exists as `linked_call_id`); no cross-request identity.
 
-### 2.2 Block `source` — [DECIDED (args-aware for exec), **revises** `request-purpose.md`]
-`request-purpose.md` proposed deriving `source` on read from `tool_name`. The data refutes that:
-- Codex's `exec` hides the real operation in the *arguments*; deriving it needs the tool-call content,
+### 2.2 Block `source` — [DECIDED, provider-neutral baseline + pluggable parsers; **revises** `request-purpose.md`]
+`request-purpose.md` proposed deriving `source` on read from `tool_name`. That is insufficient in general:
+- Some agents use generic wrapper tools (e.g. `exec`, `bash`, `shell`, `run`, or MCP gateways) whose real operation lives in the *arguments*; deriving it needs the tool-call content,
   which is **purged by archive/retention** (D3/D4) — a read-time derivation would silently degrade exactly when analysis must keep working.
 - SQL-level grouping (hot spots over 791k rows) needs an indexable column, not a JSON walk in Python per row.
 
 Proposal: **persist** a compact canonical `blocks.source_key` (TEXT, nullable, indexed) computed at capture time and
 backfilled best-effort from retained data:
-`builtin:Read`, `mcp:<server>/<tool>`, `exec:<program>` (args-aware, e.g. `exec:rg`, `exec:git`), `collab:spawn_agent`, `system`, `user`, `assistant`, `reasoning`, `unknown`.
+`tool:<name>` (generic baseline for any provider), `mcp:<server>/<tool>`, `<wrapper>:<program>` (from a pluggable args-aware parser, e.g. `exec:rg`, `bash:git`), `system`, `user`, `assistant`, `reasoning`, `unknown`. Never assume a specific agent's tool names in the baseline.
 Richer detail stays in `attrs["source"]` (JSON). The key grammar is documented and versioned by `requests.classifier_version`; unknown/old rows have NULL and render as plain tool name.
 
-**Measured on real `exec` calls (2026-10-05):** Codex `exec` tool_call content is **not JSON arguments**: it is a JavaScript snippet
+**Parser registry, not special cases.** Source derivation is `resolve_source(block, request) -> source_key` with (1) a generic baseline (`tool:<name>`, MCP name splitting for the known conventions `mcp__server__tool` and namespaced forms from `attrs`), and (2) a registry of optional parsers keyed by (agent/adapter, tool name). Adding support for a new agent or tool = registering one function plus fixtures; nothing else changes.
+
+**Example parser (Codex `exec`, the only args-aware parser planned now):** in the author's sample, `exec` tool_call content is **not JSON arguments**: it is a JavaScript snippet
 ("code mode"), e.g. `const r = await tools.exec_command({cmd:"sed -n '290,335p' ui/src/api/client.ts", workdir:"...", max_output_tokens:3300}); text(r.output);`,
 `const patch="*** Begin Patch ..."` (apply_patch), `await Promise.allSettled([ tools.exec_command(...), ... ])`, `text(await tools.app...)`.
 So the parser is a **heuristic over JS source** (find `tools.<name>(` calls, extract the `cmd:` string literal, take the first program of the shell command), not a JSON decode.
 A snippet can contain several calls: `source_key` = the primary (first) call, or `exec:multi` when calls differ; the full list goes to `attrs["source"]["calls"]`. Unparseable snippets get `exec:js`.
-Only ~31% of distinct input tool_call hashes still have retained content (1,586 of 5,157 for `exec`; 1,894 of 6,041 overall) — **historical backfill will be partial by nature**; capture-time classification is what matters. Add fixtures from real (anonymised) snippets.
+In the sample only ~31% of distinct input tool_call hashes still have retained content (1,586 of 5,157 for `exec`; 1,894 of 6,041 overall) — **historical backfill will be partial by nature**; capture-time classification is what matters. Add fixtures from real (anonymised) snippets of **each** supported agent.
 
-**User decision (D12):** args-aware parsing is implemented **for `exec` (and `js`) now**; other tools stay name-based until real data and feedback justify more. The mechanism must make adding a tool-specific parser a one-function change (registry of `tool_name -> parser(args) -> source_key`). The overall goal is to **infer purpose at request level and at individual block level**.
+**User decision (D12):** args-aware parsing is implemented **for Codex `exec`/`js` now**, as the first registry entry; other tools/agents stay name-based until real data from *other* providers and feedback justify more. Bash-style wrappers (Claude Code `Bash`, Copilot terminal tools) are the obvious next candidates, to be specified from fixtures of those agents, not guessed. The overall goal is to **infer purpose at request level and at individual block level**.
 
 **Block-level purpose** is *derived from `source_key`* through a small mapping table (e.g. `exec:rg|grep|find -> search`, `exec:cat|sed -n|head -> read`, `builtin:Read -> read`, `builtin:Edit|Write|apply_patch -> edit`, `exec:git -> vcs`, `exec:pytest|npm test -> test`, `collab:* -> orchestration`). Only the hard-to-recover input (`source_key`) is persisted; the mapping is code and can be refined without migration. Expose as `block.activity` in API payloads.
 
 ### 2.3 Request purpose — [DECIDED] as in `request-purpose.md`
-`requests.purpose`, `purpose_detail` (JSON), `classifier_version`. `turn_*` stays derived at read time from the lineage graph (lineage is never persisted). Codex-specific signals to include in detail: orchestration tools (`spawn_agent`, `send_message`, `wait_agent`) → `agent_role_hint`/`orchestration`.
+`requests.purpose`, `purpose_detail` (JSON), `classifier_version`. `turn_*` stays derived at read time from the lineage graph (lineage is never persisted). Agent-specific signals (e.g. orchestration tools such as `spawn_agent`, Claude Code `Task`, title-generation side calls) go through the same pluggable-registry mechanism; the baseline structural rule (trailing user text vs trailing tool results; response kind) must work for every adapter.
 
 ### 2.4 `json_path` on blocks — [DECIDED, priority PROPOSED]
-`blocks.json_path` TEXT (JSON array, nullable). Capture-time only; backfill only from retained canonical bodies (≈28% of requests today; archive reduces this further). Because Codex dominates, adapter order should be
-**all adapters in one change (user decision D13)**: `openai_responses.py` (495 lines, the Codex path), `anthropic.py`, `openai_chat.py`, `ollama.py`. Verify Codex first since it is the dominant dataset. For WS/delta transports the *canonical* (reconstructed) request body is the path target, not the raw delta.
+`blocks.json_path` TEXT (JSON array, nullable). Capture-time only; backfill only from retained canonical bodies (≈28% of requests today; archive reduces this further). Implement for **all adapters in one change (user decision D13)**: `anthropic.py`, `openai_chat.py`, `openai_responses.py`, `ollama.py` (llama.cpp/vLLM/Copilot ride the OpenAI-compatible paths — confirm which adapter each uses via `get_adapter` path dispatch). Each adapter needs exact-path fixtures. For WS/delta transports the *canonical* (reconstructed) request body is the path target, not the raw delta. For WS/delta transports the *canonical* (reconstructed) request body is the path target, not the raw delta.
 
 ### 2.5 Archive — [DECIDED, details in draft]
 `sessions.archived_at` (nullable). Derived `status` = active|ended|archived. See `unconfirmed_drafts/session-archive.md`.
@@ -86,9 +96,8 @@ Only ~31% of distinct input tool_call hashes still have retained content (1,586 
 7. Analysis logic in Python (`analysis/…`), SQL only fetches rows/aggregates.
 
 ## 4. Fidelity (opaque / partial) — [DECIDED: include, badge, label as visible tokens (D11)]
-80% of Codex requests are `opaque`: server-held context means the captured blocks are not the full window; provider-reported input
-tokens may exceed visible tokens (partial claude_code sessions show visible/provider ratios ≈ 0.34). 
-User chose: include opaque/partial requests everywhere, show a per-request fidelity badge, and label every total **"visible tokens"**. The synthetic "unaccounted gap" row was offered and **not** chosen (may be revisited). Rule: occurrence/total token numbers are **visible-block tokens**, labelled as such, never presented as the provider's total.
+In the author's sample most Codex requests are `opaque`, and some partial Claude Code requests show visible/provider ratios ≈ 0.34. The general point: whenever context is held server-side or capture is lossy, visible tokens can be well below provider-reported tokens. 
+User chose (provider-neutral rule): include opaque/partial requests everywhere, show a per-request fidelity badge, and label every total **"visible tokens"**. The synthetic "unaccounted gap" row was offered and **not** chosen (may be revisited). Rule: occurrence/total token numbers are **visible-block tokens**, labelled as such, never presented as the provider's total.
 
 ## 5. Batched schema change (one migration, `SCHEMA_VERSION` 8 → 9) — [PROPOSED]
 

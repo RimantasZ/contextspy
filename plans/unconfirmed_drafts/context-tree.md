@@ -49,7 +49,7 @@ Actions (compare with…, open request, etc.) eventually live in the panel (D8).
   nullable; **never** infer by substring search. Needs `Block.json_path`, every adapter
   (`anthropic.py`, `openai_chat.py`, `openai_responses.py`, `ollama.py`), `BlockRecord.json_path`
   (additive column + migration; historical backfill only when canonical bodies are still retained
-  and the match is unambiguous). **All adapters in one change (D13)**; verify OpenAI Responses/Codex first (93% of data).
+  and the match is unambiguous). **All adapters in one change (D13)**; exact-path fixtures for every adapter (D16).
 - Controlled JSON viewer (collapse state owned by parent) so ancestors can be expanded and the node
   scrolled into view. Current `RawViewer.JsonNode` owns collapse state itself.
 - States to distinguish: legacy capture without path, canonical body purged/archived, path no longer resolves.

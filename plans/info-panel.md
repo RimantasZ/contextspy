@@ -38,8 +38,7 @@ Endpoint (additive):
 GET /api/requests/{request_id}/blocks/{block_id}/occurrences?scope=conversation|session
 ```
 
-Response (all computed server-side; **bounded: run-length ranges, never one row per occurrence** — the heaviest
-real block occurs 32,254 times, see `analysis-architecture.md` §1/§3):
+Response (all computed server-side; **bounded: run-length ranges, never one row per occurrence** — a block can occur tens of thousands of times in a long session (32,254 in the author's sample), see `analysis-architecture.md` §1/§3):
 
 ```json
 {

@@ -76,7 +76,7 @@ Instead:
 > content is purged on archive. The section below describes the original read-time idea and is kept
 > for the descriptor shape; implement persistence + `activity` mapping as in the architecture doc.
 > Schema changes are part of the batched v9 migration, not an independent `_migrate_to_v9`.
-> Housekeeping/compaction heuristics must be validated on **Codex** captures too (93% of data).
+> Housekeeping/compaction heuristics must be validated on captures from **every supported agent/provider** (Claude Code, Codex, Copilot, Ollama/llama.cpp/vLLM); the structural baseline must be provider-neutral (D16).
 
 ### Block source (originally: derived at read time)
 

@@ -30,8 +30,9 @@ serves one of those four questions.
 | D7 | **Classification must be extensible**: future work will differentiate tools, MCP servers, subagents, etc. Use coarse stable enums + free-form JSON detail + `classifier_version`, never a growing enum. | See `request-purpose.md`. |
 | D8 | **Info panel is the shared surface for actions/insights** on blocks and requests (cost/"present in", compare, etc.). Existing panels (block inspector in Request detail, context-change panel in the conversation view) are enough for now; the tree page gets the panel as its right-hand pane, reacting to node selection. No drawer variant, no new panel framework. | See `info-panel.md`. |
 | D9 | **Tree/compare pages must visually match the Request detail page.** Earlier attempts looked bad. Focus: tree representation, node icons, collapse/expand animation, lightweight minimal node labels; details live in the info panel. | See `unconfirmed_drafts/context-tree.md`. |
-| D11 | **Fidelity:** include `opaque`/`partial` requests in all analysis views, show a per-request fidelity badge, label totals "visible tokens". 80% of captured Codex requests are opaque. | See `analysis-architecture.md` §4. |
-| D12 | **Source/purpose at request and block level.** Persist `blocks.source_key` computed at capture (args-aware for `exec`/`js` now, name-based for others, expand with data/feedback); derive block `activity` from it via a mapping table. | Revises the "derive on read" idea in `request-purpose.md`: args are purged on archive. |
+| D16 | **Provider neutrality (user, 2026-10-05):** requests come from Anthropic, OpenAI, Copilot, Ollama, llama.cpp, vLLM and any OpenAI-compatible API. **No decision may be justified by the contents of the author's local DB** (heavily Codex). Agent/provider-specific logic is a pluggable enhancement over a generic baseline; fixtures must cover every adapter. | `analysis-architecture.md` §0. |
+| D11 | **Fidelity:** include `opaque`/`partial` requests in all analysis views, show a per-request fidelity badge, label totals "visible tokens". | See `analysis-architecture.md` §4. |
+| D12 | **Source/purpose at request and block level.** Persist `blocks.source_key` computed at capture via a generic baseline plus a pluggable parser registry (first parser: Codex `exec`/`js`; others name-based, expand with data/feedback from other agents); derive block `activity` from it via a mapping table. | Revises the "derive on read" idea in `request-purpose.md`: args are purged on archive. |
 | D13 | **`json_path` implemented for all adapters in one change.** | |
 | D14 | **Retention:** time-based purge defaults to off (`0`), setting kept as legacy; explicit archive is the main path. | |
 | D15 | **Batched schema migration v9** for all new columns (requests purpose fields, blocks `source_key`/`json_path`, sessions `archived_at`). | See `analysis-architecture.md` §5. |
@@ -51,8 +52,8 @@ serves one of those four questions.
 
 ## Architecture review
 
-[`analysis-architecture.md`](analysis-architecture.md) holds measured data facts (Codex = 93% of requests, a
-4,032-request / 791k-block session, 80% opaque), the data-model decisions, API contracts (bounded,
+[`analysis-architecture.md`](analysis-architecture.md) holds measured data facts (sample-only measurements: a
+4,032-request / 791k-block session shows the scale that can occur), the data-model decisions, API contracts (bounded,
 run-length occurrences, revision-cached, fidelity-aware) and the batched migration. **Read it before
 implementing any plan.** Where it conflicts with an individual plan, it wins and the plan must be updated.
 
