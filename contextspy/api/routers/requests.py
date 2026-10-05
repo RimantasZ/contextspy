@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from contextspy.db import crud
 from contextspy.analysis.blocks import block_visual_token_totals
 from contextspy.analysis.lineage import context_diff_for_requests
+from contextspy.db import block_occurrence_service
 from contextspy.db.database import get_db
 
 router = APIRouter(tags=["requests"])
@@ -78,6 +79,39 @@ def get_request_blocks(request_id: str):
             "blocks": blocks,
             "token_totals": block_visual_token_totals(blocks),
         }
+
+
+@router.get("/requests/{request_id}/blocks/{block_id}/occurrences")
+def get_block_occurrences(
+    request_id: str,
+    block_id: int,
+    scope: str = Query(default="conversation", pattern="^(conversation|session)$"),
+):
+    """Where one block's content occurs across the requests of its conversation or session."""
+    with get_db() as db:
+        result = block_occurrence_service.get_block_occurrences(db, request_id, block_id, scope)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Block not found for this request")
+    return result
+
+
+@router.get("/requests/{request_id}/blocks/{block_id}/occurrences/requests")
+def list_block_occurrence_requests(
+    request_id: str,
+    block_id: int,
+    scope: str = Query(default="conversation", pattern="^(conversation|session)$"),
+    from_position: int = Query(default=0, ge=0),
+    to_position: int = Query(ge=0),
+    limit: int = Query(default=100, ge=1, le=200),
+):
+    """The occurring requests inside one run (positions are indexes in the scope's request order)."""
+    with get_db() as db:
+        result = block_occurrence_service.list_block_occurrence_requests(
+            db, request_id, block_id, scope, from_position, to_position, limit,
+        )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Block not found for this request")
+    return result
 
 
 @router.get("/requests/{request_id}/context-diff")

@@ -81,7 +81,9 @@ Implemented (WI-0, tests green, not released): schema v9; per-request `purpose`/
 `source_key` (+ derived `activity`) and `json_path` for all four adapters; the v9 backfill (`contextspy db-upgrade`, ~3 min on a
 7k-request database); `GET /api/requests?purpose=`; purpose chip and block Source/Activity/JSON-location rows in Request detail; docs.
 
-**Not implemented:** everything in Plans 1, 3, 4, 5, 6, 7 (info panel "present in", archive, hot spots, context tree, compare, hints);
+**Also implemented (Plan 1; in the working tree, not committed):** `GET /api/requests/{id}/blocks/{block_id}/occurrences` (+ `/occurrences/requests`), the "Present in" section in the block inspector, and `?block=<id>` selection in Request detail.
+
+**Not implemented:** everything in Plans 3, 4, 5, 6, 7 (archive, hot spots, context tree, compare, hints);
 `housekeeping` detection and any agent purpose detectors; source parsers beyond Codex `exec`/`js` and `Bash`; purpose in the request
 list/conversation cards; any use of `json_path` beyond displaying it; cache reporting (D2); the retention-default change (D14).
 Nothing from this roadmap has been released, and the real database has not been upgraded.
@@ -107,8 +109,8 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 
 | # | Plan | File | Status | Depends on |
 |---|------|------|--------|-----------|
-| 0 | Data foundation: migration v9, capture-time classification, `json_path` | [`wi0-data-foundation.md`](wi0-data-foundation.md) | **implemented** (5/5 slices; slice 1 committed, 2–5 uncommitted; not released; no browser check or real-DB `db-upgrade` yet) | — |
-| 1 | Info panel: shared pieces + "present in"/totals | [`info-panel.md`](info-panel.md) | **confirmed, not started** (WI-0 data it consumes now exists) | WI-0 |
+| 0 | Data foundation: migration v9, capture-time classification, `json_path` | [`wi0-data-foundation.md`](wi0-data-foundation.md) | **implemented and committed** (`528f3db`, `88bd6e0`); not released; no browser check or real-DB `db-upgrade` yet | — |
+| 1 | Info panel: "present in" / totals for a block | [`info-panel.md`](info-panel.md) | **implemented** (uncommitted, not released, not checked in a browser); shared-pieces extraction was dropped in review | WI-0 |
 | 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **baseline implemented in WI-0** (`user_turn`, `tool_continuation`, `compaction`, `unknown`; `housekeeping` and agent detectors NOT implemented; UI shows it in Request detail only) | — |
 | 3 | Session lifecycle & explicit archive | [`unconfirmed_drafts/session-archive.md`](unconfirmed_drafts/session-archive.md) | draft; only the `sessions.archived_at` column exists (WI-0), nothing sets it | — |
 | 4 | Hot spots (per conversation / per session) | [`unconfirmed_drafts/hot-spots.md`](unconfirmed_drafts/hot-spots.md) | draft | 1, 3 |
@@ -122,7 +124,7 @@ so they were written first.
 ## How to continue
 
 **WI-0 ([`wi0-data-foundation.md`](wi0-data-foundation.md)) is implemented**; its §17 is the authoritative record of what exists and how it
-differs from its own spec. Next candidates: Plan 1 (info panel "present in") and Plan 3 (archive), which are independent; both can start now.
+differs from its own spec. Plan 1 (info panel "present in") is now implemented too. Next candidate: Plan 3 (archive); Plans 4 and 5 depend on 1 and 3 / 1 and 2.
 WI-0 follow-ups that still wait for captures from Copilot, Ollama, llama.cpp and vLLM: housekeeping/compaction detectors per agent and more
 source parsers. Review the `compaction_trigger` rule (a judgement call) and decide what to do with the legacy leaf-form `json_path` values in
 the author's DB (see WI-0 §17) before treating either as settled.

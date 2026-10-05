@@ -1,4 +1,4 @@
-import type { Request, RequestBlock } from '../api/client'
+import type { BlockOccurrences, Request, RequestBlock } from '../api/client'
 
 export function makeBlock(overrides: Partial<RequestBlock> = {}): RequestBlock {
   return {
@@ -21,6 +21,23 @@ export function makeBlock(overrides: Partial<RequestBlock> = {}): RequestBlock {
     linked_definition_id: null,
     linked_previous_message_id: null,
     first_seen_session_seq: 1,
+    ...overrides,
+  }
+}
+
+export function makeOccurrences(overrides: Partial<BlockOccurrences> = {}): BlockOccurrences {
+  return {
+    scope: 'conversation', requested_scope: 'conversation', scope_note: null,
+    identity: { kind: 'content_hash', block_type: 'user_message', tool_name: null, source_key: 'user', activity: null },
+    ranges: [{ from_position: 0, to_position: 2, from_seq: 12, to_seq: 14, request_count: 3, occurrence_count: 3 }],
+    requests_sample: [
+      { request_id: 'a', block_id: 1, position: 0, session_seq: 12, conversation_code: 'C1', token_count: 10, context_fidelity: 'complete', is_current: false },
+      { request_id: 'request-1', block_id: 1, position: 1, session_seq: 13, conversation_code: 'C1', token_count: 10, context_fidelity: 'complete', is_current: true },
+    ],
+    totals: {
+      occurrence_count: 3, request_count: 3, tokens_per_occurrence: 10, total_visible_tokens: 30, first_seen_session_seq: 12,
+      last_seen_session_seq: 14, in_latest_request_of_scope: true, scope_request_count: 5, fidelity_counts: { complete: 3 },
+    },
     ...overrides,
   }
 }

@@ -13,6 +13,7 @@
 // limitations under the License.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { sessionsApi, requestsApi, statsApi, proxyApi } from './client'
+import type { OccurrenceScope } from './client'
 
 // ---- Sessions -------------------------------------------------------------
 
@@ -155,6 +156,28 @@ export function useRequestBlocks(id: string, enabled: boolean = true) {
     queryKey: ['request', id, 'blocks'],
     queryFn: () => requestsApi.blocks(id),
     enabled: !!id && enabled,
+  })
+}
+
+/** Where one block's content occurs across its conversation/session; kept while only the scope changes. */
+export function useBlockOccurrences(requestId: string, blockId: number | null, scope: OccurrenceScope) {
+  return useQuery({
+    queryKey: ['request', requestId, 'block', blockId, 'occurrences', scope],
+    queryFn: () => requestsApi.blockOccurrences(requestId, blockId ?? 0, scope),
+    enabled: !!requestId && blockId != null,
+    staleTime: 60_000,
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === requestId && previousQuery?.queryKey[3] === blockId ? previous : undefined,
+  })
+}
+
+/** The occurring requests of one run, fetched when the run is expanded. */
+export function useOccurrenceRequests(requestId: string, blockId: number, scope: OccurrenceScope, run: { from: number; to: number } | null) {
+  return useQuery({
+    queryKey: ['request', requestId, 'block', blockId, 'occurrences', scope, run?.from, run?.to],
+    queryFn: () => requestsApi.occurrenceRequests(requestId, blockId, scope, run?.from ?? 0, run?.to ?? 0),
+    enabled: run != null,
+    staleTime: 60_000,
   })
 }
 

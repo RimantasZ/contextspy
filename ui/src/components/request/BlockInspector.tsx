@@ -1,4 +1,5 @@
-import type { RequestBlock } from '../../api/client'
+import type { OccurrenceEntry, RequestBlock } from '../../api/client'
+import { BlockOccurrences } from './BlockOccurrences'
 import { BLOCK_VISUALS, blockBackground, blockLabel, visualOf } from '../../lib/blockVisuals'
 import { formatJsonPath } from '../../lib/jsonPath'
 
@@ -34,11 +35,14 @@ function BlockCue({ block, selected, onJump }: {
   )
 }
 
-export function BlockInspector({ block, blocks, onJump, onClear }: {
+export function BlockInspector({ block, blocks, onJump, onClear, requestId, onOpenOccurrence }: {
   block: RequestBlock | null
   blocks: RequestBlock[]
   onJump: (targetId: number) => void
   onClear: () => void
+  /** The request the block belongs to; enables the "Present in" section for input blocks. */
+  requestId?: string
+  onOpenOccurrence?: (entry: OccurrenceEntry) => void
 }) {
   if (!block) {
     return (
@@ -88,6 +92,10 @@ export function BlockInspector({ block, blocks, onJump, onClear }: {
         {block.json_path && <div className="col-span-2"><dt className="text-[var(--text-muted)]" title="Where in the request or response JSON this block was read from">Raw JSON location</dt><dd className="break-all font-mono text-[11px]">{formatJsonPath(block.json_path)}</dd></div>}
         {block.tool_call_id && <div className="col-span-2"><dt className="text-[var(--text-muted)]">Tool call ID</dt><dd className="truncate font-mono text-[11px]" title={block.tool_call_id}>{block.tool_call_id}</dd></div>}
       </dl>
+
+      {requestId && block.direction === 'input' && (
+        <BlockOccurrences key={`${requestId}:${block.id}`} requestId={requestId} blockId={block.id} onOpen={onOpenOccurrence} />
+      )}
 
       {toolFlow.length > 0 && (
         <div className="mt-4 space-y-2 border-t border-[var(--border)] pt-3">

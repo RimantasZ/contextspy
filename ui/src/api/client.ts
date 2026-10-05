@@ -241,6 +241,63 @@ export interface RequestBlock {
   first_seen_session_seq: number | null
 }
 
+export type OccurrenceScope = 'conversation' | 'session'
+
+/** A maximal run of consecutive requests (positions in the scope's order) that contain the block. */
+export interface OccurrenceRun {
+  from_position: number
+  to_position: number
+  from_seq: number | null
+  to_seq: number | null
+  request_count: number
+  occurrence_count: number
+}
+
+export interface OccurrenceEntry {
+  request_id: string
+  /** The block's own row id in that request, so the request can be opened with it selected. */
+  block_id: number
+  position: number
+  session_seq: number | null
+  conversation_code: string | null
+  token_count: number
+  context_fidelity: string
+  is_current: boolean
+}
+
+export interface BlockOccurrences {
+  /** The scope actually used; differs from `requested_scope` when `scope_note` is set. */
+  scope: OccurrenceScope | 'request'
+  requested_scope: OccurrenceScope
+  scope_note: 'no_session' | 'auxiliary_request' | 'conversation_unavailable' | null
+  identity: {
+    kind: 'content_hash' | 'none'
+    block_type: string
+    tool_name: string | null
+    source_key: string | null
+    activity: string | null
+  }
+  ranges: OccurrenceRun[]
+  requests_sample: OccurrenceEntry[]
+  totals: {
+    occurrence_count: number
+    request_count: number
+    tokens_per_occurrence: number | null
+    total_visible_tokens: number
+    first_seen_session_seq: number | null
+    last_seen_session_seq: number | null
+    in_latest_request_of_scope: boolean
+    scope_request_count: number
+    fidelity_counts: Record<string, number>
+  }
+}
+
+export interface OccurrenceRequests {
+  scope: OccurrenceScope | 'request'
+  requests: OccurrenceEntry[]
+  has_more: boolean
+}
+
 interface LineageDeltaBucket {
   blocks: number
   tokens: number
@@ -468,6 +525,12 @@ export const requestsApi = {
       blocks: RequestBlock[]
       token_totals?: Record<'input' | 'output', Record<string, number>>
     }>(`/requests/${id}/blocks`),
+  blockOccurrences: (id: string, blockId: number, scope: OccurrenceScope) =>
+    apiFetch<BlockOccurrences>(`/requests/${id}/blocks/${blockId}/occurrences?scope=${scope}`),
+  occurrenceRequests: (id: string, blockId: number, scope: OccurrenceScope, fromPosition: number, toPosition: number, limit = 100) =>
+    apiFetch<OccurrenceRequests>(
+      `/requests/${id}/blocks/${blockId}/occurrences/requests?scope=${scope}&from_position=${fromPosition}&to_position=${toPosition}&limit=${limit}`,
+    ),
   contextDiff: (id: string, parentId: string) =>
     apiFetch<ContextDiffResponse>(`/requests/${id}/context-diff?parent_id=${encodeURIComponent(parentId)}`),
 }

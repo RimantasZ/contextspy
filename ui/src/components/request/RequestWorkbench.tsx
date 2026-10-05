@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { Request, RequestBlock } from '../../api/client'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { OccurrenceEntry, Request, RequestBlock } from '../../api/client'
 import { useContextDiff, useRequestBlocks } from '../../api/hooks'
 import type { ArrangementPreset } from '../../lib/blockArrangement'
 import { ARRANGEMENT_PRESETS, buildWorkbenchBlockModel } from '../../lib/blockArrangement'
@@ -67,7 +67,7 @@ function RawPayload({ request, direction }: { request: Request; direction: Workb
   )
 }
 
-export function RequestWorkbench({ request, activeDirection, onDirectionChange, parentRequestId = null, baselineIsFallback = false, lineageLoading = false, showMode = 'all', onShowModeChange }: {
+export function RequestWorkbench({ request, activeDirection, onDirectionChange, parentRequestId = null, baselineIsFallback = false, lineageLoading = false, showMode = 'all', onShowModeChange, initialBlockId = null, onBlockSelect, onOpenOccurrence }: {
   request: Request
   activeDirection: WorkbenchDirection
   onDirectionChange: (direction: WorkbenchDirection) => void
@@ -79,6 +79,12 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange, 
   /** Owned by the page so it survives parent/child navigation. */
   showMode?: ShowMode
   onShowModeChange?: (mode: ShowMode) => void
+  /** Block to select once the blocks have loaded (from the page's `?block=` parameter); unknown ids are ignored. */
+  initialBlockId?: number | null
+  /** Called whenever the selection changes, so the page can mirror it in the URL. */
+  onBlockSelect?: (blockId: number | null) => void
+  /** Opens another request with the block from the "Present in" list selected. */
+  onOpenOccurrence?: (entry: OccurrenceEntry) => void
 }) {
   const blocksQuery = useRequestBlocks(request.id)
   const diffQuery = useContextDiff(request.id, parentRequestId)
@@ -119,11 +125,13 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange, 
   useEffect(() => {
     if (selectedId != null && !visibleBlocks.some((block) => block.id === selectedId)) {
       setSelection((current) => ({ ...current, [activeDirection]: null }))
+      onBlockSelect?.(null)
     }
-  }, [activeDirection, selectedId, visibleBlocks])
+  }, [activeDirection, onBlockSelect, selectedId, visibleBlocks])
 
   function select(block: RequestBlock | null) {
     setSelection((current) => ({ ...current, [activeDirection]: block?.id ?? null }))
+    onBlockSelect?.(block?.id ?? null)
   }
 
   function jumpTo(targetId: number) {
@@ -135,8 +143,21 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange, 
     if (target.token_count <= 0) setHideZero(false)
     if (effectiveShow === 'new' && !newIds.has(target.id)) onShowModeChange?.('all')
     setSelection((current) => ({ ...current, [target.direction]: target.id }))
+    onBlockSelect?.(target.id)
     revealBlock(target.id, view, 'nearest')
   }
+
+  // Apply the page's ?block= once per request/block pair, after the blocks have loaded.
+  const appliedInitial = useRef<string | null>(null)
+  useEffect(() => {
+    if (initialBlockId == null || allBlocks.length === 0) return
+    const key = `${request.id}:${initialBlockId}`
+    if (appliedInitial.current === key) return
+    appliedInitial.current = key
+    if (allBlocks.some((block) => block.id === initialBlockId)) jumpTo(initialBlockId)
+    // jumpTo only reads state that is stable for a given block list; re-running it is what the guard prevents.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allBlocks, initialBlockId, request.id])
 
   function jumpLargest() {
     const largest = visibleBlocks.reduce<RequestBlock | null>((winner, block) => !winner || block.token_count > winner.token_count ? block : winner, null)
@@ -228,7 +249,7 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange, 
                 />
               )}
             </div>
-            <BlockInspector block={selected} blocks={allBlocks} onJump={jumpTo} onClear={() => select(null)} />
+            <BlockInspector block={selected} blocks={allBlocks} onJump={jumpTo} onClear={() => select(null)} requestId={request.id} onOpenOccurrence={onOpenOccurrence} />
           </div>
         </>
       )}

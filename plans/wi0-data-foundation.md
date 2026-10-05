@@ -1,6 +1,6 @@
 # WI-0: Data foundation — migration v9, capture-time classification, `json_path`
 
-Status: **implemented (all five slices) on 2026-10-05. Slice 1 is committed (`528f3db`); slices 2–5 are in the working tree, uncommitted. Not released.**
+Status: **implemented (all five slices) on 2026-10-05. Committed: slice 1 in `528f3db`, slices 2–5 in `88bd6e0`. Not released.**
 Spec written 2026-10-05. Where the code differs from the text below, §17 (Implementation log) is authoritative.
 
 | Slice (§13) | Status |

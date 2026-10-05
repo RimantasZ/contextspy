@@ -17,6 +17,13 @@
 - Every block records **where in the request or response JSON it came from** (`messages[3].content[1]`),
   for all four wire formats, and the block inspector shows it. Blocks whose retained documents no
   longer match what was analysed keep no location rather than a guessed one.
+- The block inspector has a **Present in** section: in how many requests of the conversation (or the whole
+  session, via a toggle) the selected block's content occurs, its tokens per occurrence and in total, first
+  and last request, whether it is still in the latest request, and the runs of requests it appears in
+  (expand a run to list them). Clicking a request opens it with that block selected. Totals are visible-block
+  tokens, not provider-billed tokens; blocks with hidden or empty content cannot be matched across requests.
+  Request detail now keeps the selected block in the URL (`?block=<id>`), so a selection survives a refresh.
+  On long sessions the first conversation-scope lookup can take a few seconds.
 - Sessions gained an `archived_at` column. Nothing sets it yet.
 - **Run `contextspy db-upgrade`** (schema v9) to fill these in for existing data. It makes a backup
   first, prints progress, and took about three minutes on a database with ~7,000 requests and
