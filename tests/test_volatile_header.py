@@ -156,5 +156,5 @@ def test_v8_rekeys_retained_system_prompts_and_is_idempotent(tmp_path):
 
 
 def test_v8_is_registered_and_pending_for_older_databases():
-    assert migrations.SCHEMA_VERSION == 8
+    assert migrations.SCHEMA_VERSION >= 8
     assert 8 in migrations._DATA_MIGRATIONS

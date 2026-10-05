@@ -127,6 +127,13 @@ def _migrate(engine) -> None:
         ("requests", "context_notes", "TEXT"),
         ("requests", "stream_hint_source", "TEXT"),
         ("requests", "stream_hint_digest", "TEXT"),
+        # v9: request purpose, block source/location, session archive marker
+        ("requests", "purpose", "TEXT"),
+        ("requests", "purpose_detail", "TEXT"),
+        ("requests", "classifier_version", "INTEGER"),
+        ("blocks", "source_key", "TEXT"),
+        ("blocks", "json_path", "TEXT"),
+        ("sessions", "archived_at", "DATETIME"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_columns:
@@ -143,6 +150,15 @@ def _migrate(engine) -> None:
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_requests_predecessor_response "
             "ON requests (predecessor_response_id)"
+        ))
+        # Declared in models.py too, but create_all() does not index pre-existing
+        # tables, so existing databases get them here.
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_blocks_source_key ON blocks (source_key)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_requests_session_purpose "
+            "ON requests (session_id, purpose)"
         ))
         # Kept out of SQLAlchemy metadata so an old database containing legacy
         # duplicate ordinals can still start and run its explicit v5 repair.

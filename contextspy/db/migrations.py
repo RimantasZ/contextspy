@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, Session, ToolStat
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 logger = logging.getLogger(__name__)
 
@@ -951,6 +951,21 @@ def _migrate_to_v8(db: OrmSession) -> None:
     logger.info("v8: re-keyed system prompts with a volatile header (%d content copies)", len(replaced_hashes))
 
 
+# ---------------------------------------------------------------------------
+# v9: request purpose, block source keys and JSON locations
+# ---------------------------------------------------------------------------
+
+def _migrate_to_v9(db: OrmSession) -> None:
+    """Placeholder for the v9 backfill (plans/wi0-data-foundation.md section 8).
+
+    The v9 columns (requests.purpose/purpose_detail/classifier_version,
+    blocks.source_key/json_path, sessions.archived_at) are added by
+    ``db/database.py: _migrate()``. Until the backfill lands (slice 4) every reader
+    treats them as NULL, so there is nothing to compute yet.
+    """
+    logger.info("v9: new analysis columns present; backfill not implemented yet")
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
@@ -959,4 +974,5 @@ _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     6: _migrate_to_v6,
     7: _migrate_to_v7,
     8: _migrate_to_v8,
+    9: _migrate_to_v9,
 }
