@@ -204,6 +204,9 @@ block contents become eligible for purging 7 days after capture by default — c
 not on a background timer, so a long-running `contextspy` process won't re-purge until restarted.
 Aggregated token counts and classifications are kept indefinitely until you run `contextspy reset-db`.
 
+Purging frees space *inside* the database file but does not make the file smaller. Run `contextspy db-compact`
+(with ContextSpy stopped) to give the space back to the disk; `contextspy db-stats` shows how much is reclaimable.
+
 ### Can I delete everything and start fresh?
 
 ```bash

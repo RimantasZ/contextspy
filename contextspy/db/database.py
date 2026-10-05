@@ -39,6 +39,7 @@ def init_db(db_path: Path) -> None:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_path = db_path.resolve()
+    is_new_file = not db_path.exists() or db_path.stat().st_size == 0
     reuse_lock = _db_lock_handle is not None and _db_lock_path == resolved_path
     new_lock = None if reuse_lock or str(db_path) == ":memory:" else acquire_database_lock(db_path)
     try:
@@ -67,6 +68,11 @@ def init_db(db_path: Path) -> None:
         if str(db_path) != ":memory:":
             try:
                 with engine.connect() as conn:
+                    if is_new_file:
+                        # Must precede journal_mode=WAL (which writes the file header) and every
+                        # CREATE TABLE. Lets deleted content shrink the file via incremental_vacuum;
+                        # existing databases are converted only by `contextspy db-compact`.
+                        conn.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
                     mode = conn.exec_driver_sql("PRAGMA journal_mode=WAL").scalar_one()
             except OperationalError as exc:
                 raise RuntimeError(
@@ -206,6 +212,9 @@ def get_db() -> Generator[OrmSession, None, None]:
 
 def startup_vacuum(settings=None) -> None:
     """Purge raw bodies and orphaned block contents past their retention window.
+
+    Despite the name this frees pages *inside* the database file; it never shrinks the file itself.
+    ``contextspy db-compact`` does that (see db/compaction.py).
 
     Runs once, at server startup, using the [retention] settings from
     config.toml (default 7 days for both; 0 = keep forever). There is no

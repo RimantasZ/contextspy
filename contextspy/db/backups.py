@@ -14,7 +14,7 @@ from typing import Literal
 
 from contextspy.db.maintenance_lock import acquire_database_lock, release_database_lock
 
-BackupPurpose = Literal["manual", "pre_restore", "migration"]
+BackupPurpose = Literal["manual", "pre_restore", "pre_compact", "migration"]
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,7 @@ def backup_name(
         if target_version is None:
             raise ValueError("Migration backups require a target version")
         return f"{stem}_backup_v{version}_to_v{target_version}_{_stamp(timestamp, seconds=False)}.back"
-    marker = "_pre_restore" if purpose == "pre_restore" else ""
+    marker = {"pre_restore": "_pre_restore", "pre_compact": "_pre_compact"}.get(purpose, "")
     return f"{stem}_backup_v{version}{marker}_{_stamp(timestamp)}.back"
 
 
@@ -167,7 +167,7 @@ def list_backups(db_path: Path) -> list[Path]:
     stem = re.escape(db_path.stem)
     patterns = (
         re.compile(rf"(?P<base>{stem}_backup_v\d+_to_v\d+_\d{{4}}-\d{{2}}-\d{{2}}-\d{{4}})(?:-(?P<sequence>\d+))?\.back"),
-        re.compile(rf"(?P<base>{stem}_backup_v\d+(?:_pre_restore)?_\d{{4}}-\d{{2}}-\d{{2}}-\d{{6}}Z)(?:-(?P<sequence>\d+))?\.back"),
+        re.compile(rf"(?P<base>{stem}_backup_v\d+(?:_pre_restore|_pre_compact)?_\d{{4}}-\d{{2}}-\d{{2}}-\d{{6}}Z)(?:-(?P<sequence>\d+))?\.back"),
         re.compile(rf"{stem}_\d+_\d+_\d{{8}}T\d{{12}}Z\.back"),
     )
     matches = [

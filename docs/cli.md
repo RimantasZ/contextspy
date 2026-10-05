@@ -127,6 +127,7 @@ These commands work offline — no proxy or dashboard needs to be running.
 ```
 contextspy db-stats        Print database row counts
 contextspy db-backup       Create an on-demand SQLite backup
+contextspy db-compact      Shrink the database file (offline); add --backup / --yes
 contextspy db-restore FILE Restore FILE, preserving the current DB for rollback
 contextspy db-upgrade      Back up the DB and apply pending data migrations
 contextspy report          Print aggregate token stats and category breakdown table
@@ -156,6 +157,31 @@ and retains the former database as `contextspy_backup_v7_pre_restore_...back` be
 files. The source backup is not consumed. Restore replaces the database; it does not merge in
 newer requests. If the restored backup has pending data migrations, run `contextspy db-upgrade`
 before starting ContextSpy. A pre-WAL backup can be restored; startup will enable WAL again.
+
+### Shrinking the database file (`db-compact`)
+
+Deleting request bodies or block contents (the retention purge, and later session archive) does not make
+the `.db` file smaller: SQLite keeps the freed pages inside the file for reuse. A database that has been
+purged for a while can therefore be mostly empty space (`contextspy db-stats` shows the file size, the free
+space inside it and the auto-vacuum mode). Stop ContextSpy and run:
+
+```
+contextspy db-compact            # asks for confirmation
+contextspy db-compact --yes      # no prompt
+contextspy db-compact --backup   # first writes contextspy_backup_vN_pre_compact_<UTC>.back
+```
+
+It rebuilds the file without the free pages (`VACUUM`) and switches the database to *incremental*
+auto-vacuum, so space freed later can be returned without another full rebuild. New databases start in that mode.
+It refuses to run while ContextSpy or another maintenance command is using the database, and checks beforehand that
+the disk has room: the rebuild needs about the live data size again (in SQLite's temporary directory, `SQLITE_TMPDIR`
+if you set it, and on the database volume), plus a full copy of the file when `--backup` is used. `VACUUM` is atomic:
+if it is interrupted the original database is unchanged. As a rough guide, a 6.6 GB file with 65% free space took
+about 12 seconds to compact on an SSD.
+
+Existing backups are not affected, and a pre-compaction backup is listed and restorable like any other. A restored backup
+comes back exactly as it was backed up (not compacted, with its old auto-vacuum mode); run `db-compact` again to shrink it.
+Backups copy every page, so compacting first also makes later backups smaller.
 
 ContextSpy enables SQLite WAL mode on startup for file-backed databases. Stop all ContextSpy
 processes before an offline copy or restore; a live `.db` file alone may omit committed data in

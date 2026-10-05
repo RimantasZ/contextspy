@@ -120,6 +120,15 @@ purging 7 days after capture by default to limit disk usage — configurable via
 Purging only runs once, at server startup — there is no background timer, so a `contextspy`
 process left running for many days won't purge again until restarted.
 
+Purging (`db/database.py: startup_vacuum`, despite its name) only frees pages inside the file: SQLite never
+shrinks the file by itself, so a purged database keeps its size. `contextspy db-compact` (`db/compaction.py`)
+runs `VACUUM` offline under the maintenance lock and switches the database to incremental auto-vacuum
+(`PRAGMA auto_vacuum = INCREMENTAL`); `init_db` puts new databases in that mode (it must be set before
+`journal_mode=WAL` writes the file header and before any table exists), after which `PRAGMA incremental_vacuum`
+(its result rows must be fetched for it to do any work) returns freed pages to the filesystem online. Backups are
+independent standalone copies and are unaffected by compaction; `pre_compact` is a backup purpose recognised by
+`list_backups` and `db-restore`.
+
 ### Capture and analysis boundary
 
 Transport ingestion first identifies one externally observable provider invocation. HTTP has one

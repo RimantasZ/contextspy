@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Database
+
+- New **`contextspy db-compact`** shrinks the database file. Deleting request bodies or block contents (the
+  retention purge) never made the file smaller, so a purged database could be mostly empty space (a 6.6 GB file
+  with 65% free space compacted to 2.4 GB in about 12 seconds on an SSD). Stop ContextSpy and run it; `--backup` writes
+  a restorable `..._pre_compact_...back` snapshot first, `--yes` skips the prompt. It checks free disk space before
+  starting and leaves the original untouched if interrupted. It also switches the database to incremental
+  auto-vacuum, so space freed later can be returned without another rebuild; **new databases start that way**.
+  Existing backups are unaffected and still restore; a restored backup comes back as it was and can be compacted again.
+- `contextspy db-stats` now shows the file size, the free space inside it and the auto-vacuum mode, and suggests
+  `db-compact` when a lot of space is reclaimable.
+
 ### Analysis
 
 - Every request now gets an inferred **purpose**: `user_turn` (the last message is the user's),

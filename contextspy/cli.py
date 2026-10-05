@@ -78,6 +78,15 @@ def _format_file_size(path: pathlib.Path) -> str:
     return f"{value:.1f} {unit} ({size:,} bytes)"
 
 
+def _format_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ("bytes", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:,.0f} {unit}" if unit == "bytes" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{size:,} bytes"
+
+
 def _print_previous_backups(backups: list[pathlib.Path]) -> None:
     if not backups:
         return
@@ -666,6 +675,7 @@ def help_cmd() -> None:
             "db-upgrade",
             "Apply pending data migrations (e.g. backfill blocks from raw bodies)",
         ),
+        ("db-compact", "Shrink the database file (offline) and enable incremental auto-vacuum"),
         ("db-stats", "Print row counts for each database table"),
         ("report", "Print aggregate stats: requests, tokens, category breakdown"),
         (
@@ -835,6 +845,60 @@ def db_restore(
         console.print("Run [bold]contextspy db-upgrade[/bold] before starting ContextSpy.")
 
 
+@app.command("db-compact")
+def db_compact(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Compact without a confirmation prompt"),
+    backup: bool = typer.Option(False, "--backup", help="Create a standalone backup first (needs one extra database-sized copy of free space)"),
+) -> None:
+    """Shrink the database file by rebuilding it without free pages (ContextSpy must be stopped).
+
+    Deleting request bodies or block contents leaves free pages inside the file, so it never gets
+    smaller by itself. This rebuilds it (VACUUM) and switches it to incremental auto-vacuum so later deletions
+    can shrink it online. VACUUM is atomic: if it is interrupted, the original database is unchanged.
+    """
+    from contextspy.config import Settings
+    from contextspy.db.compaction import compact_database
+
+    settings = Settings.load()
+    db_path = settings.storage.db_path
+    if _configured_backend_reachable(settings):
+        console.print("[red]Stop ContextSpy before compacting the database.[/red]")
+        raise typer.Exit(1)
+
+    def confirm(space) -> bool:
+        console.print(f"Database: {db_path}")
+        console.print(f"  Size on disk: {_format_bytes(space.file_bytes + space.wal_bytes)}")
+        console.print(f"  Free space inside the file: {_format_bytes(space.free_bytes)} ({space.free_fraction:.0%})")
+        console.print(f"  Expected size after compacting: about {_format_bytes(space.live_bytes)}")
+        if yes:
+            return True
+        return typer.confirm("Compact the database now? Keep ContextSpy stopped until it finishes.")
+
+    try:
+        outcome = compact_database(db_path, backup=backup, confirm=confirm, report=console.print)
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        console.print(f"[red]Compaction failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if outcome.status == "empty":
+        console.print("[yellow]No database to compact yet.[/yellow]")
+    elif outcome.status == "already_compact":
+        console.print("[green]The database is already compact (incremental auto-vacuum, almost no free space).[/green]")
+    elif outcome.status == "declined":
+        console.print("Nothing changed.")
+    else:
+        assert outcome.before is not None and outcome.after is not None
+        console.print(
+            f"[green]Done in {outcome.seconds:.0f}s.[/green] "
+            f"{_format_bytes(outcome.before.file_bytes + outcome.before.wal_bytes)} -> "
+            f"{_format_bytes(outcome.after.file_bytes + outcome.after.wal_bytes)} "
+            f"(reclaimed {_format_bytes(outcome.reclaimed_bytes)})."
+        )
+        console.print("Incremental auto-vacuum is now enabled: space freed by later deletions can be returned online.")
+        if outcome.backup_path is not None:
+            console.print(f"Backup kept at {outcome.backup_path}; delete it when you no longer need it.")
+
+
 @app.command("db-upgrade")
 def db_upgrade() -> None:
     """Apply pending data migrations (e.g. backfill blocks from raw request bodies).
@@ -929,6 +993,22 @@ def db_stats() -> None:
         table.add_row(t, str(count))
     con.close()
     console.print(table)
+
+    from contextspy.db.compaction import inspect_space
+
+    space = inspect_space(db_path)
+    mode = {0: "off", 1: "full", 2: "incremental"}.get(space.auto_vacuum, str(space.auto_vacuum))
+    console.print(
+        f"File size: {_format_bytes(space.file_bytes + space.wal_bytes)}; free inside the file: "
+        f"{_format_bytes(space.free_bytes)} ({space.free_fraction:.0%}); auto-vacuum: {mode}"
+    )
+    if space.free_fraction >= 0.2 or not space.incremental:
+        console.print(
+            "[yellow]Run `contextspy db-compact` (with ContextSpy stopped) to reclaim the free space "
+            "and enable incremental auto-vacuum.[/yellow]"
+            if space.free_fraction >= 0.2 else
+            "Run `contextspy db-compact` (with ContextSpy stopped) to enable incremental auto-vacuum."
+        )
 
 
 # ---------------------------------------------------------------------------

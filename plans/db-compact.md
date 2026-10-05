@@ -1,6 +1,6 @@
 # Plan 3a: `contextspy db-compact` — reclaim free space, enable automatic shrinking
 
-Status: **reviewed and decided 2026-10-05; not started.** First half of the former "Plan 3: session archive"; the second half is
+Status: **implemented 2026-10-06 (uncommitted); not released; the author's live database has NOT been compacted.** See "Implementation status" at the end. First half of the former "Plan 3: session archive"; the second half is
 [session-archive.md](session-archive.md) (Plan 3b), which depends on this. Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
 
 ## Why (measured, author's database, 2026-10-05; a sample, not a rule)
@@ -67,3 +67,30 @@ Auto-compaction at startup (needs exclusive access and can take minutes on large
 ## Risks
 - Disk-full during VACUUM is prevented by the preflight but not impossible (other processes); the original stays intact.
 - Running it while another tool holds the DB open (not ContextSpy) is not detected by the flock; the SQLite busy timeout will fail the VACUUM instead.
+
+## Implementation status (2026-10-06)
+
+**Implemented** (backend 519 tests passing; uncommitted):
+- `contextspy/db/compaction.py`: `inspect_space`, `needs_compaction`, `required_free_bytes`, `check_free_space`, `compact_database(db_path, backup=, confirm=, report=, temp_dir=)` returning a `CompactionOutcome` (`compacted` / `already_compact` / `declined` / `empty`), `CompactionError`.
+- `contextspy db-compact [--yes] [--backup]` (`cli.py`), also listed in `contextspy help`; refuses while a backend answers on the configured web port (`_configured_backend_reachable`, which also catches older builds) in addition to the maintenance lock.
+- `db/backups.py`: `pre_compact` purpose, name `{stem}_backup_v{N}_pre_compact_{stamp}.back`, recognised by `list_backups` (and therefore `db-restore`/`status`).
+- `init_db`: new/empty database files get `PRAGMA auto_vacuum=INCREMENTAL` (existing files untouched).
+- `contextspy db-stats`: file size, free space, auto-vacuum mode and a `db-compact` hint.
+- Docs: `docs/cli.md`, `docs/faq.md`, `docs/development.md`, `docs/changelog.md`; `startup_vacuum` docstring says it does not shrink the file.
+- Tests: `tests/test_db_compact.py` (26): space maths, shrink + rows kept + mode 2, nothing-to-do, missing/empty, lock held, disk-space preflight (database volume and a different temp volume), failed VACUUM leaves the file byte-identical and the lock released, busy database, declined confirmation, new-database mode (and existing untouched), online `incremental_vacuum`, backup naming/discovery, **existing backup survives compaction and restores (restored file is mode 0 and can be compacted again)**, `--backup` snapshot listed and restorable, backup space requirement, CLI paths, `db-stats`.
+
+**Verified on real data** (a scratch copy made with SQLite's online backup API from the live database, 7,058 requests / 1.44M blocks; the live file was not modified):
+`compact_database(backup=True)`: 6.60 GB (4.18 GB / 63% free, mode 0) → **2.36 GB**, free 0, mode 2; backup 22 s, VACUUM 12 s; the backup (6.60 GB) is listed by `list_backups`; row counts unchanged.
+
+**Differences from the plan text**
+- **Pragma order matters (found by experiment):** `auto_vacuum` must be set *before* `journal_mode=WAL` (which writes the header), not just before `create_all`; otherwise it silently stays 0. `init_db` sets both inside one connection block, auto-vacuum first.
+- **Free-space rule is more precise than "live × 1.25 + 64 MB":** VACUUM rebuilds in SQLite's temp directory and copies back through the WAL, so the database volume needs `live × 1.25 + 64 MB` (+ the file size and 5% if `--backup`), plus `live × 1.1` more when the temp directory is on the same volume; when it is on a different volume that volume needs `live × 1.1 + 64 MB`. Failures name `SQLITE_TMPDIR`.
+- "Nothing to do" is: already incremental **and** free space < max(16 MB, 1% of the file). A non-incremental file is always compacted (conversion is a reason by itself).
+- `compact_database` returns an outcome instead of printing, so the CLI and tests share one path; the lock is taken inside it (RuntimeError "in use" propagates, as in `db-restore`).
+- The post-compaction check is `PRAGMA quick_check`; a failure raises `CompactionError` *after* the rebuild committed (the message says the integrity check failed), whereas every earlier failure leaves the file untouched.
+
+**Not done / still open**
+- The author's live database is not compacted; run `contextspy db-compact` with ContextSpy stopped (use `--backup` if you want a copy; it needs ~6.6 GB free for it).
+- Not exercised: Windows (`msvcrt` lock path), a database on a volume with a separate `SQLITE_TMPDIR`, very large databases (> 10 GB).
+- Plan 3b (archive) builds on this and is not started; the retention default / startup notice change belongs to 3b.
+

@@ -1,6 +1,6 @@
 # Plan 1: Info panel — shared pieces and "present in" / totals
 
-Status: **implemented 2026-10-05 (uncommitted); not released; not checked in a browser.** Reviewed and decided before implementation; see "Implementation status" at the end for exactly what exists and how it differs from this text.
+Status: **implemented 2026-10-05, committed in `153a9d0`; not released; not checked in a browser.** Reviewed and decided before implementation; see "Implementation status" at the end for exactly what exists and how it differs from this text.
 
 ## Review 2026-10-05 (before implementation) — corrections applied below
 
@@ -177,7 +177,7 @@ toggle refetches and keeps the previous data while loading, run expansion, navig
 
 ## Implementation status (2026-10-05)
 
-**Implemented** (backend 493 / frontend 163 tests passing, `npm run check` and `make ui` clean; uncommitted):
+**Implemented** (backend 493 / frontend 163 tests passing, `npm run check` and `make ui` clean; committed in `153a9d0`):
 - `analysis/block_occurrences.py` (pure runs/totals/sample/expansion) and `db/block_occurrence_service.py` (scope selection, one query per call, membership cache).
 - `GET /api/requests/{id}/blocks/{block_id}/occurrences?scope=conversation|session` and `.../occurrences/requests?scope=&from_position=&to_position=&limit=`
   (limit default 100, max 200; 404 for unknown request/block or a block of another request; 422 for a bad scope).
