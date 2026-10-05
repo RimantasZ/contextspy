@@ -9,6 +9,8 @@ total token cost across them?** Make this (and later actions such as compare) re
 places that already have an info panel, and reusable as the right-hand pane of the future context
 tree page.
 
+Dependency: shows `source_key`/`activity` from [wi0-data-foundation.md](wi0-data-foundation.md) when present (works without them).
+
 ## Scope decision (agreed with user)
 
 - **No new panel framework and no drawer variant.** Two panels exist today:

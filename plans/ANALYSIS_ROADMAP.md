@@ -91,9 +91,9 @@ implementing any plan.** Where it conflicts with an individual plan, it wins and
 
 | # | Plan | File | Status | Depends on |
 |---|------|------|--------|-----------|
-| 0 | Migration v9 + capture-time classification (data foundation) | [`analysis-architecture.md`](analysis-architecture.md) §5, [`request-purpose.md`](request-purpose.md) | spec ready | — |
+| 0 | Data foundation: migration v9, capture-time classification, `json_path` | [`wi0-data-foundation.md`](wi0-data-foundation.md) | **spec ready, not started** | — |
 | 1 | Info panel: shared pieces + "present in"/totals | [`info-panel.md`](info-panel.md) | **confirmed, not started** | — |
-| 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) | **confirmed, not started** | — |
+| 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **specified in WI-0** | — |
 | 3 | Session lifecycle & explicit archive | [`unconfirmed_drafts/session-archive.md`](unconfirmed_drafts/session-archive.md) | draft | — |
 | 4 | Hot spots (per conversation / per session) | [`unconfirmed_drafts/hot-spots.md`](unconfirmed_drafts/hot-spots.md) | draft | 1, 3 |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
@@ -104,6 +104,8 @@ Plans 1, 2 and 3 are independent and can proceed in parallel. 1 and 2 set contra
 so they were written first.
 
 ## How to continue
+
+Implementation order starts with **WI-0** ([`wi0-data-foundation.md`](wi0-data-foundation.md)); it is the agent-ready spec. Its follow-ups (housekeeping/compaction detectors, more source parsers) wait for captures from Copilot, Ollama, llama.cpp and vLLM.
 
 1. Read this file, then the plan you are asked to work on, then `AGENTS.md`.
 2. If the plan is a **draft**, it is *not* an approved spec: list its "Open questions", ask the user,
