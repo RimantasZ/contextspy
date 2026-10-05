@@ -74,7 +74,7 @@ In the sample only ~31% of distinct input tool_call hashes still have retained c
 `blocks.json_path` TEXT (JSON array, nullable). Capture-time only; backfill only from retained canonical bodies (≈28% of requests today; archive reduces this further). Implement for **all adapters in one change (user decision D13)**: `anthropic.py`, `openai_chat.py`, `openai_responses.py`, `ollama.py` (llama.cpp/vLLM/Copilot ride the OpenAI-compatible paths — confirm which adapter each uses via `get_adapter` path dispatch). Each adapter needs exact-path fixtures. For WS/delta transports the *canonical* (reconstructed) request body is the path target, not the raw delta. For WS/delta transports the *canonical* (reconstructed) request body is the path target, not the raw delta.
 
 ### 2.5 Archive — [DECIDED, details in draft]
-`sessions.archived_at` (nullable). Derived `status` = active|ended|archived. See `unconfirmed_drafts/session-archive.md`.
+`sessions.archived_at` (nullable). Derived `status` = active|ended|archived. See `session-archive.md` and `db-compact.md`.
 
 ### 2.6 Things deliberately **not** changed
 - No `blocks.session_id` (join via `requests.session_id` is fast enough: 0.15–0.84 s on the largest session).

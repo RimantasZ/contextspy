@@ -1,7 +1,7 @@
 # Draft 4: Hot spots (per conversation / per session)
 
 Status: DRAFT (not approved). Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md).
-Depends on: [info-panel](../info-panel.md) (block occurrence identity + scope handling), [session-archive](session-archive.md) (analysis must work without content).
+Depends on: [info-panel](../info-panel.md) (block occurrence identity + scope handling), [session-archive](../session-archive.md) (analysis must work without content).
 
 ## Goal (user's words, condensed)
 
