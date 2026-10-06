@@ -171,7 +171,8 @@ def get_session_hotspots(
         select_sql, params = aggregate_select(group, category=category, block_type=block_type, source=source)
         db.execute(text(f"CREATE TEMP TABLE hs_agg AS {select_sql}"), params)
 
-        total = db.execute(text("SELECT COALESCE(SUM(total), 0) FROM hs_agg")).scalar() or 0
+        totals = db.execute(text("SELECT COALESCE(SUM(total), 0) AS tokens, COALESCE(SUM(occ), 0) AS occurrences FROM hs_agg")).one()
+        total, occurrences_total = totals.tokens or 0, totals.occurrences or 0
         unidentifiable = None
         if group == "block":
             row = db.execute(text("SELECT occ, total FROM hs_agg WHERE k IS NULL")).first()
@@ -264,6 +265,7 @@ def get_session_hotspots(
         "summary": {
             "scope_request_count": len(resolved.requests),
             "visible_tokens_total": total,
+            "occurrences_total": occurrences_total,
             "fidelity_counts": fidelity,
             "unidentifiable": unidentifiable,
             "returned_tokens": returned_tokens,

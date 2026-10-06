@@ -123,3 +123,6 @@ Measured on a copy of the author's database (samples, 2026-10-06; warm OS cache;
 - Plan shape confirmed on the real database: `SCAN s`, `SEARCH b USING INDEX idx_blocks_request`, temp B-tree for the group; `idx_blocks_content_hash` is not used.
 
 Not done / not verified: browser check; first-call time as the user would experience it on a long, never-opened session (dominated by the membership above); fidelity badge wording with real partial/opaque data; the Files grouping on a database with paths from non-Codex agents.
+
+## Layout update (2026-10-06)
+The rows were rearranged into a profiler-style table (bar proportional to the first row's metric, main metric follows *Sort by* with the share in parentheses, secondary facts in an expandable detail, `summary.occurrences_total` added to the API). See [hot-spots-layout.md](hot-spots-layout.md).

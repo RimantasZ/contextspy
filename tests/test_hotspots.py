@@ -135,6 +135,7 @@ def test_totals_counts_and_repeats_inside_a_request(db):
     assert a["tokens_per_occurrence"] == 10
     assert (b["key"], b["occurrence_count"], b["tokens_per_occurrence"], b["total_tokens"]) == ("B", 2, None, 10)
     assert result["summary"]["visible_tokens_total"] == 50
+    assert result["summary"]["occurrences_total"] == 6  # 4 of A + 2 of B: the denominator of an occurrence share
     assert result["summary"]["scope_request_count"] == 3 and result["summary"]["fidelity_counts"] == {"complete": 3}
     assert a["share_pct"] == 80.0 and b["share_pct"] == 20.0
     assert result["summary"]["returned_tokens"] == 50 and result["summary"]["returned_share_pct"] == 100.0

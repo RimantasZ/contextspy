@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
@@ -24,7 +24,7 @@ function response(group: 'block' | 'source' | 'file', rows: unknown[], overrides
       { key: 'c-two', code: 'C2', request_count: 7, selected: false },
     ],
     summary: {
-      scope_request_count: 54, visible_tokens_total: 5390318, fidelity_counts: { complete: 40, partial: 4, opaque: 10 },
+      scope_request_count: 54, visible_tokens_total: 5390318, occurrences_total: 1000, fidelity_counts: { complete: 40, partial: 4, opaque: 10 },
       unidentifiable: group === 'block' ? { blocks: 133, tokens: 432 } : null, returned_tokens: 648000, returned_share_pct: 12.1,
     },
     rows, total_rows: rows.length, has_more: false, ...overrides,
@@ -68,13 +68,58 @@ describe('HotSpots', () => {
     expect(screen.getByText(/Top 2 of 2 blocks/).textContent).toContain('12.1%')
     expect(screen.getByText(/5,390,318 visible tokens/)).toBeTruthy()
     expect(screen.getByText('648,000')).toBeTruthy()
-    expect(screen.getByText('reappears')).toBeTruthy()
+    expect(screen.getByText('(12.1%)')).toBeTruthy()
     expect(screen.getByText('dropped')).toBeTruthy()
+    expect(screen.queryByText('reappears')).toBeNull()  // detail only
     expect(screen.getByText(/4 partial, 10 opaque/)).toBeTruthy()
     expect(screen.getByText(/133 unidentifiable blocks, 432 tokens/)).toBeTruthy()
-    expect(screen.getByText(/12,000 tokens each/)).toBeTruthy()
-    expect(screen.getByText(/sizes differ/)).toBeTruthy()
     expect(screen.getByRole('option', { name: 'C1 · 54 requests' })).toBeTruthy()
+  })
+
+  it('keeps the secondary facts in a row that expands on click', async () => {
+    const dropped = blockRow({ key: 'h2', label: 'tool:Read result · a.py', block_type: 'tool_result', in_latest_request: false, run_count: 2, tokens_per_occurrence: null, total_tokens: 90000, share_pct: 1.7, preview: null, content_purged: true })
+    mockApi(() => response('block', [blockRow(), dropped]))
+    renderView()
+    const toggle = await screen.findByRole('button', { name: 'Show details of tool:Bash definition' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    await userEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('Occurrences', { selector: 'dt' }).closest('div')?.textContent).toContain('54 (5.4%)')  // 54 of 1,000
+    expect(screen.getByText('12,000')).toBeTruthy()
+    expect(screen.getByText('{"name":"Bash"}')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Show details of tool:Read result · a.py' }))
+    expect(screen.getByText('reappears')).toBeTruthy()
+    expect(screen.getByText('sizes differ')).toBeTruthy()
+    expect(screen.getByText('(content no longer stored)')).toBeTruthy()
+    await userEvent.click(toggle)
+    expect(screen.queryByText('{"name":"Bash"}')).toBeNull()
+  })
+
+  it('scales bars to the first row and follows the sort metric', async () => {
+    const rows = [blockRow({ key: 'a', label: 'big', total_tokens: 1000, occurrence_count: 4 }), blockRow({ key: 'b', label: 'small', total_tokens: 250, occurrence_count: 8 })]
+    mockApi(() => response('block', rows))
+    renderView()
+    await screen.findByText('big')
+    expect(screen.getAllByTestId('hotspot-bar').map((bar) => (bar as HTMLElement).style.width)).toEqual(['100%', '25%'])
+    expect(screen.getByRole('button', { name: 'Sort by occurrences instead' })).toBeTruthy()
+    cleanup()
+    mockApi(() => response('block', [rows[1], rows[0]], { sort: 'occurrences' }))
+    renderView('/sessions/s1?view=hotspots&sort=occurrences')
+    await screen.findByText('small')
+    expect(screen.getAllByTestId('hotspot-bar').map((bar) => (bar as HTMLElement).style.width)).toEqual(['100%', '50%'])
+    expect(screen.getByText('(0.8%)')).toBeTruthy()  // 8 of 1,000 occurrences
+    await userEvent.click(screen.getByRole('button', { name: 'Sort by total tokens instead' }))
+    await waitFor(() => expect(screen.getByTestId('location').textContent).not.toContain('sort='))
+  })
+
+  it('can put the label on the bar (layout=bar)', async () => {
+    mockApi(() => response('block', [blockRow({ total_tokens: 1000 }), blockRow({ key: 'tiny', label: 'a very long label for a tiny bar', total_tokens: 1 })]))
+    renderView('/sessions/s1?view=hotspots&layout=bar')
+    const long = await screen.findByText('a very long label for a tiny bar')
+    expect(long.getAttribute('data-placement')).toBe('outside')
+    expect(screen.getByText('tool:Bash definition').getAttribute('data-placement')).toBe('inside')
+    await userEvent.click(screen.getByRole('button', { name: 'Name column' }))
+    await waitFor(() => expect(screen.getByTestId('location').textContent).not.toContain('layout='))
   })
 
   it('sends the default parameters and refetches when the controls change', async () => {
@@ -137,7 +182,8 @@ describe('HotSpots', () => {
   it('opens the latest occurrence with the block selected', async () => {
     mockApi(() => response('block', [blockRow()]))
     renderView()
-    await userEvent.click(await screen.findByRole('button', { name: 'Open the latest request carrying tool:Bash definition' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Show details of tool:Bash definition' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Open the latest request carrying tool:Bash definition' }))
     expect(screen.getByTestId('location').textContent).toBe('/requests/r54?block=900')
   })
 
@@ -151,7 +197,8 @@ describe('HotSpots', () => {
     await screen.findByText('tool:Bash definition')
     await userEvent.click(screen.getByRole('button', { name: 'Sources' }))
     await screen.findByText('tool:Read')
-    expect(screen.getByText(/12 distinct blocks/)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Show details of tool:Read' }))
+    expect(screen.getByText('Distinct blocks').nextSibling?.textContent).toBe('12')
     expect(screen.queryByLabelText('Block type')).toBeNull()  // block-only filters are hidden
     expect(screen.queryByLabelText('Category')).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Show the blocks of tool:Read' }))
@@ -169,7 +216,10 @@ describe('HotSpots', () => {
     mockApi(() => response('file', [file]))
     renderView('/sessions/s1?view=hotspots&group=file')
     await screen.findByText('/p/a.py')
-    expect(screen.getByText(/read 200 · edited 40 · 3 versions/)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Show details of /p/a.py' }))
+    expect(screen.getByText('Read').nextSibling?.textContent).toBe('200 tokens')
+    expect(screen.getByText('Edited').nextSibling?.textContent).toBe('40 tokens')
+    expect(screen.getByText('Versions').nextSibling?.textContent).toBe('3')
     expect(screen.getByText('dropped')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Dropped' })).toBeNull()
   })
@@ -179,7 +229,7 @@ describe('HotSpots', () => {
     renderView()
     await screen.findByText('tool:Bash definition')
     expect(screen.getByText(/auxiliary: showing the whole session/)).toBeTruthy()
-    const row = screen.getByRole('button', { name: 'Open the latest request carrying tool:Bash definition' })
+    const row = screen.getByRole('button', { name: 'Show details of tool:Bash definition' })
     expect(row.getAttribute('title')).toContain('content no longer stored')
   })
 

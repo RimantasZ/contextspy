@@ -15,6 +15,8 @@
 
 ### Hot spots
 
+- **Profiler-style rows.** Each row has a bar proportional to the largest row, the main metric (total tokens or occurrences, following *Sort by*) with its share in parentheses, and expands on click to show the other metric, counts, preview and the *Open latest request* button. A *Labels* switch (`layout=bar` in the URL) tries the label on the bar. The API summary gained `occurrences_total`.
+
 - **New session view: Hot spots.** On a session page, **Hot spots** ranks what the context window keeps carrying: the
   blocks (tool definitions, big tool results, compaction items, ...) that add up to the most **visible tokens** over all
   the requests that contain them, for one conversation or the whole session. Switch between **Blocks**, **Sources**

@@ -402,6 +402,7 @@ interface HotspotsResponseBase {
   summary: {
     scope_request_count: number
     visible_tokens_total: number
+    occurrences_total: number
     fidelity_counts: Record<string, number>
     /** Blocks without a content hash (hidden or empty); null outside the block grouping. */
     unidentifiable: { blocks: number; tokens: number } | null
