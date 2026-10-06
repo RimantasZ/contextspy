@@ -56,6 +56,8 @@ const graph: LineageGraph = {
     started_at: '2026-09-11T12:00:00Z',
     ended_at: null,
     is_active: true,
+    status: 'active',
+    archived_at: null,
   },
   analysis_version: 'lineage-v2',
   conversation_count: 2,

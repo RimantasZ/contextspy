@@ -34,8 +34,22 @@ export interface Session {
   started_at: string
   ended_at: string | null
   is_active: boolean
-  /** Set once the session has been archived (one-way); null otherwise. Nothing archives yet. */
-  archived_at?: string | null
+  /** Lifecycle state; `archived` is one-way (raw payloads and block text removed). */
+  status: 'active' | 'ended' | 'archived'
+  archived_at: string | null
+}
+
+export interface ArchiveResult {
+  session: Session
+  /** True when the session was already archived; the purge ran again and only removed stragglers. */
+  already_archived: boolean
+  freed: { requests: number; request_body_bytes: number; content_rows: number; content_bytes: number }
+  space: {
+    auto_vacuum: 'incremental' | 'none'
+    reclaimed_bytes: number
+    free_bytes_remaining: number
+    note: string | null
+  }
 }
 
 /** Request-local refinements of `purpose`; every key is optional and new keys may appear. */
@@ -94,6 +108,10 @@ export interface Request {
   purpose: string | null
   purpose_detail: PurposeDetail | null
   classifier_version: number | null
+  /** Why stored payloads may be missing; only on the detail response. */
+  content_state?: 'retained' | 'archived' | 'not_retained'
+  /** When the owning session was archived (detail response only). */
+  session_archived_at?: string | null
   context_accounting: {
     visible_input_tokens: number
     provider_input_tokens: number | null
@@ -195,6 +213,9 @@ export interface SessionSummaryEntry {
   /** null while active (no ended_at yet). */
   duration_ms: number | null
   is_active: boolean
+  /** Absent on gap entries (periods without a session). */
+  status?: Session['status']
+  archived_at?: string | null
   request_count: number
   tokens_in: number
   tokens_out: number
@@ -466,6 +487,8 @@ export const sessionsApi = {
     }),
   end: (id: string) =>
     apiFetch<{ session: Session }>(`/sessions/${id}/end`, { method: 'POST' }),
+  archive: (id: string) =>
+    apiFetch<ArchiveResult>(`/sessions/${id}/archive`, { method: 'POST' }),
   rename: (id: string, name: string) =>
     apiFetch<{ session: Session }>(`/sessions/${id}`, {
       method: 'PATCH',

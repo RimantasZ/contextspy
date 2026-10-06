@@ -217,7 +217,7 @@ def startup_vacuum(settings=None) -> None:
     ``contextspy db-compact`` does that (see db/compaction.py).
 
     Runs once, at server startup, using the [retention] settings from
-    config.toml (default 7 days for both; 0 = keep forever). There is no
+    config.toml (default 0 = keep forever; an explicit value is honoured). There is no
     background timer — a contextspy process left running for days will not
     re-purge until restarted (see docs/development.md).
     """
@@ -226,6 +226,14 @@ def startup_vacuum(settings=None) -> None:
     if settings is None:
         from contextspy.config import Settings
         settings = Settings.load()
+
+    if settings.retention.raw_body_days > 0 or settings.retention.block_content_days > 0:
+        logger.info(
+            "Time-based purge is enabled in config.toml (raw bodies: %d days, block contents: %d days). "
+            "Sessions can instead be archived explicitly with `contextspy session archive`; set both "
+            "[retention] values to 0 to keep everything until then.",
+            settings.retention.raw_body_days, settings.retention.block_content_days,
+        )
 
     with _engine.begin() as conn:
         raw_body_days = settings.retention.raw_body_days

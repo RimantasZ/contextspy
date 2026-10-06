@@ -113,10 +113,21 @@ recording labels, not proof that requests form one conversation.
 ```
 contextspy session start <name>   Start a named session
 contextspy session end            End the currently active session
-contextspy session list           List session names, IDs, timestamps, and active state
+contextspy session list           List session names, IDs, timestamps, and status (active / ended / archived)
+contextspy session archive <id>   Remove an ended session's raw payloads and block text (one-way)
 ```
 
 These commands require the dashboard/API to be running.
+
+**Archiving.** `contextspy session archive <id-or-unique-prefix>` (add `--yes` to skip the prompt) works on an *ended*
+session; end it first (`contextspy session end`). It removes the raw request/response payloads and the stored text of the
+blocks that no other session needs, and **cannot be undone**: only a database backup made earlier (`contextspy db-backup`)
+still contains them. Kept: token counts, block structure and categories, tool/source labels, JSON locations and the
+conversation and lineage analysis. It prints how much was removed and, when the database is in incremental auto-vacuum
+mode, how much disk space was returned; otherwise it tells you to run `contextspy db-compact`. Large sessions can take
+several seconds (the command waits up to five minutes). Archiving again repeats the cleanup for anything captured since.
+If you may continue one of the session's conversations later, do not archive it: a continuation whose earlier request was
+archived is recorded with partial context.
 
 ---
 

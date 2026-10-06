@@ -41,13 +41,14 @@ class StorageSettings:
 
 @dataclass
 class RetentionSettings:
-    """How long raw bodies / block contents are kept before being purged.
+    """Legacy time-based purge of raw bodies / block contents. Off by default (0 = keep forever).
 
-    Purge only runs at server startup (not on a background timer) — see
-    docs/development.md. 0 means keep forever.
+    Retention is now explicit: archive a session (``contextspy session archive``) to remove its payloads.
+    Configs that set these values explicitly are still honoured (the purge only runs at server startup, not on
+    a background timer; see docs/development.md) and a notice is logged at startup.
     """
-    raw_body_days: int = 7
-    block_content_days: int = 7
+    raw_body_days: int = 0
+    block_content_days: int = 0
 
 
 @dataclass
@@ -130,9 +131,11 @@ bind_addr = "{self.web.bind_addr}"
 db_path = "{db_path_toml}"
 
 [retention]
-# How many days to keep raw request/response bodies and block contents before
-# purging (0 = keep forever). Purge only runs at server startup, not on a
-# timer — see docs/development.md if contextspy runs for days without restart.
+# Legacy time-based purge: how many days to keep raw request/response bodies and
+# block contents (0 = keep forever, the default). Prefer archiving a session
+# explicitly (`contextspy session archive`). Purge only runs at server startup, not
+# on a timer. Deleted data frees space inside the file; `contextspy db-compact`
+# shrinks the file itself.
 raw_body_days = {self.retention.raw_body_days}
 block_content_days = {self.retention.block_content_days}
 

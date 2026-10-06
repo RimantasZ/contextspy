@@ -197,11 +197,16 @@ All data lives in `~/.contextspy/`:
 
 ### How long is request data kept?
 
-Decoded request payloads, canonical response payloads, streamed event logs, and the underlying
-block contents become eligible for purging 7 days after capture by default — configurable via
-`[retention]` in `~/.contextspy/config.toml`
-(`raw_body_days`, `block_content_days`; `0` keeps forever). Purging only happens at server startup,
-not on a background timer, so a long-running `contextspy` process won't re-purge until restarted.
+Everything is kept until you remove it. Decoded request payloads, canonical response payloads, streamed event
+logs and the underlying block contents are only removed when you **archive** a session (the Archive button on an ended
+session, or `contextspy session archive`). Archiving cannot be undone, but keeps token counts, block structure,
+classifications and the conversation analysis, and the request page then says the session was archived. Don't archive a
+session whose conversations you may continue later: a continuation whose earlier request was archived is recorded with
+partial context.
+
+Older versions deleted payloads automatically after 7 days. That time-based purge is now off by default; a config that sets
+`[retention]` (`raw_body_days`, `block_content_days`) explicitly is still honoured, and logs a notice at startup. It only
+runs at server startup, not on a background timer.
 Aggregated token counts and classifications are kept indefinitely until you run `contextspy reset-db`.
 
 Purging frees space *inside* the database file but does not make the file smaller. Run `contextspy db-compact`

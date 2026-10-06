@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Retention and archive
+
+- **Sessions can be archived.** An ended session has an **Archive** button on the session screen and in the sessions
+  list, and `contextspy session archive <id>` does the same from the terminal. Archiving removes the session's raw request
+  and response payloads and the stored text of its blocks (except text that another, non-archived session still uses),
+  **cannot be undone**, and keeps token counts, block structure and categories, source and JSON-location labels, and the
+  conversation and lineage analysis. The result shows what was removed and how much disk space was returned; if the database
+  is in incremental auto-vacuum mode (see `db-compact` below) the file shrinks straight away, otherwise it tells you to run
+  `contextspy db-compact`. Archived sessions show an **Archived** badge, and a request page of an archived session says why its
+  payloads are missing. `contextspy session list` shows the status. Archiving again repeats the cleanup for anything captured since.
+  Don't archive a session whose conversations you may continue later: a continuation whose earlier request was archived is
+  recorded with partial context. Only a database backup made earlier still contains the removed content.
+- **Behaviour change: payloads are no longer deleted after 7 days by default.** The time-based purge is now off (`0`).
+  Configs that set `[retention]` explicitly (the generated config file used to contain `raw_body_days = 7`) keep working and
+  log a notice at startup; set both values to `0` to stop it. Use archive and `db-compact` to manage disk usage instead.
+
 ### Database
 
 - New **`contextspy db-compact`** shrinks the database file. Deleting request bodies or block contents (the

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import SessionDetail from './SessionDetail'
 
 vi.mock('../api/hooks', () => ({
-  useSession: () => ({ isLoading: false, data: { session: { id: 's1', name: 'Work', started_at: '2026-09-18T08:00:00Z', ended_at: '2026-09-18T09:00:00Z', is_active: false } } }),
+  useSession: () => ({ isLoading: false, data: { session: { id: 's1', name: 'Work', started_at: '2026-09-18T08:00:00Z', ended_at: '2026-09-18T09:00:00Z', is_active: false, status: 'ended', archived_at: null } } }),
   useSessionLineage: (_id: string, enabled: boolean) => ({ isLoading: false, data: enabled ? { conversation_count: 1 } : undefined }),
   useSessionConversations: (_id: string, enabled: boolean) => ({ isLoading: false, data: enabled ? { conversation_count: 1 } : undefined }),
   useStatsSession: () => ({ data: undefined }),
@@ -14,6 +14,8 @@ vi.mock('../api/hooks', () => ({
   useToolStats: () => ({ data: undefined }),
   useEndSession: () => ({ mutate: vi.fn(), isPending: false }),
   useRenameSession: () => ({ mutate: vi.fn() }),
+  useDeleteSession: () => ({ mutate: vi.fn(), isPending: false }),
+  useArchiveSession: () => ({ mutate: vi.fn(), isPending: false, isError: false, data: undefined }),
 }))
 vi.mock('../components/SessionConversationSequences', () => ({ SessionConversationSequences: () => <p>Sequence view</p> }))
 vi.mock('../components/SessionLineage', () => ({ SessionLineage: () => <p>Diagnostic view</p> }))

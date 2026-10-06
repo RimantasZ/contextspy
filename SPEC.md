@@ -611,12 +611,24 @@ Linking".
 - **During capture:** every supported invocation writes a `Request` row with the aggregated per-category
   token counts, one `BlockRecord` per content part (deduplicated into `block_contents` by
   content hash across the database), and (if tool definitions exist) one `ToolStat` row per tool.
-- **Retention (configurable, see §10):** on server startup only (no background timer),
-  `startup_vacuum()`:
+- **Session archive (explicit, one-way):** an *ended* session can be archived (`POST /api/sessions/{id}/archive`,
+  `contextspy session archive`, the Archive button). `session_archive.archive_session_data` NULLs the five body columns
+  of the session's requests, deletes the session's `block_contents` rows that no block of a request outside the session
+  references (requests without a session count as outside; blocks of other *archived* sessions do not keep content alive),
+  and sets `sessions.archived_at`. Block rows, token counts, categories, source keys, JSON paths, lineage and conversation
+  analysis stay. The cleanup runs in chunks of ≤ 500 hashes, each taking SQLite's write lock before it measures and
+  deletes, so content a concurrent capture starts using is never removed. Archiving is repeatable (it purges stragglers).
+  Afterwards, if the database is in incremental auto-vacuum mode, freed pages are returned with `PRAGMA incremental_vacuum`
+  (time budget 30 s, on the raw DBAPI connection); otherwise the response says to run `contextspy db-compact`. A request that
+  continues a conversation whose predecessor was archived is captured with partial context (the predecessor's stored body is
+  what its context is rebuilt from). Session `status` is `archived`, else `active`, else `ended`; request detail carries
+  `content_state` (`retained`|`archived`|`not_retained`).
+- **Retention (legacy, off by default; configurable, see §10):** on server startup only (no background timer),
+  `startup_vacuum()` (logs a notice when enabled):
   - NULLs raw/canonical request/response bodies and `response_events` together on `Request` rows older than
-    `retention.raw_body_days` (default 7; `0` = keep forever).
+    `retention.raw_body_days` (default 0 = keep forever; any positive value is honoured).
   - Deletes `block_contents` rows whose hash is no longer referenced by any `blocks` row from a
-    request newer than `retention.block_content_days` (default 7; `0` = keep forever) — content
+    request newer than `retention.block_content_days` (default 0 = keep forever) — content
     shared by multiple requests anywhere in the database is only garbage-collected once every
     referencing request has aged out. `blocks` rows themselves (and their token counts/categories) are never
     purged, only the `block_contents` text.
@@ -677,11 +689,12 @@ reporting through `db-upgrade`; the `archived_at` session column is added by `_m
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/sessions` | Create and start a new session. Body: `{ "name": "string" }`. Returns session object. If another session is active, it is automatically ended first (warning included in response). |
-| `GET` | `/api/sessions` | List all sessions (newest first). |
+| `GET` | `/api/sessions` | List all sessions (newest first). Each session carries `status` (`active`\|`ended`\|`archived`) and `archived_at`. |
 | `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session. 404 if missing. |
 | `GET` | `/api/sessions/{id}/lineage` | Complete session lineage graph. Returns exact/inferred continuation edges, diagnostic root-to-leaf paths, conservative conversation groups and membership, uncertainty diagnostics, timing, and per-edge context-delta summaries. Exact parents captured outside the selected session are external nodes. Each node also carries `conversation_code` (`C<n>` / `AUX`, as on request cards; `null` for external nodes) and `conversation_previous_request_id` / `conversation_next_request_id`, the neighbouring requests in its conversation in session order (`null` for auxiliary and external nodes; neighbours are not proven parent/child links). |
 | `PATCH` | `/api/sessions/{id}` | Rename a session. Body: `{ "name": "string" }`. 422 if blank, 404 if missing. |
-| `POST` | `/api/sessions/{id}/end` | End a session. Retained content is unchanged until the next startup retention pass. 404 if missing. |
+| `POST` | `/api/sessions/{id}/end` | End a session. 404 if missing. |
+| `POST` | `/api/sessions/{id}/archive` | Archive an ended session (one-way; repeatable): removes raw payloads and unreferenced block text, keeps all analysis data. Returns `{ session, freed: { requests, request_body_bytes, content_rows, content_bytes }, space: { auto_vacuum: "incremental"\|"none", reclaimed_bytes, free_bytes_remaining, note }, already_archived }`. 404 if missing, 409 if the session is active or an archive of it is already running. Broadcasts `session_archived` over the WebSocket. |
 | `DELETE` | `/api/sessions/{id}?delete_requests=bool` | Delete session, optionally cascading its request records. 404 if missing. |
 
 #### Requests

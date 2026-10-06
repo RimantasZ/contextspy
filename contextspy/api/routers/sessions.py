@@ -181,6 +181,38 @@ def end_session(session_id: str):
     return {"session": result}
 
 
+@router.post("/sessions/{session_id}/archive")
+def archive_session(session_id: str):
+    """Remove the session's raw payloads and block text (one-way). Ended sessions only; repeatable."""
+    from contextspy.db import session_archive
+    from contextspy.db.database import get_engine
+
+    try:
+        with get_db() as db:
+            outcome = session_archive.archive_session_data(db, session_id)
+            session = outcome["session"].to_dict()
+    except session_archive.SessionNotFound:
+        raise HTTPException(status_code=404, detail="Session not found")
+    except session_archive.SessionStillActive:
+        raise HTTPException(status_code=409, detail="End the session before archiving it")
+    except session_archive.ArchiveInProgress:
+        raise HTTPException(status_code=409, detail="This session is already being archived")
+
+    space = session_archive.reclaim_space(get_engine())
+    ws = _get_ws()
+    if ws.loop:
+        asyncio.run_coroutine_threadsafe(
+            ws.broadcast({"event": "session_archived", "data": session}),
+            ws.loop,
+        )
+    return {
+        "session": session,
+        "freed": outcome["freed"],
+        "space": space,
+        "already_archived": outcome["already_archived"],
+    }
+
+
 @router.delete("/sessions/{session_id}")
 def delete_session(session_id: str, delete_requests: bool = False):
     with get_db() as db:

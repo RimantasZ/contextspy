@@ -23,6 +23,8 @@ import { ToolBreakdownSection } from '../components/ToolBreakdown';
 import { OutputSplit } from '../components/OutputSplit';
 import { CacheSplit } from '../components/CacheSplit';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
+import { ArchiveSessionModal } from '../components/ArchiveSessionModal';
+import { formatDateTime } from '../lib/format';
 import { SessionLineage } from '../components/SessionLineage';
 import { SessionConversationSequences } from '../components/SessionConversationSequences';
 import { SegmentedControl } from '../components/ui/SegmentedControl';
@@ -81,6 +83,7 @@ export default function SessionDetail() {
   const endSession = useEndSession();
   const renameSession = useRenameSession();
   const [deletingSession, setDeletingSession] = useState(false);
+  const [archivingSession, setArchivingSession] = useState(false);
 
   // focus input when rename mode activates
   useEffect(() => {
@@ -357,6 +360,11 @@ export default function SessionDetail() {
               Active
             </span>
           )}
+          {s.status === 'archived' && (
+            <span className="app-badge" title={s.archived_at ? `Archived ${formatDateTime(s.archived_at)}: raw payloads and block text were removed` : 'Raw payloads and block text were removed'}>
+              Archived
+            </span>
+          )}
         </div>
         <div className="flex gap-2">
           {s.ended_at === null && (
@@ -374,6 +382,16 @@ export default function SessionDetail() {
           >
             Export PDF
           </button>
+          {s.status !== 'archived' && (
+            <button
+              onClick={() => setArchivingSession(true)}
+              disabled={s.ended_at === null}
+              title={s.ended_at === null ? 'End the session before archiving it' : 'Remove raw payloads and block text (cannot be undone)'}
+              className="app-button"
+            >
+              Archive
+            </button>
+          )}
           <button
             onClick={startRename}
             className="app-button"
@@ -534,6 +552,14 @@ export default function SessionDetail() {
         />
       </div>
         </>
+      )}
+
+      {archivingSession && (
+        <ArchiveSessionModal
+          sessionId={s.id}
+          sessionName={s.name}
+          onClose={() => setArchivingSession(false)}
+        />
       )}
 
       {deletingSession && (

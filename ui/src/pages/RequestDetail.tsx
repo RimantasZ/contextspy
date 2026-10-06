@@ -6,6 +6,7 @@ import { useRequest, useRequestToolStats, useSessionLineage } from '../api/hooks
 import { TokenDonut } from '../components/TokenDonut'
 import { ToolBreakdownSection } from '../components/ToolBreakdown'
 import { CaptureNotice } from '../components/request/CaptureNotice'
+import { ContentStateNotice } from '../components/request/ContentStateNotice'
 import { RequestSummaryHeader } from '../components/request/RequestSummaryHeader'
 import { RequestWorkbench } from '../components/request/RequestWorkbench'
 import type { ShowMode, WorkbenchDirection } from '../components/request/RequestWorkbench'
@@ -139,6 +140,7 @@ export default function RequestDetail() {
     <div className="page-shell">
       <RequestSummaryHeader request={request} label={nodeLabel(request.id, request.session_seq)} onBack={() => navigate(-1)} onDirection={setActiveDirection} />
       <CaptureNotice request={request} />
+      <ContentStateNotice request={request} />
       {(parentEdge || childEdges.length > 0 || showPrevious || showNext) && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-3 text-xs">
           <span className="font-semibold">Conversations</span>

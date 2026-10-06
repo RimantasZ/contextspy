@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { formatElapsedDuration, formatPercent, formatRequestDuration } from './format'
+import { formatBytes, formatElapsedDuration, formatPercent, formatRequestDuration } from './format'
+
+describe('formatBytes', () => {
+  it('uses binary units with one decimal', () => {
+    expect(formatBytes(0)).toBe('0 bytes')
+    expect(formatBytes(1023)).toBe('1,023 bytes')
+    expect(formatBytes(1024)).toBe('1.0 KiB')
+    expect(formatBytes(3 * 1024 * 1024)).toBe('3.0 MiB')
+    expect(formatBytes(2.5 * 1024 ** 3)).toBe('2.5 GiB')
+    expect(formatBytes(5 * 1024 ** 4)).toBe('5.0 TiB')
+  })
+})
 
 describe('shared value formatting', () => {
   it('formats request and elapsed durations consistently', () => {

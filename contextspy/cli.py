@@ -620,6 +620,64 @@ def session_end() -> None:
         raise typer.Exit(1)
 
 
+@session_app.command("archive")
+def session_archive_cmd(
+    session: str = typer.Argument(..., help="Session id or a unique id prefix (see `contextspy session list`)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Archive without a confirmation prompt"),
+) -> None:
+    """Remove an ended session's raw payloads and block text (cannot be undone).
+
+    Token counts, block structure, categories, sources and conversation analysis are kept. Only a database
+    backup made earlier still contains the removed content. If you may continue one of the session's conversations
+    later, do not archive it: a continuation whose predecessor was archived is recorded with partial context.
+    """
+    port = _web_port()
+    try:
+        sessions = httpx.get(_api(port, "/sessions"), timeout=10).json().get("sessions", [])
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}. Is contextspy running?[/red]")
+        raise typer.Exit(1)
+    matches = [s for s in sessions if s["id"] == session or s["id"].startswith(session)]
+    if len(matches) != 1:
+        console.print(
+            f"[red]{'No session' if not matches else 'More than one session'} matches '{session}'.[/red]"
+        )
+        raise typer.Exit(1)
+    target = matches[0]
+    if target.get("status") == "active" or target.get("is_active"):
+        console.print("[red]This session is still active. End it first (`contextspy session end`).[/red]")
+        raise typer.Exit(1)
+    if not yes:
+        typer.confirm(
+            f"Archive '{target['name']}'? Its raw request/response payloads and block text are removed and "
+            "this cannot be undone (only an earlier database backup keeps them).",
+            abort=True,
+        )
+    try:
+        # Large sessions can take a while: the default 5 second timeout used elsewhere is far too short.
+        response = httpx.post(_api(port, f"/sessions/{target['id']}/archive"), timeout=300)
+        if response.status_code != 200:
+            detail = response.json().get("detail", response.text) if response.headers.get("content-type", "").startswith("application/json") else response.text
+            console.print(f"[red]Archive failed:[/red] {detail}")
+            raise typer.Exit(1)
+        result = response.json()
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(1)
+    freed, space = result["freed"], result["space"]
+    console.print(f"[green]Session archived:[/green] {target['name']}" + (" (already archived; purged again)" if result["already_archived"] else ""))
+    console.print(
+        f"  Removed {_format_bytes(freed['request_body_bytes'])} of payloads from {freed['requests']:,} requests "
+        f"and {_format_bytes(freed['content_bytes'])} of block text ({freed['content_rows']:,} entries)."
+    )
+    if space["auto_vacuum"] == "incremental":
+        console.print(f"  File space returned: {_format_bytes(space['reclaimed_bytes'])}.")
+    if space.get("note"):
+        console.print(f"  [yellow]{space['note']}[/yellow]")
+
+
 @session_app.command("list")
 def session_list() -> None:
     """List all sessions."""
@@ -636,14 +694,16 @@ def session_list() -> None:
     table.add_column("ID")
     table.add_column("Started")
     table.add_column("Ended")
-    table.add_column("Active")
+    table.add_column("Status")
+    status_style = {"active": "[green]active[/green]", "ended": "ended", "archived": "[dim]archived[/dim]"}
     for s in sessions:
+        status = s.get("status") or ("active" if s["is_active"] else "ended")
         table.add_row(
             s["name"],
             s["id"][:8] + "…",
             s["started_at"][:19],
             s["ended_at"][:19] if s.get("ended_at") else "—",
-            "[green]yes[/green]" if s["is_active"] else "no",
+            status_style.get(status, status),
         )
     console.print(table)
 

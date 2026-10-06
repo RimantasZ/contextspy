@@ -108,6 +108,19 @@ export function useEndSession() {
   })
 }
 
+/** One-way archive of an ended session; refreshes everything that shows its status or payloads. */
+export function useArchiveSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => sessionsApi.archive(id),
+    onSuccess: () => {
+      for (const key of ['sessions', 'stats', 'session-conversations', 'request', 'requests']) {
+        qc.invalidateQueries({ queryKey: [key] })
+      }
+    },
+  })
+}
+
 export function useRenameSession() {
   const qc = useQueryClient()
   return useMutation({

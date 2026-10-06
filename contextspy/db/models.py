@@ -55,6 +55,11 @@ class Session(Base):
         "Request", back_populates="session", passive_deletes=True
     )
 
+    @property
+    def status(self) -> str:
+        """Lifecycle state: ``archived`` once archived, else ``active`` or ``ended``."""
+        return "archived" if self.archived_at else ("active" if self.is_active else "ended")
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -63,6 +68,7 @@ class Session(Base):
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
             "is_active": bool(self.is_active),
             "archived_at": self.archived_at.isoformat() if self.archived_at else None,
+            "status": self.status,
         }
 
 
@@ -248,6 +254,22 @@ class Request(Base):
             d["request_body"] = self.canonical_request_body or self.raw_request_body
             d["response_body"] = self.canonical_response_body or self.raw_response_body
             d["response_events"] = json.loads(self.response_events) if self.response_events else None
+            # Why content may be missing: still stored, removed by an explicit archive, or simply not stored
+            # (everything the old time-based purge removed lands here). Not part of list rows (needs the session).
+            bodies = (
+                self.raw_request_body, self.raw_response_body, self.canonical_request_body,
+                self.canonical_response_body, self.response_events,
+            )
+            if any(body is not None for body in bodies):
+                d["content_state"] = "retained"
+            elif self.session is not None and self.session.archived_at is not None:
+                d["content_state"] = "archived"
+            else:
+                d["content_state"] = "not_retained"
+            d["session_archived_at"] = (
+                self.session.archived_at.isoformat()
+                if self.session is not None and self.session.archived_at else None
+            )
         return d
 
 

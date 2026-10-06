@@ -1,6 +1,6 @@
 # Plan 3b: Session lifecycle and explicit archive
 
-Status: **reviewed twice (2026-10-05, and again 2026-10-06 after Plan 3a was implemented); decided; not started.** Depends on [db-compact.md](db-compact.md) (Plan 3a, implemented) for the file to shrink. Part of
+Status: **implemented 2026-10-06 (uncommitted); not released; not checked in a browser; no real database archived.** Reviewed twice before implementation (2026-10-05 and 2026-10-06). See "Implementation status" at the end for what exists and how it differs from this text. Depends on [db-compact.md](db-compact.md) (Plan 3a, implemented).
 [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md). Decisions D3, D4, D14, D17.
 
 ## Why
@@ -97,3 +97,30 @@ Auto-archive by age, un-archive, per-conversation archive, a "keep content" flag
 
 ## Open questions
 None blocking. To revisit later: auto-archive after N days (the former option (c) of the retention question); keeping continuation tips or an opt-in "keep what is needed to resume" checkbox (rejected for now, finding 10).
+
+## Implementation status (2026-10-06)
+
+**Implemented** (backend 542 tests, frontend 183 tests, `npm run check` clean; uncommitted):
+- `contextspy/db/session_archive.py`: `archive_session_data(db, session_id)` (404/409 errors as exceptions, per-session in-progress guard, repeatable), chunked content cleanup (≤ 500 hashes, write lock taken first), `reclaim_space(engine)` on the raw DBAPI connection (1000-page steps, 30 s budget, `wal_checkpoint(PASSIVE)` after).
+- `POST /api/sessions/{id}/archive` (404 unknown, 409 active or already running) broadcasting `session_archived`; `Session.status` in `Session.to_dict` and in `get_sessions_summary` entries (`status`, `archived_at`); `Request.to_dict` detail adds `content_state` and `session_archived_at`.
+- Retention: `RetentionSettings` defaults `0`/`0`, the generated config template follows, `startup_vacuum` logs a notice when either value is > 0 (explicit values still honoured).
+- CLI: `contextspy session archive <id|prefix> [--yes]` (300 s timeout, refuses active/ambiguous/unknown), `session list` shows a Status column.
+- UI: `ArchiveSessionModal` (what is removed/kept, irreversibility, backup and resume warnings, result figures, error state), Archive button + Archived badge on `SessionDetail` and `Sessions` (three-valued status sort), `ContentStateNotice` on Request detail, `useArchiveSession`, `session_archived` WebSocket handling, `formatBytes`.
+- Docs: `SPEC.md`, `README.md`, `docs/cli.md`, `faq.md`, `development.md`, `changelog.md`.
+- Tests: `tests/test_session_archive.py` (23), plus frontend tests for the modal, notice, Sessions list, Session detail, Request detail, hook invalidation, `formatBytes`.
+
+**Verified on real data** (scratch copy of the author's database, compacted first so it was in incremental mode; the live file was not touched): archiving the session with the most stored payloads (399 requests, 426 MB) took **1.1 s** plus **1.3 s** of incremental vacuum; the file went **2.58 → 2.15 GB**; block rows, token sums, hashes, JSON paths, source keys, `get_stats` and an occurrences response were identical before and after; the request reported `content_state: archived`.
+
+**Differences from the plan text**
+- **Bug found by the tests and fixed:** blocks of already-archived sessions must not keep content alive (the plan said so; the first implementation counted them, so shared content never went when its last non-archived user was archived). The reference check joins `sessions` and ignores archived ones; requests without a session still count.
+- Each cleanup chunk first takes the write lock with a harmless `UPDATE sessions SET name = name`, then measures and deletes (the plan's single-statement idea; this also keeps the freed-count figures consistent without needing `RETURNING`).
+- The detail response also carries `session_archived_at` so the notice can show the date.
+- `Session.status` is a model property used by every representation; the sessions-list UI falls back to `is_active` only for servers that predate `status`.
+- The archive endpoint is synchronous (the CLI and UI wait for it); measured durations are seconds, so no background job was added.
+- Test-suite note: the tokenizer is pathologically slow on a long run of one repeated character, so tests that need large text use `prose()` instead.
+
+**Not done / open**
+- Not looked at in a browser (modal layout, badge, button placement, notice wording).
+- No real database has been archived; the author's live database is still uncompacted and un-archived.
+- Windows not exercised. Auto-archive, un-archive, keeping continuation tips (rejected in review) are not implemented.
+

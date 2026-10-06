@@ -84,11 +84,13 @@ Implemented (WI-0, tests green, not released): schema v9; per-request `purpose`/
 
 **Also implemented (Plan 1; committed in `153a9d0`):** `GET /api/requests/{id}/blocks/{block_id}/occurrences` (+ `/occurrences/requests`), the "Present in" section in the block inspector, and `?block=<id>` selection in Request detail.
 
-**Also implemented (Plan 3a; in the working tree, not committed):** `contextspy db-compact` (offline VACUUM, optional `--backup`), `pre_compact` backups recognised by restore, new databases created in incremental auto-vacuum mode, file-size/free-space lines in `db-stats`. Verified on a copy of the author's database (6.60 → 2.36 GB); **the live database itself has not been compacted.**
+**Also implemented (Plan 3b; in the working tree, not committed):** session archive (`POST /api/sessions/{id}/archive`, `contextspy session archive`, Archive button/badge/notice in the UI), session `status`, request `content_state`, retention default `0` with a startup notice, online file shrinking after an archive. Verified on a copy of the author's database; no real database archived.
 
-**Not implemented:** everything in Plans 3b, 4, 5, 6, 7 (archive, hot spots, context tree, compare, hints);
+**Also implemented (Plan 3a; committed in `f34fa29`):** `contextspy db-compact` (offline VACUUM, optional `--backup`), `pre_compact` backups recognised by restore, new databases created in incremental auto-vacuum mode, file-size/free-space lines in `db-stats`. Verified on a copy of the author's database (6.60 → 2.36 GB); **the live database itself has not been compacted.**
+
+**Not implemented:** everything in Plans 4, 5, 6, 7 (hot spots, context tree, compare, hints);
 `housekeeping` detection and any agent purpose detectors; source parsers beyond Codex `exec`/`js` and `Bash`; purpose in the request
-list/conversation cards; any use of `json_path` beyond displaying it; cache reporting (D2); the retention-default change and startup notice (D14, part of 3b).
+list/conversation cards; any use of `json_path` beyond displaying it; cache reporting (D2); (the retention-default change and startup notice, D14, are part of Plan 3b and are implemented).
 Nothing from this roadmap has been released, and the real database has not been upgraded.
 
 **Known issue to resolve:** the author's live DB already contains a `blocks.json_path` column with 6,794 values in a different (leaf-level)
@@ -115,8 +117,8 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 | 0 | Data foundation: migration v9, capture-time classification, `json_path` | [`wi0-data-foundation.md`](wi0-data-foundation.md) | **implemented and committed** (`528f3db`, `88bd6e0`); not released; no browser check or real-DB `db-upgrade` yet | — |
 | 1 | Info panel: "present in" / totals for a block | [`info-panel.md`](info-panel.md) | **implemented and committed** (`153a9d0`); not released, not checked in a browser; shared-pieces extraction was dropped in review | WI-0 |
 | 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **baseline implemented in WI-0** (`user_turn`, `tool_continuation`, `compaction`, `unknown`; `housekeeping` and agent detectors NOT implemented; UI shows it in Request detail only) | — |
-| 3a | `contextspy db-compact` (reclaim free pages, enable incremental auto-vacuum) | [`db-compact.md`](db-compact.md) | **implemented** (uncommitted, not released; the author's live DB not yet compacted) | — |
-| 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **reviewed twice and decided (2026-10-06 review added 6 findings), not started**; only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
+| 3a | `contextspy db-compact` (reclaim free pages, enable incremental auto-vacuum) | [`db-compact.md`](db-compact.md) | **implemented and committed** (`f34fa29`); not released; the author's live DB not yet compacted | — |
+| 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **implemented** (uncommitted, not released, not checked in a browser); only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
 | 4 | Hot spots (per conversation / per session) | [`unconfirmed_drafts/hot-spots.md`](unconfirmed_drafts/hot-spots.md) | draft | 1, 3b |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
 | 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
@@ -128,7 +130,7 @@ so they were written first.
 ## How to continue
 
 **WI-0 ([`wi0-data-foundation.md`](wi0-data-foundation.md)) is implemented**; its §17 is the authoritative record of what exists and how it
-differs from its own spec. Plan 1 (info panel "present in") and Plan 3a (`db-compact`) are implemented too. Next candidate: Plan 3b (archive, reviewed; builds on 3a); Plans 4 and 5 depend on 1 and 3b / 1 and 2.
+differs from its own spec. Plan 1 (info panel "present in"), Plan 3a (`db-compact`) and Plan 3b (archive) are implemented too. Plans 4 (hot spots) and 5 (context tree) are drafts: their open questions need answers before they can be specified. Plan 4 depends on 1 and 3b (both implemented), Plan 5 on 1 and 2.
 WI-0 follow-ups that still wait for captures from Copilot, Ollama, llama.cpp and vLLM: housekeeping/compaction detectors per agent and more
 source parsers. Review the `compaction_trigger` rule (a judgement call) and decide what to do with the legacy leaf-form `json_path` values in
 the author's DB (see WI-0 §17) before treating either as settled.

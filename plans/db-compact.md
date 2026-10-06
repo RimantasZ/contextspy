@@ -1,6 +1,6 @@
 # Plan 3a: `contextspy db-compact` — reclaim free space, enable automatic shrinking
 
-Status: **implemented 2026-10-06 (uncommitted); not released; the author's live database has NOT been compacted.** See "Implementation status" at the end. First half of the former "Plan 3: session archive"; the second half is
+Status: **implemented 2026-10-06, committed in `f34fa29`; not released; the author's live database has NOT been compacted.** See "Implementation status" at the end. First half of the former "Plan 3: session archive"; the second half is
 [session-archive.md](session-archive.md) (Plan 3b), which depends on this. Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
 
 ## Why (measured, author's database, 2026-10-05; a sample, not a rule)
@@ -70,7 +70,7 @@ Auto-compaction at startup (needs exclusive access and can take minutes on large
 
 ## Implementation status (2026-10-06)
 
-**Implemented** (backend 519 tests passing; uncommitted):
+**Implemented** (backend 519 tests passing at the time; committed in `f34fa29`):
 - `contextspy/db/compaction.py`: `inspect_space`, `needs_compaction`, `required_free_bytes`, `check_free_space`, `compact_database(db_path, backup=, confirm=, report=, temp_dir=)` returning a `CompactionOutcome` (`compacted` / `already_compact` / `declined` / `empty`), `CompactionError`.
 - `contextspy db-compact [--yes] [--backup]` (`cli.py`), also listed in `contextspy help`; refuses while a backend answers on the configured web port (`_configured_backend_reachable`, which also catches older builds) in addition to the maintenance lock.
 - `db/backups.py`: `pre_compact` purpose, name `{stem}_backup_v{N}_pre_compact_{stamp}.back`, recognised by `list_backups` (and therefore `db-restore`/`status`).

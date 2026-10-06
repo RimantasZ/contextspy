@@ -17,7 +17,7 @@ import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { sessionsApi } from './client'
 import type { LineageGraph } from './client'
-import { useCreateSession, useRenameSession, useSessionLineage } from './hooks'
+import { useArchiveSession, useCreateSession, useRenameSession, useSessionLineage } from './hooks'
 
 vi.mock('./client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./client')>()
@@ -26,6 +26,7 @@ vi.mock('./client', async (importOriginal) => {
     sessionsApi: {
       ...actual.sessionsApi,
       create: vi.fn().mockResolvedValue({}),
+      archive: vi.fn().mockResolvedValue({}),
       rename: vi.fn().mockResolvedValue({}),
       lineageRevision: vi.fn().mockResolvedValue({ revision: 'v1' }),
       lineage: vi.fn().mockResolvedValue({ analysis_version: 'test' }),
@@ -50,6 +51,16 @@ describe('session mutation invalidation', () => {
     expect(keys).toContainEqual(['sessions'])
     expect(keys).toContainEqual(['stats'])
     expect(keys).toContainEqual(['session-conversations'])
+  })
+
+  it('useArchiveSession refreshes sessions, stats, conversations and every request view', async () => {
+    const { spy, wrapper } = setup()
+    const { result } = renderHook(() => useArchiveSession(), { wrapper })
+    result.current.mutate('s1')
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(5))
+    expect(sessionsApi.archive).toHaveBeenCalledWith('s1')
+    const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey)
+    for (const key of ['sessions', 'stats', 'session-conversations', 'request', 'requests']) expect(keys).toContainEqual([key])
   })
 
   it('useRenameSession invalidates the dashboard-live query', async () => {

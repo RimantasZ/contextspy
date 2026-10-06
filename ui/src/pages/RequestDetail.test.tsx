@@ -19,7 +19,7 @@ const blocksFor: Record<string, ReturnType<typeof makeBlock>[]> = {
   c: [makeBlock({ id: 21, position: 0, block_type: 'user_message', content: 'side request' })],
 }
 
-function mockApi() {
+function mockApi(requestOverrides: Partial<ReturnType<typeof makeRequest>> = {}) {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = String(input)
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
@@ -40,7 +40,7 @@ function mockApi() {
       { source_request_id: 'e', target_request_id: 'f', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 },
       { source_request_id: 'e', target_request_id: 'g', relation_type: 'context_continuation', certainty: 'exact', confidence: 1 }] })
     const request = /\/requests\/(a|b|c|e|f)$/.exec(url)
-    if (request) return json({ request: makeRequest({ id: request[1], session_id: 's1' }) })
+    if (request) return json({ request: makeRequest({ id: request[1], session_id: 's1', ...requestOverrides }) })
     return new Response('{}', { status: 404 })
   })
 }
@@ -188,5 +188,21 @@ describe('RequestDetail block selection in the URL', () => {
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/requests/a?block=1'))
     const selected = await screen.findByRole('button', { name: /System.*position 1/i })
     await waitFor(() => expect(selected.getAttribute('aria-pressed')).toBe('true'))
+  })
+})
+
+describe('RequestDetail content state', () => {
+  it('explains that an archived session no longer stores payloads', async () => {
+    mockApi({ content_state: 'archived', session_archived_at: '2026-10-05T10:00:00' })
+    renderPage('/requests/b')
+    expect(await screen.findByText('Archived session')).toBeTruthy()
+  })
+
+  it('shows no notice while payloads are stored', async () => {
+    mockApi({ content_state: 'retained' })
+    renderPage('/requests/b')
+    await screen.findByRole('button', { name: /User.*position 2/i })
+    expect(screen.queryByText('Archived session')).toBeNull()
+    expect(screen.queryByText(/no longer stored/)).toBeNull()
   })
 })

@@ -114,11 +114,22 @@ the older build. The current build enables WAL again on its next start; never re
 files manually as a rollback method.
 
 Observed request payloads, canonical request/response payloads, normalized SSE/NDJSON/WebSocket
-event logs, plus the content-addressed `block_contents` table (see below), become eligible for
-purging 7 days after capture by default to limit disk usage — configurable via
-`[retention]` in `config.toml` (`raw_body_days`, `block_content_days`; `0` disables purging).
-Purging only runs once, at server startup — there is no background timer, so a `contextspy`
+event logs, plus the content-addressed `block_contents` table (see below), are removed explicitly by
+**archiving a session** (`db/session_archive.py`; `POST /api/sessions/{id}/archive`, `contextspy session archive`).
+The older time-based purge is configured via `[retention]` in `config.toml` (`raw_body_days`,
+`block_content_days`) and is **off by default (`0`)**; explicit values are honoured and `startup_vacuum` logs a notice
+when it is enabled. It only runs once, at server startup — there is no background timer, so a `contextspy`
 process left running for many days won't purge again until restarted.
+
+Archive details worth knowing when changing `session_archive.py`: it only runs for ended sessions and is repeatable; the
+content cleanup is chunked (≤ 500 hashes) and every chunk takes the write lock first (`_take_write_lock`) before measuring and
+deleting with the "not referenced outside this session" condition inside the `DELETE`, because a capture inserts
+`block_contents` (INSERT OR IGNORE) and its block row in one transaction and must never lose content it just reused; only
+requests of other sessions that are *not archived*, and requests without a session, keep a hash alive. Returning freed pages
+(`reclaim_space`) must use the raw DBAPI connection (`engine.raw_connection()`): through SQLAlchemy `PRAGMA incremental_vacuum`
+closes its result after one step and frees about one page per call. Capture reads stored bodies of the request it continues
+(`proxy/addon.py: _DatabaseLineageRepository`, looked up by provider response ID across sessions), so a resumed conversation whose
+predecessor was archived is captured with partial context; this is documented behaviour, covered by a test.
 
 Purging (`db/database.py: startup_vacuum`, despite its name) only frees pages inside the file: SQLite never
 shrinks the file by itself, so a purged database keeps its size. `contextspy db-compact` (`db/compaction.py`)

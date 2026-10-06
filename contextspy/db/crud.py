@@ -903,6 +903,8 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
             "duration_ms": duration_ms,
             "is_active": bool(s.is_active),
+            "status": s.status,
+            "archived_at": s.archived_at.isoformat() if s.archived_at else None,
             "request_count": stats["req_count"],
             "tokens_in": stats["tok_in"],
             "tokens_out": stats["tok_out"],
