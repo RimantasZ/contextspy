@@ -1,6 +1,6 @@
 # Plan 3b: Session lifecycle and explicit archive
 
-Status: **reviewed and decided 2026-10-05; not started.** Depends on [db-compact.md](db-compact.md) (Plan 3a) for the file to shrink. Part of
+Status: **reviewed twice (2026-10-05, and again 2026-10-06 after Plan 3a was implemented); decided; not started.** Depends on [db-compact.md](db-compact.md) (Plan 3a, implemented) for the file to shrink. Part of
 [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md). Decisions D3, D4, D14, D17.
 
 ## Why
@@ -27,6 +27,14 @@ and visible, and deleting content must actually give disk back (Plan 3a).
 8. Capturing into an archived session is not expected (an archived session is not active), but a request that started before the session ended can complete later. Archive is therefore **idempotent**: archiving an archived session runs the purge again and reports what it removed.
 9. Archiving removes the canonical request/response, so later re-analysis from bodies is impossible for those requests (migrations such as the v9 `json_path` backfill can only use retained documents). Recommend `contextspy db-upgrade` before archiving (the server already refuses to start while a data migration is pending).
 
+## Second review (2026-10-06, against the code after Plan 3a) — new findings and decisions
+10. **Resuming a conversation reads stored bodies.** `proxy/addon.py:_DatabaseLineageRepository.get` rebuilds a new request's context from the stored canonical/raw body of the request it continues (looked up by `(provider, provider_response_id)` through `crud.get_unique_request_by_provider_response_id`, which is **not limited to a session**). If that predecessor is in an archived session its bodies are NULL, `get` returns `None`, and the resumed request is captured as partial/opaque with an incomplete context, permanently. The old 7-day purge has the same effect, but archive makes it a user action. **Decision (user, 2026-10-06): warn only.** The dialog, `docs/faq.md` and the changelog must say: archive a session only when you will not continue its conversations; a resumed conversation whose predecessor was archived is recorded with partial context. (Options considered and rejected for now: keeping each conversation's newest request body; an opt-in checkbox.)
+11. **The content cleanup must be one atomic statement.** Capture does `INSERT OR IGNORE INTO block_contents` and then inserts the block row in one transaction. If archive first reads the candidate hashes and later deletes them in a separate step, a capture in *another* session that reuses a hash in between would find the content "already there" and then lose it. The delete itself must contain the "not referenced by any block outside this session" condition (SQLite serialises write transactions, so a capture either commits first, and its block is then seen, or runs after the delete and re-inserts the content). Do not compute the keep/delete decision in Python. Chunk the candidate hashes (≤ 500 per statement, below SQLite's variable limit; the sample has ~15k) with the condition repeated in every chunk. Needs a test with a capture-style insert between chunks.
+12. **Online shrinking must use the raw DBAPI connection.** Through SQLAlchemy, `exec_driver_sql("PRAGMA incremental_vacuum(N)")` closes its result after one step (it "does not return rows"), freeing about one page per call. Verified instead with `engine.raw_connection()`: `cursor.execute("PRAGMA incremental_vacuum(1000)"); cursor.fetchall(); raw.commit()` returned 36,752 pages (150 MB) in 37 chunks and 0.16 s, with a concurrent writer's worst latency at 90 ms. (3a's `compact_database` uses stdlib `sqlite3` directly and is unaffected.)
+13. **The sessions list is built from `crud.get_sessions_summary`**, a hand-built dict (not `Session.to_dict`), consumed by `pages/Sessions.tsx` through `useSessionsSummary` (type at `ui/src/api/client.ts` ~l.197) and sorted by `is_active`. Add `status` and `archived_at` to each session entry there, extend the TS type, make the status column/sort three-valued, and add the badge and Archive button to that page. `Session.to_dict` (used by `GET /sessions`, `GET /sessions/{id}`, the end/start broadcasts) gets `status` too.
+14. **The UI WebSocket handler only knows `session_started`/`session_ended`** (`ui/src/api/useWebSocket.ts`): add `session_archived` with the same invalidations plus `['request']`/`['requests']` (content state changes).
+15. Space reporting after Plan 3a: the archive response's `space.auto_vacuum` is `"none"` for databases that have not been through `db-compact` (the author's live DB is still in that state); the note then points at `contextspy db-compact`. `db-stats` already shows the mode.
+
 ## Design
 
 ### Status
@@ -37,9 +45,9 @@ and visible, and deleting content must actually give disk back (Plan 3a).
 - One request, short transactions, implemented in `crud.archive_session(db, session_id)` (and a service function for the file-space step):
   1. **Measure** what will go: count requests with any body column non-null and `SUM(length(...))` of those columns; count the candidate content rows and their `SUM(length(content))`.
   2. **Null the bodies** of the session's requests: `raw_request_body`, `raw_response_body`, `canonical_request_body`, `canonical_response_body`, `response_events`.
-  3. **Delete unreferenced content**: candidates = distinct non-null `content_hash` of the session's blocks; delete those candidates not referenced by any block of a request outside the session (`session_id IS NULL OR session_id != :sid`).
+  3. **Delete unreferenced content** (atomic per statement, finding 11): for each chunk of ≤ 500 candidate hashes (distinct non-null `content_hash` of the session's blocks): `DELETE FROM block_contents WHERE hash IN (:chunk) AND hash NOT IN (SELECT b.content_hash FROM blocks b JOIN requests r ON r.id = b.request_id WHERE b.content_hash IN (:chunk) AND (r.session_id IS NULL OR r.session_id != :sid))`. Measured on the author's data: ~4.4 s for 1,490 candidates.
   4. Set `archived_at = now (UTC)` if not already set. Commit.
-  5. **Reclaim file space** (outside that transaction): if `PRAGMA auto_vacuum` is INCREMENTAL, run `PRAGMA incremental_vacuum(N)` in chunks, consuming each statement fully and committing per chunk, until the free list is empty or a time budget (30 s) is spent. Otherwise skip. Note: with Python's `sqlite3`, `incremental_vacuum` only does work as its result rows are fetched, so fetch them.
+  5. **Reclaim file space** (outside that transaction): if `PRAGMA auto_vacuum` is INCREMENTAL, run `PRAGMA incremental_vacuum(1000)` in chunks on a **raw DBAPI connection** (`engine.raw_connection()`; see finding 12), `fetchall()` each statement and commit per chunk, until the free list is empty or a time budget (30 s) is spent. Otherwise skip. Afterwards `PRAGMA wal_checkpoint(PASSIVE)` so the WAL does not keep the file large.
 - Response: `{"session": {...status...}, "freed": {"requests": n, "request_body_bytes": n, "content_rows": n, "content_bytes": n}, "space": {"auto_vacuum": "incremental"|"none", "reclaimed_bytes": n, "free_bytes_remaining": n, "note": "run `contextspy db-compact`..." | null}, "already_archived": bool}`.
 - Broadcast `{"event": "session_archived", "data": session}` like `session_ended`; the UI invalidates its session/request queries.
 - A process-level lock per session id prevents two simultaneous archives.
@@ -53,6 +61,7 @@ and visible, and deleting content must actually give disk back (Plan 3a).
 
 ### UI
 - **Archive** button beside **End session** / **Delete** in `pages/SessionDetail.tsx` and on each row of `pages/Sessions.tsx`; disabled with a tooltip for the active session; hidden once archived. An **Archived** badge in the header and the list. **End session** is hidden for archived sessions.
+- The same Archive button, badge and three-valued status also go on `pages/Sessions.tsx` (finding 13). The modal states the **resume warning** from finding 10 ("If you may continue a conversation from this session later, don't archive it: a continuation whose predecessor was archived is recorded with partial context.").
 - `components/ArchiveSessionModal.tsx` (pattern: `DeleteSessionModal`, focus on Cancel, Escape closes): states what is removed (raw request/response payloads and block text) and what stays (token counts, block structure and categories, source and JSON paths, lineage and conversation analysis), that it cannot be undone **and that only a database backup made earlier (`contextspy db-backup`) still contains the removed content**, and the primary button reads "Archive session". After success it shows the `freed` and `space` figures in place before closing.
 - Hooks in `api/hooks.ts` (`useArchiveSession`, invalidating `sessions`, the session, and request queries) and types in `api/client.ts` (`Session.status`, `archived_at`; `Request.content_state`).
 
@@ -71,7 +80,10 @@ Backend (`tests/test_session_archive.py`):
 4. Idempotent: archiving again succeeds, `already_archived: true`, `archived_at` unchanged, and a body added after the first archive is purged.
 5. Freed counts equal the measured bytes/rows; `space` reports `none` for a legacy database and reclaims pages (file shrinks) for an incremental one (use `init_db` on a new path).
 6. Occurrences endpoint, lineage graph and `crud.get_stats` return the same numbers before and after archiving.
-7. Concurrency: a capture write during an archive succeeds (SQLite busy retry) and a second archive of the same session in parallel is rejected or serialised.
+7. Concurrency: a capture write during an archive succeeds (SQLite busy retry) and a second archive of the same session in parallel is rejected or serialised. **Race test (finding 11):** content shared with a session that gets a new block referencing the same hash between two cleanup chunks is kept.
+7b. The incremental-vacuum step really shrinks the file through the server's engine (regression test for finding 12: after archiving in an incremental database `freelist_count` is 0 and the file is smaller), and is skipped, with a note, for a non-incremental database.
+7c. Resume warning (finding 10): a request whose predecessor lives in an archived session is captured with `partial`/`opaque` fidelity (document the behaviour in a test, not a fix).
+7d. `get_sessions_summary` entries carry `status`/`archived_at`; `session_archived` invalidates the listed queries (frontend).
 8. `content_state`: retained / archived / not_retained; absent from the list response.
 9. Retention defaults are 0; the startup notice is logged only when a value is > 0 (`caplog`); a config with an explicit `[retention]` is still honoured.
 10. `session_archived` is broadcast.
@@ -84,4 +96,4 @@ CLI: `session archive` prefix resolution, active-session refusal, `--yes`, statu
 Auto-archive by age, un-archive, per-conversation archive, a "keep content" flag (only meaningful with auto-archive; dropped), archive from the dashboard.
 
 ## Open questions
-None blocking. To revisit later: auto-archive after N days (the former option (c) of the retention question).
+None blocking. To revisit later: auto-archive after N days (the former option (c) of the retention question); keeping continuation tips or an opt-in "keep what is needed to resume" checkbox (rejected for now, finding 10).

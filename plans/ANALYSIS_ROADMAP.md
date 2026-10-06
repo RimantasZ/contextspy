@@ -116,7 +116,7 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 | 1 | Info panel: "present in" / totals for a block | [`info-panel.md`](info-panel.md) | **implemented and committed** (`153a9d0`); not released, not checked in a browser; shared-pieces extraction was dropped in review | WI-0 |
 | 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **baseline implemented in WI-0** (`user_turn`, `tool_continuation`, `compaction`, `unknown`; `housekeeping` and agent detectors NOT implemented; UI shows it in Request detail only) | — |
 | 3a | `contextspy db-compact` (reclaim free pages, enable incremental auto-vacuum) | [`db-compact.md`](db-compact.md) | **implemented** (uncommitted, not released; the author's live DB not yet compacted) | — |
-| 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **reviewed and decided, not started**; only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
+| 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **reviewed twice and decided (2026-10-06 review added 6 findings), not started**; only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
 | 4 | Hot spots (per conversation / per session) | [`unconfirmed_drafts/hot-spots.md`](unconfirmed_drafts/hot-spots.md) | draft | 1, 3b |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
 | 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
