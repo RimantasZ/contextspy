@@ -130,6 +130,7 @@ Facts worth knowing about the data, measured on a copy of the author's database 
 | 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | **draft** (updated 2026-10-06) | 5 |
 | 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | **idea only** (inputs from 4b now exist; see the draft) | 4b |
 | 8 | Similarity grouping: changed-and-reloaded blocks, version timelines (**v2**) | [`unconfirmed_drafts/similarity-grouping.md`](unconfirmed_drafts/similarity-grouping.md) | idea only, postponed to v2 | 4a, 4b, 6 |
+| 9 | **(ask the user for a decision when starting this)** More hot-spots groupings: block types, commands, invocations (call + result as one unit) | [`unconfirmed_drafts/hot-spots-groupings.md`](unconfirmed_drafts/hot-spots-groupings.md) | **draft / idea** (2026-10-06); one schema-timing decision before the release (see the draft) | 4b |
 
 Plans 1, 2 and 3 are independent and can proceed in parallel. 1 and 2 set contracts others use,
 so they were written first.
@@ -166,7 +167,7 @@ Pitfalls found the hard way (each cost real time):
 - Pysqlite begins transactions lazily at the first DML; to make "measure then delete" consistent, take the write lock first with a harmless write.
 - The server refuses to start while a data migration is pending (`contextspy db-upgrade` first); the live database is **still not compacted/archived/upgraded by the agent**, and the author's `blocks.json_path` column already holds 6,794 legacy leaf-form values from an earlier prototype (see `wi0-data-foundation.md` §17).
 
-Where things stand at the end of the 2026-10-06 session: WI-0 and Plans 1, 3a, 3b, 4a, 4b are implemented and committed (not released, not seen in a browser by the author); Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: answers to Plan 5's seven open questions (deliberately deferred until work on that plan starts); whether to do something about the 65 s cold conversation analysis (issue #68, draft plan) and the slow request-listing query (issue #69, a small covering-index fix). The user's plan (D23): merge the branch, release for testing, then continue the drafts and UI styling.
+Where things stand at the end of the 2026-10-06 session: WI-0 and Plans 1, 3a, 3b, 4a, 4b are implemented and committed (not released, not seen in a browser by the author); Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: answers to Plan 5's seven open questions (deliberately deferred until work on that plan starts); a decision on the hot-spots groupings idea (Plan 9: **the user asked to be prompted for it when work on that plan starts**; the schema-timing question before the release is also still open); whether to do something about the 65 s cold conversation analysis (issue #68, draft plan) and the slow request-listing query (issue #69, a small covering-index fix). The user's plan (D23): merge the branch, release for testing, then continue the drafts and UI styling.
 
 ## Release readiness (merge of `analysis_revamp`, written 2026-10-06)
 
@@ -176,6 +177,7 @@ What a user upgrading from 0.5.4 (schema 8) experiences, and what has *not* been
 - Source keys and file paths for requests whose tool-call text was already purged stay generic (`tool:<name>`) / NULL; this is permanent for that data.
 - **Not verified:** any new UI in a browser (Present in, purpose chip, File row, Archive modal/badge/notice, Hot spots page); Windows (`db-compact` lock path, incremental vacuum); packaging (Homebrew/.deb/standalone: run `make ui` so `contextspy/_web/` is current, and confirm the new modules `analysis/paths.py`, `analysis/block_hotspots.py`, `db/hotspots_service.py` are picked up); upgrading a database that was captured while another version ran; a fresh install end to end.
 - Known limitations to state honestly: the first conversation-scoped view of a very long session can take a minute (cold lineage analysis); hot spots count visible tokens only; relative/absolute spellings of one file are separate rows; Ollama's adapter does not capture tool calls; only Codex `exec`/`js`, `Bash` and structured file tools are parsed for sources/paths.
+- **Decision before release (schema timing):** if the invocation grouping in [`hot-spots-groupings.md`](unconfirmed_drafts/hot-spots-groupings.md) might use a persisted call/result link (its option 2, schema v11), adding the column before the first release spares users a second `db-upgrade`; with its read-time option 1 nothing needs deciding.
 - Release mechanics (not done): version bump in `pyproject.toml` (currently 0.5.4), rename the changelog's "Unreleased" heading, tag/package as usual. The changelog's Unreleased section was reviewed against the code on 2026-10-06.
 
 ## Maintenance notes for the implemented code

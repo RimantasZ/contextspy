@@ -101,7 +101,7 @@ Frontend (Vitest): toolbar state and URL params, group/sort/filter changes refet
 Cache reporting (D2), money (D1), optimisation hints (Plan 7, which reads these rows), output-block rankings, unifying relative/absolute file spellings, an automatic overhead/accumulation split, and **similarity grouping** (changed-and-reloaded blocks, near-duplicates, version timelines): grouping here is by **exact content hash** only; the similarity idea is parked for v2 in [unconfirmed_drafts/similarity-grouping.md](unconfirmed_drafts/similarity-grouping.md). The *Files* grouping already ties the versions of one file together.
 
 ## Open questions
-None blocking.
+None blocking. Further groupings (block types, commands, invocations) are a separate idea: [unconfirmed_drafts/hot-spots-groupings.md](unconfirmed_drafts/hot-spots-groupings.md).
 
 ## Implementation status (2026-10-06)
 
