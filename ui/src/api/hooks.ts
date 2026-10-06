@@ -67,9 +67,9 @@ export function useSessionConversations(id: string, enabled: boolean = true) {
   })
 }
 
-export const HOTSPOT_PAGE_SIZE = 25
+const HOTSPOT_PAGE_SIZE = 25
 /** The server accepts offsets up to this value (and 100 rows per page). */
-export const HOTSPOT_MAX_OFFSET = 1000
+const HOTSPOT_MAX_OFFSET = 1000
 
 /** Hot spots of a session, 25 rows per page; the previous result stays visible while the parameters change. */
 export function useSessionHotspots(sessionId: string, params: Omit<HotspotParams, 'limit' | 'offset'>) {
