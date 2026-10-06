@@ -11,9 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query'
 import { sessionsApi, requestsApi, statsApi, proxyApi } from './client'
-import type { OccurrenceScope } from './client'
+import type { HotspotParams, OccurrenceScope } from './client'
 
 // ---- Sessions -------------------------------------------------------------
 
@@ -64,6 +64,26 @@ export function useSessionConversations(id: string, enabled: boolean = true) {
     queryFn: () => sessionsApi.conversations(id),
     enabled: !!id && enabled,
     refetchInterval: 5_000,
+  })
+}
+
+export const HOTSPOT_PAGE_SIZE = 25
+/** The server accepts offsets up to this value (and 100 rows per page). */
+export const HOTSPOT_MAX_OFFSET = 1000
+
+/** Hot spots of a session, 25 rows per page; the previous result stays visible while the parameters change. */
+export function useSessionHotspots(sessionId: string, params: Omit<HotspotParams, 'limit' | 'offset'>) {
+  return useInfiniteQuery({
+    queryKey: ['session', sessionId, 'hotspots', params],
+    queryFn: ({ pageParam }) => sessionsApi.hotspots(sessionId, { ...params, limit: HOTSPOT_PAGE_SIZE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      const next = pages.reduce((count, page) => count + page.rows.length, 0)
+      return last.has_more && next <= HOTSPOT_MAX_OFFSET ? next : undefined
+    },
+    enabled: !!sessionId,
+    staleTime: 30_000,
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[1] === sessionId ? previous : undefined),
   })
 }
 

@@ -1,6 +1,6 @@
 # Plan 4b: Hot spots — what stays in the context window, and what it costs
 
-Status: **reviewed and decided 2026-10-06, re-reviewed after Plan 4a the same day (see "Second review"); not started.** Depends on [info-panel.md](info-panel.md) (implemented: occurrence semantics, `?block=` deep link, conversation membership), [session-archive.md](session-archive.md) (implemented: analysis must work without content) and, for the *Files* grouping, [file-paths.md](file-paths.md) (Plan 4a). Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
+Status: **implemented 2026-10-06 (uncommitted); see "Implementation status" at the end.** Reviewed and decided 2026-10-06, re-reviewed after Plan 4a the same day ("Second review"). Depends on [info-panel.md](info-panel.md) (implemented: occurrence semantics, `?block=` deep link, conversation membership), [session-archive.md](session-archive.md) (implemented: analysis must work without content) and, for the *Files* grouping, [file-paths.md](file-paths.md) (Plan 4a). Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
 
 ## Goal
 Show the **top blocks** of a conversation (or whole session) ranked by **total visible tokens** or by **occurrence count**, so the user sees what information is carried through the window repeatedly and what it costs over time. Also rank by **source** (which tool costs the most) and by **file** (which file's contents are carried most).
@@ -102,3 +102,24 @@ Cache reporting (D2), money (D1), optimisation hints (Plan 7, which reads these 
 
 ## Open questions
 None blocking.
+
+## Implementation status (2026-10-06, uncommitted)
+
+Implemented: `GET /api/sessions/{id}/hotspots` (all three groupings, both sorts, scope/conversation selection, filters, paging, `in_context`), `analysis/block_hotspots.py` (pure helpers), `db/hotspots_service.py`, `block_occurrence_service.scope_for_session` (shared with Plan 1), the **Hot spots** view in the session page (`components/hotspots/HotSpots.tsx`, `?view=hotspots`), a per-conversation "Hot spots" link in the Conversations view, docs (`SPEC.md`, `development.md`, `changelog.md`, `faq.md`). Backend 685 tests passed, frontend 199 passed, `npm run check` clean. **Not seen in a browser; not released; the live database has not been upgraded** (the feature needs schema v10 for the Files grouping only).
+
+Differences from the plan:
+- **No cache** (postponed, [postponed/hot-spots-cache.md](postponed/hot-spots-cache.md), issue #67). The grouping is one function, `aggregate_select`, independent of sort/paging/in-context, as required.
+- **Latest occurrence and run counts come out of the same pass**: the latest block is found by maximising `position * 2**32 + block id` and run counts from a `GROUP_CONCAT` of positions. The first design (a second lookup of the returned hashes' positions through `idx_blocks_content_hash`) made a 100-row page cost ~3 s on the largest sample because it walks the hash across all sessions.
+- **`summary` has no `distinct_blocks`** (`total_rows` carries it); hash-less blocks are the NULL group of the same aggregate, so `unidentifiable` and the totals cost no extra pass. File and source shares are of the whole filtered scope (the same trick for blocks without a file).
+- **Filters**: the API has `category`, `block_type`, `source`; the UI offers *block type*, *In context* and a *source* chip (reached from a Sources row's "Blocks" button). There is **no category filter in the UI**: the category vocabulary lives in the backend classifier and the UI must not duplicate it; block type covers "tool results only" and similar. `in_context` with a non-block grouping is a 422.
+- **Show more** is offset paging of 25 rows (infinite query), capped at offset 1,000 (then a note says to narrow the scope).
+- `conversations` in the response carries `key`, `code`, `request_count`, `selected` (no label), and is always built, so the first call of a session pays for the conversation membership (below).
+- **Side fix:** the membership cache lifetime was counted from the *start* of the build, so a build slower than 60 s was never reused; it now counts from the end (test added). Also `scope_for_session(..., with_conversations=False)` keeps Plan 1's session scope from building membership.
+
+Measured on a copy of the author's database (samples, 2026-10-06; warm OS cache; one machine, noisy +/- 50%):
+- Aggregate + page, **4,032-request session** (782k input blocks, 8,532 distinct hashes): ~1.1 s steady for blocks, ~1.0 s for files and sources (outliers up to 2.6 s). **Within the ~1.5 s budget, marginally.** 100-row pages cost the same.
+- **570- and 564-request sessions:** 0.2-0.5 s. A 39-request conversation inside the 570-request session: ~0.3 s, **above the ~50 ms target**: 0.38 s of it is the existing query listing the session's requests (`select id, session_seq, timestamp, context_fidelity`), which is slow for unarchived sessions because SQLite walks each row's large inline body columns to reach later columns. A narrow covering index or moving the bodies out of `requests` would fix it; not done here.
+- **Cold conversation membership (the existing lineage analysis): 65 s on the 4,032-request session and 7 s on a 570-request one, ~5 s warm-graph rebuild, 0.08 s when cached.** Hot spots inherit this because the conversation selector and the default conversation need it. The same cost already applies to the Conversations view and the block "Present in" panel. Consider a cheaper way to resolve conversations (or computing it ahead of time) before calling this feature fast on very long sessions.
+- Plan shape confirmed on the real database: `SCAN s`, `SEARCH b USING INDEX idx_blocks_request`, temp B-tree for the group; `idx_blocks_content_hash` is not used.
+
+Not done / not verified: browser check; first-call time as the user would experience it on a long, never-opened session (dominated by the membership above); fidelity badge wording with real partial/opaque data; the Files grouping on a database with paths from non-Codex agents.

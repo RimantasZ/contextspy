@@ -262,6 +262,24 @@ paths only when the parse matches the stored blocks exactly (same count, block t
 hashes per direction). It processes requests in keyset batches, prints progress, and is safe to
 re-run.
 
+### Hot spots queries
+
+`db/hotspots_service.py` ranks the blocks, sources or files of a scope by visible tokens carried
+(`GET /api/sessions/{id}/hotspots`). One pass groups the scope's input blocks into a TEMP table; rows,
+totals, the summary, sorting, paging and the in-context filter come from that table, and only the
+returned rows pay a second, bounded lookup (descriptive columns of the latest occurrence by primary
+key). Rules to keep when changing it:
+
+- **The scope table must be the outer loop** (`FROM hs_scope s CROSS JOIN blocks b ON b.request_id = s.id`).
+  Left free, SQLite walks `idx_blocks_content_hash` for a `GROUP BY content_hash` and is 15-100 times slower.
+  `tests/test_hotspots.py` asserts the query plan for all three groupings.
+- `aggregate_select` must not depend on sort, paging or the in-context filter, so a cache can wrap it
+  later (postponed, GitHub issue #67).
+- The latest occurrence of a group is found in the same pass by maximising `position * 2**32 + block id`
+  (`analysis/block_hotspots.py: unpack_latest`); run counts come from a `GROUP_CONCAT` of positions.
+- Conversation membership comes from `block_occurrence_service.scope_for_session`, shared with the block
+  "Present in" panel; it is cached per session (60 s, measured from the end of the build).
+
 ---
 
 ## Token estimation accuracy

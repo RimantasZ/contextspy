@@ -315,6 +315,108 @@ export interface BlockOccurrences {
   }
 }
 
+// ---- Hot spots ------------------------------------------------------------
+
+export type HotspotGroup = 'block' | 'source' | 'file'
+export type HotspotSort = 'total_tokens' | 'occurrences'
+export type HotspotInContext = 'all' | 'current' | 'dropped'
+
+export interface HotspotParams {
+  group?: HotspotGroup
+  scope?: OccurrenceScope
+  conversation?: string | null
+  sort?: HotspotSort
+  category?: string | null
+  block_type?: string | null
+  source?: string | null
+  in_context?: HotspotInContext
+  limit?: number
+  offset?: number
+}
+
+/** A representative occurrence: the latest one, so a click can open its request with the block selected. */
+export interface HotspotOccurrence {
+  request_id: string | null
+  block_id: number
+  session_seq: number | null
+}
+
+interface HotspotRowBase {
+  key: string
+  occurrence_count: number
+  request_count: number
+  total_tokens: number
+  /** Share of the scope's visible tokens, 0-100. */
+  share_pct: number
+}
+
+export interface BlockHotspotRow extends HotspotRowBase {
+  block_type: string | null
+  /** Only when the same content occurs under several block types. */
+  block_types?: string[]
+  category: string | null
+  tool_name: string | null
+  source_key: string | null
+  activity: string | null
+  file_path: string | null
+  label: string | null
+  /** First characters of the content; null once the content is purged or archived. */
+  preview: string | null
+  content_purged: boolean
+  /** Null when the occurrences disagree on size. */
+  tokens_per_occurrence: number | null
+  first_seen_session_seq: number | null
+  last_seen_session_seq: number | null
+  in_latest_request: boolean
+  /** More than one run means the block left the context and came back. */
+  run_count: number
+  latest: HotspotOccurrence
+}
+
+export interface SourceHotspotRow extends HotspotRowBase {
+  source_key: string
+  activity: string | null
+  distinct_blocks: number
+  largest: HotspotOccurrence & { token_count: number; label: string | null }
+}
+
+export interface FileHotspotRow extends HotspotRowBase {
+  file_path: string
+  distinct_versions: number
+  /** Visible tokens of the tool results that read the file. */
+  result_tokens: number
+  /** Visible tokens of the tool calls that wrote or edited it. */
+  call_tokens: number
+  first_seen_session_seq: number | null
+  last_seen_session_seq: number | null
+  in_latest_request: boolean
+  latest: HotspotOccurrence
+}
+
+interface HotspotsResponseBase {
+  scope: OccurrenceScope
+  requested_scope: OccurrenceScope
+  scope_note: 'conversation_unavailable' | 'auxiliary_request' | null
+  sort: HotspotSort
+  conversations: { key: string; code: string | null; request_count: number; selected: boolean }[]
+  summary: {
+    scope_request_count: number
+    visible_tokens_total: number
+    fidelity_counts: Record<string, number>
+    /** Blocks without a content hash (hidden or empty); null outside the block grouping. */
+    unidentifiable: { blocks: number; tokens: number } | null
+    returned_tokens: number
+    returned_share_pct: number
+  }
+  total_rows: number
+  has_more: boolean
+}
+
+export type SessionHotspots =
+  | (HotspotsResponseBase & { group: 'block'; rows: BlockHotspotRow[] })
+  | (HotspotsResponseBase & { group: 'source'; rows: SourceHotspotRow[] })
+  | (HotspotsResponseBase & { group: 'file'; rows: FileHotspotRow[] })
+
 export interface OccurrenceRequests {
   scope: OccurrenceScope | 'request'
   requests: OccurrenceEntry[]
@@ -491,6 +593,13 @@ export const sessionsApi = {
     apiFetch<{ session: Session }>(`/sessions/${id}/end`, { method: 'POST' }),
   archive: (id: string) =>
     apiFetch<ArchiveResult>(`/sessions/${id}/archive`, { method: 'POST' }),
+  hotspots: (id: string, params: HotspotParams) => {
+    const qs = new URLSearchParams()
+    for (const [name, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== '') qs.set(name, String(value))
+    }
+    return apiFetch<SessionHotspots>(`/sessions/${id}/hotspots?${qs}`)
+  },
   rename: (id: string, name: string) =>
     apiFetch<{ session: Session }>(`/sessions/${id}`, {
       method: 'PATCH',

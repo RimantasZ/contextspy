@@ -91,7 +91,9 @@ Implemented (WI-0, tests green, not released): schema v9; per-request `purpose`/
 
 **Also implemented (Plan 4a; uncommitted):** schema v10 `blocks.file_path` (file targeted by read/edit tool calls, inherited by results; `analysis/paths.py` is the single writer), `_migrate_to_v10` re-derivation, a "File" row in the block inspector. Timed on a copy of the author's DB: ~2 min for v9/v10 (7.2k requests); 8.4% of blocks got a path, relative and absolute spellings of one file stay separate; Ollama has none (its adapter emits no tool blocks).
 
-**Not implemented:** everything in Plans 4b, 5, 6, 7 (hot spots, context tree, compare, hints);
+**Also implemented (Plan 4b; uncommitted):** `GET /api/sessions/{id}/hotspots` and the **Hot spots** session view (blocks / sources / files, per conversation or whole session, sort, block-type and in-context filters, click-through to the request with the block selected). Timed on a copy of the author's DB: ~1.1 s on a 4,032-request session; the cold conversation membership it needs costs 65 s there (existing lineage cost, see `hot-spots.md`). No cache (issue #67).
+
+**Not implemented:** everything in Plans 5, 6, 7 (context tree, compare, hints) and 8;
 `housekeeping` detection and any agent purpose detectors; source parsers beyond Codex `exec`/`js` and `Bash`; purpose in the request
 list/conversation cards; any use of `json_path` beyond displaying it; cache reporting (D2); (the retention-default change and startup notice, D14, are part of Plan 3b and are implemented).
 Nothing from this roadmap has been released, and the real database has not been upgraded.
@@ -123,7 +125,7 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 | 3a | `contextspy db-compact` (reclaim free pages, enable incremental auto-vacuum) | [`db-compact.md`](db-compact.md) | **implemented and committed** (`f34fa29`); not released; the author's live DB not yet compacted | — |
 | 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **implemented and committed** (`a2a4b8c`); not released, not checked in a browser; only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
 | 4a | Capture the file a block is about (`blocks.file_path`, schema v10) | [`file-paths.md`](file-paths.md) | **implemented, uncommitted** (2026-10-06); not released; not seen in a browser | WI-0 |
-| 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **reviewed and decided, re-reviewed after 4a (single-pass aggregate, file rows split read/edit; cache postponed to [`postponed/hot-spots-cache.md`](postponed/hot-spots-cache.md)); not started** (4a is done) | 1, 3b, 4a (Files grouping only) |
+| 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **implemented, uncommitted** (2026-10-06); not released, not seen in a browser; cache postponed ([`postponed/hot-spots-cache.md`](postponed/hot-spots-cache.md), issue #67) | 1, 3b, 4a |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
 | 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
 | 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | idea only | 4b |
@@ -135,7 +137,7 @@ so they were written first.
 ## How to continue
 
 **WI-0 ([`wi0-data-foundation.md`](wi0-data-foundation.md)) is implemented**; its §17 is the authoritative record of what exists and how it
-differs from its own spec. Plan 1 (info panel "present in"), Plan 3a (`db-compact`) and Plan 3b (archive) are implemented too. Plan 4 (hot spots) is split into 4a (file paths, schema v10; implemented, uncommitted) and 4b (the feature; reviewed and decided, **next**); Plan 5 (context tree) is still a draft whose open questions need answers.
+differs from its own spec. Plan 1 (info panel "present in"), Plan 3a (`db-compact`) and Plan 3b (archive) are implemented too. Plan 4 (hot spots) is split into 4a (file paths, schema v10) and 4b (the feature); both are implemented (uncommitted); Plan 5 (context tree) is still a draft whose open questions need answers.
 WI-0 follow-ups that still wait for captures from Copilot, Ollama, llama.cpp and vLLM: housekeeping/compaction detectors per agent and more
 source parsers. Review the `compaction_trigger` rule (a judgement call) and decide what to do with the legacy leaf-form `json_path` values in
 the author's DB (see WI-0 §17) before treating either as settled.
@@ -166,7 +168,7 @@ Pitfalls found the hard way (each cost real time):
 - Pysqlite begins transactions lazily at the first DML; to make "measure then delete" consistent, take the write lock first with a harmless write.
 - The server refuses to start while a data migration is pending (`contextspy db-upgrade` first); the live database is **still not compacted/archived/upgraded by the agent**, and the author's `blocks.json_path` column already holds 6,794 legacy leaf-form values from an earlier prototype (see `wi0-data-foundation.md` §17).
 
-Where things stand at the end of the 2026-10-06 session: WI-0, Plans 1, 3a, 3b are implemented and committed (not released, not seen in a browser); Plan 4a is implemented (uncommitted, added 2026-10-06 after the first handoff), Plan 4b is reviewed and decided, **not started (next)**; Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: review the `compaction_trigger` purpose rule; what to do with the legacy leaf-form `json_path` rows; answers to Plan 5's open questions.
+Where things stand at the end of the 2026-10-06 session: WI-0, Plans 1, 3a, 3b are implemented and committed (not released, not seen in a browser); Plans 4a and 4b are implemented (uncommitted, added 2026-10-06 after the first handoff); Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: review the `compaction_trigger` purpose rule; what to do with the legacy leaf-form `json_path` rows; answers to Plan 5's open questions.
 
 ## Cross-cutting open questions
 

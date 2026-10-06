@@ -388,3 +388,21 @@ def test_expansion_endpoint(client):
     body = client.get(f"/api/requests/a/blocks/{block}/occurrences/requests",
                       params={"to_position": 5, "limit": 1}).json()
     assert [e["request_id"] for e in body["requests"]] == ["a"] and body["has_more"] is True
+
+
+def test_a_membership_build_slower_than_the_ttl_is_still_cached(db, monkeypatch):
+    ids = _fork(db)
+    clock = [1000.0]
+    monkeypatch.setattr(service.time, "monotonic", lambda: clock[0])
+    real = crud.get_session_lineage_graph
+    calls = []
+
+    def slow(*args):
+        calls.append(1)
+        clock[0] += service.MEMBERSHIP_TTL_SECONDS + 30  # the build alone outlasts the TTL
+        return real(*args)
+
+    monkeypatch.setattr(crud, "get_session_lineage_graph", slow)
+    service.get_block_occurrences(db, "a", ids["H-a"], "conversation")
+    service.get_block_occurrences(db, "a", ids["H-a"], "conversation")
+    assert len(calls) == 1

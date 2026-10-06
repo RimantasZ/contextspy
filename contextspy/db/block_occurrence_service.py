@@ -32,6 +32,7 @@ class _Membership(NamedTuple):
     filed_under: dict[str, str | None]      # request id -> key of the conversation it is filed under
     codes: dict[str, str]                   # request id -> "C<n>" / "AUX"
     auxiliary: frozenset[str]
+    group_codes: dict[str, str]             # conversation key -> "C<n>" (same numbering as ``codes``)
 
 
 _cache: dict[tuple, tuple[float, _Membership]] = {}
@@ -45,10 +46,9 @@ def clear_membership_cache() -> None:
 
 def _membership(db: OrmSession, session_id: str, request_count: int) -> _Membership:
     key = (db.get_bind(), session_id, request_count)
-    now = time.monotonic()
     with _cache_lock:
         cached = _cache.get(key)
-        if cached is not None and cached[0] > now:
+        if cached is not None and cached[0] > time.monotonic():
             return cached[1]
 
     graph = crud.get_session_lineage_graph(db, session_id)
@@ -63,7 +63,9 @@ def _membership(db: OrmSession, session_id: str, request_count: int) -> _Members
         filed_under={rid: crud._node_group_key(node, auxiliary) for rid, node in nodes.items()},
         codes={rid: code_for(node) for rid, node in nodes.items()},
         auxiliary=auxiliary,
+        group_codes={group["key"]: f"C{index}" for index, group in enumerate(graph["conversations"], 1)},
     )
+    now = time.monotonic()  # after the build: a build slower than the TTL must still be reused
     with _cache_lock:
         for old in [k for k in _cache if k[:2] == key[:2]]:
             del _cache[old]  # one entry per session
@@ -73,15 +75,29 @@ def _membership(db: OrmSession, session_id: str, request_count: int) -> _Members
     return membership
 
 
-def _scope_requests(db: OrmSession, request: Request, scope: str) -> tuple[list[ScopeRequest], str, str | None]:
-    """The ordered requests of the scope, the scope actually used, and a reason when it differs from the one asked for."""
-    if request.session_id is None:
-        only = ScopeRequest(request.id, request.session_seq, None, request.context_fidelity)
-        return [only], "request", "no_session"
+class SessionScope(NamedTuple):
+    requests: list[ScopeRequest]            # the scope's requests in order
+    scope: str                              # the scope actually used: "conversation" | "session"
+    note: str | None                        # why it differs from the one asked for
+    conversations: list[dict]               # key, code, request_count, selected (empty unless asked for)
 
+
+def scope_for_session(
+    db: OrmSession, session_id: str, scope: str, *,
+    anchor_request_id: str | None = None, conversation_key: str | None = None,
+    with_conversations: bool = False,
+) -> SessionScope:
+    """The ordered requests of a session or one of its conversations.
+
+    ``conversation_key`` names a conversation explicitly; otherwise the conversation ``anchor_request_id``
+    is filed under is used, and with neither, the one the session's latest request is filed under.
+    Anything that cannot be resolved (auxiliary anchor, unknown key) falls back to the whole session
+    with a note. ``with_conversations`` also builds the membership for the session scope, which is
+    slow on a cold cache, so callers that do not need the list leave it off.
+    """
     rows = db.execute(
         select(Request.id, Request.session_seq, Request.timestamp, Request.context_fidelity)
-        .where(Request.session_id == request.session_id)
+        .where(Request.session_id == session_id)
     ).all()
     # Same order as the dashboard's request sequence (session_seq, completion time, id).
     ordered = sorted(rows, key=lambda r: (r.session_seq if r.session_seq is not None else -1, r.timestamp, r.id))
@@ -90,19 +106,37 @@ def _scope_requests(db: OrmSession, request: Request, scope: str) -> tuple[list[
     effective = "session"
     members: frozenset[str] | None = None
     codes: dict[str, str] = {}
-    if scope == "conversation":
-        membership = _membership(db, request.session_id, len(rows))
-        key = membership.filed_under.get(request.id)
-        if request.id in membership.auxiliary:
+    selected_key: str | None = None
+    membership = _membership(db, session_id, len(rows)) if (scope == "conversation" or with_conversations) and rows else None
+    if scope == "conversation" and membership is not None:
+        anchor = anchor_request_id or ordered[-1].id
+        key = conversation_key if conversation_key is not None else membership.filed_under.get(anchor)
+        if conversation_key is None and anchor in membership.auxiliary:
             note = "auxiliary_request"
         elif key is None or key not in membership.groups:
             note = "conversation_unavailable"
         else:
-            effective, members, codes = "conversation", membership.groups[key], membership.codes
-    return [
-        ScopeRequest(row.id, row.session_seq, codes.get(row.id), row.context_fidelity)
-        for row in ordered if members is None or row.id in members
-    ], effective, note
+            effective, members, codes, selected_key = "conversation", membership.groups[key], membership.codes, key
+    conversations = [
+        {"key": key, "code": membership.group_codes.get(key), "request_count": len(ids), "selected": key == selected_key}
+        for key, ids in membership.groups.items()
+    ] if membership is not None and with_conversations else []
+    return SessionScope(
+        [
+            ScopeRequest(row.id, row.session_seq, codes.get(row.id), row.context_fidelity)
+            for row in ordered if members is None or row.id in members
+        ],
+        effective, note, conversations,
+    )
+
+
+def _scope_requests(db: OrmSession, request: Request, scope: str) -> tuple[list[ScopeRequest], str, str | None]:
+    """The ordered requests of the scope, the scope actually used, and a reason when it differs from the one asked for."""
+    if request.session_id is None:
+        only = ScopeRequest(request.id, request.session_seq, None, request.context_fidelity)
+        return [only], "request", "no_session"
+    resolved = scope_for_session(db, request.session_id, scope, anchor_request_id=request.id)
+    return resolved.requests, resolved.scope, resolved.note
 
 
 def _index(db: OrmSession, request_id: str, block_id: int, scope: str):
@@ -170,4 +204,6 @@ def list_block_occurrence_requests(
     return {"scope": effective, "requests": entries, "has_more": has_more}
 
 
-__all__ = ["get_block_occurrences", "list_block_occurrence_requests", "clear_membership_cache"]
+__all__ = [
+    "get_block_occurrences", "list_block_occurrence_requests", "clear_membership_cache", "scope_for_session", "SessionScope",
+]

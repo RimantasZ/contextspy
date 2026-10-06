@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Hot spots
+
+- **New session view: Hot spots.** On a session page, **Hot spots** ranks what the context window keeps carrying: the
+  blocks (tool definitions, big tool results, compaction items, ...) that add up to the most **visible tokens** over all
+  the requests that contain them, for one conversation or the whole session. Switch between **Blocks**, **Sources**
+  (which tool or program costs the most) and **Files** (tokens attributed to each file, split into read and edited), sort
+  by total tokens or by occurrences, filter blocks by type and by *Still in context* / *Dropped*, and click a row to open
+  the latest request that carries it with the block selected. Rows marked *reappears* left the context and came back;
+  *dropped* means gone from the latest request. Works on archived sessions (no previews there). Each conversation in the
+  Conversations view links to its hot spots. Counts are visible tokens only (partial or opaque requests are flagged); same
+  content is matched by exact text, so a file that changed counts as a different block, and a path written relative and
+  absolute shows as two files.
+- Fixed: the "Present in" panel and hot spots reuse the conversation analysis for up to a minute; the cache lifetime was
+  counted from the start of a slow analysis, so on very long sessions it could expire before it was used.
+
 ### Retention and archive
 
 - **Sessions can be archived.** An ended session has an **Archive** button on the session screen and in the sessions

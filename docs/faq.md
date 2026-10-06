@@ -199,6 +199,16 @@ Besides prompts and responses, the database keeps the path of each file a read/e
 `src/app.py` from a `Read` or `apply_patch` call), also after a session is archived. Nothing else from tool arguments is
 kept once archived. Paths never leave your machine.
 
+### What do hot spots count?
+
+Hot spots (a view on the session page) add up the **visible tokens** of every block over all the requests of a conversation or
+session, so a 12,000-token tool definition sent with 54 requests is 648,000 tokens. "Visible" means what ContextSpy could see
+and count: requests marked partial or opaque hide part of their context, and provider totals (billed or cached tokens) are not
+used. Blocks are the same only if their text is identical, so an edited file is a new block; the **Files** grouping ties the
+versions of one file together using the path the agent used, and a file written with a relative and an absolute path shows
+twice. File rows split tokens into *read* (tool results) and *edited* (the calls that wrote it). Hot spots work on archived
+sessions, without text previews.
+
 ### How long is request data kept?
 
 Everything is kept until you remove it. Decoded request payloads, canonical response payloads, streamed event
