@@ -157,7 +157,7 @@ def _exec(content, tool_name="exec"):
 
 @pytest.mark.parametrize("snippet, key, detail", [
     ("const r = await tools.exec_command({cmd:\"sed -n '290,335p' src/app.ts; sed -n '1,5p' x\","
-     "workdir:\"/repo\",max_output_tokens:3300}); text(r.output);", "exec:sed", None),
+     "workdir:\"/repo\",max_output_tokens:3300}); text(r.output);", "exec:sed", {"files": ["src/app.ts", "x"]}),
     ('const r=await tools.exec_command({cmd:"rg -n \\"foo bar\\" src",workdir:"/r"});', "exec:rg", None),
     ("const r = await tools.exec_command({cmd:'git status --short'});", "exec:git", None),
     ("const r = await tools.exec_command({cmd:`cd app && npm test`});", "exec:npm", None),

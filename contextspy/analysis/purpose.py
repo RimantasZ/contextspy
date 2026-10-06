@@ -21,7 +21,8 @@ from contextspy.analysis.sources import resolve_sources
 
 logger = logging.getLogger(__name__)
 
-CLASSIFIER_VERSION = 1
+# 2: tool-call blocks (and their results) also get ``file_path`` (schema v10).
+CLASSIFIER_VERSION = 2
 
 # Emitted by the baseline: user_turn, tool_continuation, unknown, and compaction when the request's
 # last item is an explicit provider compaction trigger. housekeeping is reserved for agent
@@ -168,7 +169,7 @@ def derive_purpose(inputs: PurposeInputs) -> PurposeResult:
 def classify_request(
     analyzed: AnalyzedRequest, *, agent: str | None, has_response: bool,
 ) -> RequestClassification | None:
-    """Stamp ``source_key`` (and ``attrs["source"]``) on every block and derive the request purpose.
+    """Stamp ``source_key`` (``attrs["source"]``, ``file_path``) on every block and derive the request purpose.
 
     Returns None when the analysis produced no blocks at all (the request could not be parsed),
     so such rows stay unclassified instead of being stamped ``unknown``. Never raises: on failure
@@ -180,6 +181,7 @@ def classify_request(
     try:
         for block, info in zip(blocks, resolve_sources(blocks, agent=agent)):
             block.source_key = info.key
+            block.file_path = info.file_path
             if info.detail:
                 block.attrs["source"] = info.detail
         result = derive_purpose(PurposeInputs(

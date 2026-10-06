@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, Session, ToolStat
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 logger = logging.getLogger(__name__)
 
@@ -988,18 +988,35 @@ def _v9_match_json_paths(stored: list, parsed: list) -> dict[int, str]:
 
 
 def _migrate_to_v9(db: OrmSession) -> None:
-    """Backfill request purpose, block ``source_key`` and block ``json_path`` (plans/wi0-data-foundation.md section 8).
+    """Backfill request purpose, block ``source_key`` and block ``json_path`` (plans/wi0-data-foundation.md section 8)."""
+    _backfill_classification(db, "v9", json_paths=True)
+
+
+def _migrate_to_v10(db: OrmSession) -> None:
+    """Re-derive source keys and ``blocks.file_path`` for requests classified before ``CLASSIFIER_VERSION`` 2.
+
+    Same phase A as v9 (a database upgraded straight from before v9 has already done it, so this finds
+    nothing to do). File paths come from retained tool-call content only; purged tool calls keep
+    ``file_path`` NULL, so historical coverage is partial by nature (plans/file-paths.md).
+    """
+    _backfill_classification(db, "v10", json_paths=False)
+
+
+def _backfill_classification(db: OrmSession, label: str, *, json_paths: bool) -> None:
+    """Shared batched backfill behind v9 and v10 (``label`` prefixes progress lines and ``db.info`` key).
 
     A. Requests with ``classifier_version`` below the current one get ``purpose`` /
        ``purpose_detail`` and every block a ``source_key``, computed from the stored block rows by the
        same functions capture uses. Tool-call arguments are only available where block content has not
        been purged; elsewhere the generic ``tool:<name>`` key is stored. Requests without block rows
        are left untouched.
-    B. Where a canonical request/response document is still retained, the adapter re-parses it and
-       ``json_path`` is copied onto the stored blocks if (and only if) the parse matches them exactly.
+       Tool calls and their results also get ``file_path`` (analysis/paths.py).
+    B. (``json_paths`` only) Where a canonical request/response document is still retained, the adapter
+       re-parses it and ``json_path`` is copied onto the stored blocks if (and only if) the parse matches
+       them exactly.
 
     Keyset batches keep memory bounded; re-running is cheap and writes nothing new. Progress goes to
-    the log and to ``progress_reporter``; a summary lands in ``db.info["v9_backfill"]``.
+    the log and to ``progress_reporter``; a summary lands in ``db.info["<label>_backfill"]``.
     """
     from sqlalchemy import and_
 
@@ -1014,7 +1031,10 @@ def _migrate_to_v9(db: OrmSession) -> None:
         "requests": total, "classified": 0, "skipped_no_blocks": 0, "source_keys": 0,
         "paths_set": 0, "path_mismatch": 0, "path_failed": 0,
     }
-    _report(f"v9: backfilling {total:,} requests (purpose, source keys, JSON paths)")
+    _report(
+        f"{label}: backfilling {total:,} requests "
+        + ("(purpose, source keys, file paths, JSON paths)" if json_paths else "(source keys, file paths)")
+    )
     last_id = ""
     done = 0
     while True:
@@ -1075,7 +1095,7 @@ def _migrate_to_v9(db: OrmSession) -> None:
                 ]
                 infos = resolve_sources(snapshots, agent=request.agent)
                 for row, attrs, info in zip(inputs + outputs, attrs_by_row, infos):
-                    row_update: dict = {"id": row.id, "source_key": info.key}
+                    row_update: dict = {"id": row.id, "source_key": info.key, "file_path": info.file_path}
                     if info.detail:
                         row_update["attrs"] = json.dumps({**attrs, "source": info.detail})
                     source_updates.append(row_update)
@@ -1099,7 +1119,7 @@ def _migrate_to_v9(db: OrmSession) -> None:
                 ("input", inputs, request.has_request_doc),
                 ("output", outputs, request.has_response_doc),
             ):
-                if not (has_doc and stored and any(r.json_path is None for r in stored)):
+                if not (json_paths and has_doc and stored and any(r.json_path is None for r in stored)):
                     continue
                 adapter = get_adapter(request.endpoint)
                 if adapter is None:
@@ -1113,7 +1133,7 @@ def _migrate_to_v9(db: OrmSession) -> None:
                     )
                 except Exception:
                     stats["path_failed"] += 1
-                    logger.debug("v9: could not re-parse %s %s document", request.id, direction, exc_info=True)
+                    logger.debug("%s: could not re-parse %s %s document", label, request.id, direction, exc_info=True)
                     continue
                 matched = _v9_match_json_paths(stored, parsed)
                 if not matched:
@@ -1132,11 +1152,11 @@ def _migrate_to_v9(db: OrmSession) -> None:
         previous = done
         done += len(requests)
         if done // _V9_PROGRESS_EVERY != previous // _V9_PROGRESS_EVERY:
-            _report(f"v9: {done:,}/{total:,} requests processed")
+            _report(f"{label}: {done:,}/{total:,} requests processed")
 
-    db.info["v9_backfill"] = stats
+    db.info[f"{label}_backfill"] = stats
     _report(
-        f"v9: done. classified {stats['classified']:,} requests, wrote {stats['source_keys']:,} source keys "
+        f"{label}: done. classified {stats['classified']:,} requests, wrote {stats['source_keys']:,} source keys "
         f"and {stats['paths_set']:,} JSON paths ({stats['path_mismatch']:,} directions did not match "
         f"their retained document, {stats['path_failed']:,} could not be re-parsed)"
     )
@@ -1151,4 +1171,5 @@ _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     7: _migrate_to_v7,
     8: _migrate_to_v8,
     9: _migrate_to_v9,
+    10: _migrate_to_v10,
 }

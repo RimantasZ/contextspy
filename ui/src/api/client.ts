@@ -254,6 +254,8 @@ export interface RequestBlock {
   activity: string | null
   /** Typed path into the canonical request/response JSON this block came from; null when unknown. */
   json_path: (string | number)[] | null
+  /** The file a read/edit tool call (and its result) targets; null when unknown or not a file tool. */
+  file_path: string | null
   linked_call_id: number | null
   linked_definition_id: number | null
   linked_previous_message_id: number | null

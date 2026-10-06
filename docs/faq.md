@@ -195,6 +195,10 @@ All data lives in `~/.contextspy/`:
 | `~/.contextspy/contextspy.db` | SQLite database — all requests and sessions |
 | `~/.contextspy/config.toml` | Configuration (auto-created on first run) |
 
+Besides prompts and responses, the database keeps the path of each file a read/edit tool call targets (for example
+`src/app.py` from a `Read` or `apply_patch` call), also after a session is archived. Nothing else from tool arguments is
+kept once archived. Paths never leave your machine.
+
 ### How long is request data kept?
 
 Everything is kept until you remove it. Decoded request payloads, canonical response payloads, streamed event

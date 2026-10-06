@@ -121,6 +121,8 @@ classifications and the conversation analysis. Run `contextspy db-compact` (with
 space back to the disk. An older time-based purge (`[retention]` in `~/.contextspy/config.toml`, off by default; it
 used to default to 7 days) is still honoured if you set it explicitly, and only runs at server startup.
 
+The file paths that read/edit tool calls target are stored locally with the analysis and survive archive; no other tool argument does.
+
 The contents of database can be cleared manually by running `contextspy reset-db`. 
 In practice, it is recommended to do it from time to time.
 

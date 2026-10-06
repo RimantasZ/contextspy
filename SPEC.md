@@ -353,7 +353,13 @@ Derived at capture time, in Python, and persisted (§5.4):
   `mcp__<server>__<tool>`), and `<wrapper>:<program>` from registered tool-call parsers
   (`register_source_parser`; shipped: JSON-argument `Bash` ⇒ `bash:<program>`, Codex `exec`/`js` JavaScript
   snippets ⇒ `exec:<program>`, `exec:multi` with `attrs["source"] = {"calls": [...]}`, or `exec:js`).
-  A tool result inherits its call's key. Parsers store program names only, never arguments.
+  A tool result inherits its call's key. Parsers store program names only; the single argument kept
+  is the file a read/edit tool call targets (next item).
+- **File path.** `SourceInfo.file_path` becomes `blocks.file_path`: the file a read/edit tool call targets, from
+  JSON-object arguments (`file_path`/`path`/...), a closed list of read-only shell programs and `apply_patch`
+  headers; tool results inherit it from their call, definitions have none, and several files go to
+  `attrs["source"]["files"]`. Written only through `analysis/paths.py: normalize_file_path` (the hook for future
+  obfuscation); command text, URLs, patterns and patch bodies are never stored. Kept after archive.
 - **Activity.** `activity_for(source_key)` maps a key to `read|search|edit|vcs|test|command|web|orchestration|mcp|other`
   (`None` for conversational keys). Derived at read time and not stored.
 - **JSON location.** Adapters set `Block.json_path` as they traverse the canonical document, pointing at
@@ -586,13 +592,15 @@ CREATE TABLE blocks (
     tool_call_id  TEXT,
     attrs         TEXT,               -- JSON, e.g. {"is_prefill": true}
     source_key    TEXT,               -- what produced the block, e.g. 'tool:Read', 'bash:git'; see §5.2
-    json_path     TEXT                -- JSON array: path into the canonical request/response document, or NULL
+    json_path     TEXT,               -- JSON array: path into the canonical request/response document, or NULL
+    file_path     TEXT                -- file a read/edit tool call (and its result) targets; see §5.2
 );
 
 CREATE INDEX idx_blocks_request ON blocks(request_id);
 CREATE INDEX idx_blocks_content_hash ON blocks(content_hash);
 CREATE INDEX idx_blocks_type ON blocks(block_type);
 CREATE INDEX idx_blocks_source_key ON blocks(source_key);
+CREATE INDEX idx_blocks_file_path ON blocks(file_path);
 
 -- Tracks the schema/data-migration state (see "Schema Migrations" below)
 CREATE TABLE schema_meta (
@@ -675,6 +683,9 @@ was not purged; otherwise the key falls back to `tool:<name>`). `json_path` is c
 retained canonical request/response only when the parse matches the stored blocks exactly per direction;
 otherwise it stays NULL. Requests without block rows are left untouched. Batched, idempotent, with progress
 reporting through `db-upgrade`; the `archived_at` session column is added by `_migrate()` and needs no backfill.
+`_migrate_to_v10` re-runs that classification (source keys and `blocks.file_path`, not JSON paths) for requests whose
+`classifier_version` is below 2; the column and its index are added by `_migrate()`. File paths are only recovered where the
+tool call's text is still stored, so older purged requests keep `file_path` NULL.
 
 ---
 
@@ -703,7 +714,7 @@ reporting through `db-upgrade`; the `archived_at` session column is added by `_m
 |---|---|---|
 | `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `purpose` (`user_turn`\|`tool_continuation`\|`compaction`\|`housekeeping`\|`unknown`; `unknown` also matches unclassified requests), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
 | `GET` | `/api/requests/{id}` | Full transport-neutral request detail. `request_body`/`response_body` resolve to the stored canonical documents, with outcome, context fidelity/accounting, usage, and compatibility diagnostics when retained. Block data is fetched from the companion `/blocks` endpoint. 404 if missing. |
-| `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, source_key, activity, json_path, linked_call_id, linked_definition_id, linked_previous_message_id, first_seen_session_seq`. Request payloads additionally carry `purpose`, `purpose_detail` and `classifier_version`; session payloads carry `archived_at`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. `first_seen_session_seq` is `null` for session-less or content-less blocks. 404 if request missing. |
+| `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, source_key, activity, json_path, file_path, linked_call_id, linked_definition_id, linked_previous_message_id, first_seen_session_seq`. Request payloads additionally carry `purpose`, `purpose_detail` and `classifier_version`; session payloads carry `archived_at`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. `first_seen_session_seq` is `null` for session-less or content-less blocks. 404 if request missing. |
 | `GET` | `/api/requests/{id}/blocks/{block_id}/occurrences?scope=conversation\|session` | Where one input block's content (identified by its content hash within the session) occurs. Returns `scope` (the scope used) and `requested_scope`, `scope_note` (`no_session`\|`auxiliary_request`\|`conversation_unavailable`\|null), `identity` (`kind` `content_hash`\|`none`, `block_type`, `tool_name`, `source_key`, `activity`), `ranges` (maximal runs of consecutive requests *in the scope's order*, with positions, `session_seq` ends, `request_count`, `occurrence_count`), `requests_sample` (≤ 50 entries: first/last/current and run ends, each with that request's own `block_id`) and `totals` (`occurrence_count`, `request_count`, `tokens_per_occurrence` or null, `total_visible_tokens`, first/last seen `session_seq`, `in_latest_request_of_scope`, `scope_request_count`, `fidelity_counts`). Conversation scope uses the lineage analysis's conversation membership (cached ≤ 60 s per session); blocks without a content hash and output blocks return a single occurrence. 404 if the request/block pair does not exist. |
 | `GET` | `/api/requests/{id}/blocks/{block_id}/occurrences/requests?scope=&from_position=&to_position=&limit=` | The occurring requests with positions in the range (same entry shape; `limit` default 100, max 200; `has_more`). |
 | `GET` | `/api/requests/{id}/context-diff?parent_id={id}` | Occurrence-aware parent/child block mapping with persisted, parent-output-promoted, added, removed, replaced, and unavailable groups plus token/category/type summaries. Also returns `new_child_block_ids`: the child's input block IDs not already present in the parent (everything except persisted and promoted blocks, so replaced and unclassifiable blocks count as new), which the request-detail **Show** control uses. |

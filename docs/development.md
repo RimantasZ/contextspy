@@ -229,13 +229,22 @@ Capture stamps three derived facts, all in Python (`analysis/`), none computed i
   `final_text`, `empty`). A request whose analysis produced no blocks stays unclassified (NULL).
   To teach it an agent-specific case, call `register_purpose_detector(agents=..., detector=...)`; a
   detector may return any purpose (e.g. `housekeeping`). Bump `CLASSIFIER_VERSION` when the logic
-  changes and add a migration that re-derives rows below the new version.
+  changes (now 2: file paths) and add a migration that re-derives rows below the new version.
 - **`blocks.source_key`** (`analysis/sources.py`, `resolve_sources`): what produced the block. The
   baseline is `system|user|assistant|reasoning|other`, `tool:<name>` and `mcp:<server>/<tool>`.
   Tool calls can be refined by registered parsers (`register_source_parser`), which currently cover
   JSON-argument shell tools (`Bash`) and Codex's JavaScript `exec`/`js` snippets. Parsers return the
-  program name only (`bash:git`, `exec:rg`, `exec:multi`) and must never record arguments, paths or
-  other command content: the key outlives the block's text. Results inherit the key of their call.
+  program name only (`bash:git`, `exec:rg`, `exec:multi`) and must never record arguments or other
+  command content: the key outlives the block's text. Results inherit the key of their call.
+- **`blocks.file_path`** (`analysis/paths.py`, set by `resolve_sources`): the one argument that is kept, the file a
+  read/edit tool call targets. Sources: a JSON-object argument (`file_path`, `path`, ... of `Read`, `Edit`,
+  `Write`, `read_file`, `str_replace_editor`, ...), the positional files of a closed list of shell programs
+  (`cat`, `head`, `tail`, `nl`, `bat`, `less`, `wc`, `stat`, `file`, `sed -n`), and `*** Add/Update/Delete File:`
+  headers of an `apply_patch` (patch bodies are never stored). Several files: the first goes in the column, all
+  of them in `attrs["source"]["files"]` (max 20). Results inherit the path of their call. Every path passes
+  `normalize_file_path`, the only place that decides what is stored: to obfuscate paths later (basename, salted
+  hash, a setting) change that function and re-derive; nothing else writes the column. Paths are not resolved
+  against a working directory, so relative and absolute spellings of one file differ. They survive archive.
   A parser that raises, or content that was purged, falls back to the baseline.
 - **`blocks.json_path`**: typed path into the canonical request (input blocks) or response (output
   blocks) JSON, set by each adapter (`Block.make(..., json_path=(...))`). It points at the smallest

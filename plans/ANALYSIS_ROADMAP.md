@@ -46,7 +46,7 @@ serves one of those four questions.
   only formats and displays what the API computed; it must not re-derive tokens, aggregates,
   categories, "first seen", "present in", etc.
 - Any `db/models.py` change **must** be accompanied by `db/database.py:_migrate()` (additive column)
-  and/or `db/migrations.py` (`_migrate_to_vN` + `SCHEMA_VERSION` bump; currently 9) for backfill.
+  and/or `db/migrations.py` (`_migrate_to_vN` + `SCHEMA_VERSION` bump; currently 10) for backfill.
 - After changing `ui/src/`, rebuild with `make ui`; run `pytest` and `cd ui && npm test`.
 - Lineage/conversation membership is **derived at read time and never persisted**
   (`session_lineage_service.py` header). Do not add persisted columns that encode conversation
@@ -89,7 +89,9 @@ Implemented (WI-0, tests green, not released): schema v9; per-request `purpose`/
 
 **Also implemented (Plan 3a; committed in `f34fa29`):** `contextspy db-compact` (offline VACUUM, optional `--backup`), `pre_compact` backups recognised by restore, new databases created in incremental auto-vacuum mode, file-size/free-space lines in `db-stats`. Verified on a copy of the author's database (6.60 → 2.36 GB); **the live database itself has not been compacted.**
 
-**Not implemented:** everything in Plans 4a, 4b, 5, 6, 7 (file paths, hot spots, context tree, compare, hints);
+**Also implemented (Plan 4a; uncommitted):** schema v10 `blocks.file_path` (file targeted by read/edit tool calls, inherited by results; `analysis/paths.py` is the single writer), `_migrate_to_v10` re-derivation, a "File" row in the block inspector. Timed on a copy of the author's DB: ~2 min for v9/v10 (7.2k requests); 8.4% of blocks got a path, relative and absolute spellings of one file stay separate; Ollama has none (its adapter emits no tool blocks).
+
+**Not implemented:** everything in Plans 4b, 5, 6, 7 (hot spots, context tree, compare, hints);
 `housekeeping` detection and any agent purpose detectors; source parsers beyond Codex `exec`/`js` and `Bash`; purpose in the request
 list/conversation cards; any use of `json_path` beyond displaying it; cache reporting (D2); (the retention-default change and startup notice, D14, are part of Plan 3b and are implemented).
 Nothing from this roadmap has been released, and the real database has not been upgraded.
@@ -120,8 +122,8 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 | 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **baseline implemented in WI-0** (`user_turn`, `tool_continuation`, `compaction`, `unknown`; `housekeeping` and agent detectors NOT implemented; UI shows it in Request detail only) | — |
 | 3a | `contextspy db-compact` (reclaim free pages, enable incremental auto-vacuum) | [`db-compact.md`](db-compact.md) | **implemented and committed** (`f34fa29`); not released; the author's live DB not yet compacted | — |
 | 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **implemented and committed** (`a2a4b8c`); not released, not checked in a browser; only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
-| 4a | Capture the file a block is about (`blocks.file_path`, schema v10) | [`file-paths.md`](file-paths.md) | **reviewed and decided, not started** | WI-0 |
-| 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **reviewed and decided, not started** | 1, 3b, 4a (Files grouping only) |
+| 4a | Capture the file a block is about (`blocks.file_path`, schema v10) | [`file-paths.md`](file-paths.md) | **implemented, uncommitted** (2026-10-06); not released; not seen in a browser | WI-0 |
+| 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **reviewed and decided, not started** (4a is done) | 1, 3b, 4a (Files grouping only) |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
 | 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
 | 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | idea only | 4b |
@@ -133,7 +135,7 @@ so they were written first.
 ## How to continue
 
 **WI-0 ([`wi0-data-foundation.md`](wi0-data-foundation.md)) is implemented**; its §17 is the authoritative record of what exists and how it
-differs from its own spec. Plan 1 (info panel "present in"), Plan 3a (`db-compact`) and Plan 3b (archive) are implemented too. Plan 4 (hot spots) is reviewed and split into 4a (file paths, schema v10) and 4b (the feature); Plan 5 (context tree) is still a draft whose open questions need answers. 4b depends on 1 and 3b (implemented) and, for its Files grouping, on 4a.
+differs from its own spec. Plan 1 (info panel "present in"), Plan 3a (`db-compact`) and Plan 3b (archive) are implemented too. Plan 4 (hot spots) is split into 4a (file paths, schema v10; implemented, uncommitted) and 4b (the feature; reviewed and decided, **next**); Plan 5 (context tree) is still a draft whose open questions need answers.
 WI-0 follow-ups that still wait for captures from Copilot, Ollama, llama.cpp and vLLM: housekeeping/compaction detectors per agent and more
 source parsers. Review the `compaction_trigger` rule (a judgement call) and decide what to do with the legacy leaf-form `json_path` values in
 the author's DB (see WI-0 §17) before treating either as settled.
@@ -164,7 +166,7 @@ Pitfalls found the hard way (each cost real time):
 - Pysqlite begins transactions lazily at the first DML; to make "measure then delete" consistent, take the write lock first with a harmless write.
 - The server refuses to start while a data migration is pending (`contextspy db-upgrade` first); the live database is **still not compacted/archived/upgraded by the agent**, and the author's `blocks.json_path` column already holds 6,794 legacy leaf-form values from an earlier prototype (see `wi0-data-foundation.md` §17).
 
-Where things stand at the end of the 2026-10-06 session: WI-0, Plans 1, 3a, 3b are implemented and committed (not released, not seen in a browser); Plans 4a/4b are reviewed and decided, **not started (4a is next)**; Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: review the `compaction_trigger` purpose rule; what to do with the legacy leaf-form `json_path` rows; answers to Plan 5's open questions.
+Where things stand at the end of the 2026-10-06 session: WI-0, Plans 1, 3a, 3b are implemented and committed (not released, not seen in a browser); Plan 4a is implemented (uncommitted, added 2026-10-06 after the first handoff), Plan 4b is reviewed and decided, **not started (next)**; Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: review the `compaction_trigger` purpose rule; what to do with the legacy leaf-form `json_path` rows; answers to Plan 5's open questions.
 
 ## Cross-cutting open questions
 

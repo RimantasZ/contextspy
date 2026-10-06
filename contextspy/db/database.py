@@ -140,6 +140,8 @@ def _migrate(engine) -> None:
         ("blocks", "source_key", "TEXT"),
         ("blocks", "json_path", "TEXT"),
         ("sessions", "archived_at", "DATETIME"),
+        # v10: file a read/edit tool call targets
+        ("blocks", "file_path", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_columns:
@@ -161,6 +163,9 @@ def _migrate(engine) -> None:
         # tables, so existing databases get them here.
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_blocks_source_key ON blocks (source_key)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_blocks_file_path ON blocks (file_path)"
         ))
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_requests_session_purpose "

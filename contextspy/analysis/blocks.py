@@ -121,6 +121,8 @@ class Block:
     # What produced the block ("tool:Read", "mcp:server/tool", "bash:git", "user", ...); set by
     # analysis/purpose.py:classify_request, persisted as blocks.source_key.
     source_key: str | None = None
+    # The file a read/edit tool call targets (and its result): analysis/paths.py, persisted as blocks.file_path.
+    file_path: str | None = None
     # Typed path into the canonical request (input blocks) or response (output blocks) JSON
     # document the block derives from, e.g. ("messages", 3, "content", 1). None = no honest location.
     json_path: tuple[str | int, ...] | None = None

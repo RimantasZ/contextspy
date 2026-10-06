@@ -1,6 +1,6 @@
 # Plan 4a: Capture the file a block is about (`blocks.file_path`)
 
-Status: **reviewed and decided 2026-10-06; not started.** Prerequisite of [hot-spots.md](hot-spots.md) (Plan 4b). Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
+Status: **implemented 2026-10-06 (uncommitted); see "Implementation status" at the end.** Prerequisite of [hot-spots.md](hot-spots.md) (Plan 4b). Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
 
 ## Decision (user, 2026-10-06) and its consequence
 Hot spots should be able to say "this file's contents are carried N times and cost T tokens". That needs the file a read/edit tool targeted. The user decided to **store full file paths**
@@ -42,3 +42,19 @@ Paths now **persist after archive** (the column is on block rows, which archive 
 
 ## Open questions
 None blocking. Later: obfuscation setting (see hook); unifying relative/absolute spellings (needs a working directory the proxy does not see).
+
+## Implementation status (2026-10-06, uncommitted)
+
+Implemented as designed: schema v10 (`blocks.file_path` + `idx_blocks_file_path`, `CLASSIFIER_VERSION` 2, `_migrate_to_v10`), `analysis/paths.py` (`normalize_file_path`, structured-argument and `apply_patch` extraction), shell extraction in `analysis/sources.py` (`shell_file_paths`), `SourceInfo.file_path`, inheritance by results, persistence in `crud.insert_blocks`, `file_path` in block payloads, a "File" (and "Files in call") row in the block inspector, docs (`development.md`, `SPEC.md`, `changelog.md`, `faq.md`, `README.md`; the WI-0 privacy rule is marked narrowly superseded).
+
+Differences from the plan, and things to know:
+- **Migration shape.** The v9 batched loop was factored into `_backfill_classification(db, label, json_paths)`; v9 calls it with JSON paths, v10 without. A database upgraded from before v9 does everything in v9 (now at classifier version 2) and v10 finds nothing to do. `db.info["v10_backfill"]` holds the stats.
+- **No separate registry for file extractors.** `_call_files` in `sources.py` dispatches by tool name (`Bash`; Codex `exec`/`js` only when the agent is `codex`; `apply_patch`; structured file tools). Adding an agent means a branch there; a registry can be added when a second agent needs one.
+- **`normalize_file_path` also rejects** a trailing `/` (directory), `.`, `..`, `/`; shell words containing `$`, backticks, parentheses etc. are skipped before it.
+- **`sed`**: only `-n`/`-e`/`-f` forms; `-i` (in place) is skipped. All positional files after the script are returned, not only the last.
+- **Ollama has no paths**: its adapter emits no tool-call/tool-result blocks at all (tested and documented as an adapter limitation).
+- **MCP file tools** (`mcp__<server>__read_file`) are not recognised yet (their argument conventions are server-specific).
+- **Side fix found by the version bump:** `backups.list_backups` sorted by file name, so `v10` sorted before `v6`; it now sorts by the timestamp in the name (test added).
+- Tests: `tests/test_file_paths.py` (normalisation table, key precedence/rejections, shell table incl. refused programs and secrets, patch headers with body absent, Codex snippets, inheritance, four adapters, single choke point via monkeypatch, capture persistence, v10 re-derivation/idempotence/purged content, column+index idempotence); existing tests updated for schema 10. Backend 646 passed, frontend 185 passed, `npm run check` clean.
+- **Measured on a copy of the author's database (sample, 2026-10-06; 7,228 requests, 1.53M blocks, 6.6 GB):** upgrading the pre-v9 copy (v9 now also fills paths) took 117 s; re-running v10 alone over all requests took 104 s, so a v9→v10 upgrade costs about as much as the v9 pass. Result: 129,191 blocks (8.4%) carry a path, 242 distinct paths; most come from `exec:apply_patch`, `exec:sed`, `bash:sed`, `tool:Write`, `bash:cat`. The same file appears under relative and absolute spellings (e.g. `contextspy/db/crud.py` and `/…/contextspy-gpt/contextspy/db/crud.py`), the documented limitation, so per-file totals will split such files. Paths appear on `bash:python3`/`bash:grep` calls too because every segment of a command line is scanned (`… | head file`). This run set 0 JSON paths, unlike the earlier v9 dry run (458,964); not investigated (the database changed in between; retained canonical documents are the likely difference).
+- **Not done / not verified:** browser check of the File row; the live database has not been upgraded.

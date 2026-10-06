@@ -146,7 +146,7 @@ Algorithm (heuristic by design; must never raise):
 2. For `apply_patch` (call or `*** Begin Patch` literal) the program is `apply_patch`.
 3. For a shell command string: take the first command segment (split on `&&`, `;`, `||`, `|`, newline), skip `cd <dir>` segments, leading `VAR=value` assignments and `sudo`/`env`/`time`; program = basename of the first word.
 4. One distinct program ⇒ `exec:<program>`. Several distinct ⇒ `exec:multi` with `detail={"calls":[...]}` (order kept, deduped, max 20). Zero parsed calls ⇒ `exec:js`.
-**Privacy rule:** `source_key` and `attrs["source"]` store program names only — never command arguments, paths, patch bodies or any other part of the snippet (they persist after archive).
+**Privacy rule:** `source_key` and `attrs["source"]` store program names only — never command arguments, paths, patch bodies or any other part of the snippet (they persist after archive). *(Narrowly superseded 2026-10-06 by D18/Plan 4a: the file a read/edit tool targets is stored in the separate `blocks.file_path`; see `file-paths.md`. Everything else in this rule still holds.)*
 Fixtures: synthetic, anonymised (no real paths/users) covering each shape above plus: no `cmd`, nested quotes, `cmd:` built from a variable, empty snippet, very large snippet (≤ ~1 MB scanned; cap work).
 **Shared helper** `shell_program(cmd: str) -> str | None` (step 3 above) is used by both parsers; unit-test it directly.
 

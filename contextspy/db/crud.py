@@ -600,6 +600,7 @@ def insert_blocks(db: OrmSession, request_id: str, blocks: list["Block"]) -> Non
             tool_call_id=b.tool_call_id,
             attrs=json.dumps(b.attrs) if b.attrs else None,
             source_key=b.source_key,
+            file_path=b.file_path,
             json_path=(
                 json.dumps(list(b.json_path), separators=(",", ":"))
                 if b.json_path is not None else None

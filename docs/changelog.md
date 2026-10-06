@@ -20,6 +20,13 @@
 
 ### Database
 
+- **File paths of read/edit tool calls are now recorded** (schema v10, run `contextspy db-upgrade`). A block that reads
+  or edits a file (`Read`/`Edit`/`Write`-style tools, `cat`/`head`/`sed -n`/... commands, `apply_patch` headers) and the result
+  that answers it now carry the file's path, shown as **File** in the block inspector; this prepares per-file totals. This is
+  the one command argument ContextSpy keeps; everything else stays unstored. Paths stay in the database after a session is
+  archived and are stored exactly as the agent wrote them. The upgrade fills them in for existing requests only where the
+  tool-call text is still stored. Ollama's adapter does not capture tool calls, so it has no paths.
+- Fixed: `contextspy status` / restore could list the newest backup wrongly once schema versions reached two digits.
 - New **`contextspy db-compact`** shrinks the database file. Deleting request bodies or block contents (the
   retention purge) never made the file smaller, so a purged database could be mostly empty space (a 6.6 GB file
   with 65% free space compacted to 2.4 GB in about 12 seconds on an SSD). Stop ContextSpy and run it; `--backup` writes

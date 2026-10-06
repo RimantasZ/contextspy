@@ -166,8 +166,8 @@ def list_backups(db_path: Path) -> list[Path]:
         return []
     stem = re.escape(db_path.stem)
     patterns = (
-        re.compile(rf"(?P<base>{stem}_backup_v\d+_to_v\d+_\d{{4}}-\d{{2}}-\d{{2}}-\d{{4}})(?:-(?P<sequence>\d+))?\.back"),
-        re.compile(rf"(?P<base>{stem}_backup_v\d+(?:_pre_restore|_pre_compact)?_\d{{4}}-\d{{2}}-\d{{2}}-\d{{6}}Z)(?:-(?P<sequence>\d+))?\.back"),
+        re.compile(rf"(?P<base>{stem}_backup_v\d+_to_v\d+_(?P<stamp>\d{{4}}-\d{{2}}-\d{{2}}-\d{{4}}))(?:-(?P<sequence>\d+))?\.back"),
+        re.compile(rf"(?P<base>{stem}_backup_v\d+(?:_pre_restore|_pre_compact)?_(?P<stamp>\d{{4}}-\d{{2}}-\d{{2}}-\d{{6}})Z)(?:-(?P<sequence>\d+))?\.back"),
         re.compile(rf"{stem}_\d+_\d+_\d{{8}}T\d{{12}}Z\.back"),
     )
     matches = [
@@ -175,12 +175,15 @@ def list_backups(db_path: Path) -> list[Path]:
         if path.is_file() and any(pattern.fullmatch(path.name) for pattern in patterns)
     ]
 
-    def sort_key(path: Path) -> tuple[str, int]:
+    def sort_key(path: Path) -> tuple[str, int, str]:
+        # Oldest first by the timestamp in the name (the schema version in the name is not
+        # ordered as text: "v10" < "v6"); the older HHMM stamps are padded to HHMMSS.
         for pattern in patterns[:2]:
             match = pattern.fullmatch(path.name)
             if match:
-                return match.group("base"), int(match.group("sequence") or 0)
-        return path.name, 0
+                stamp = match.group("stamp")
+                return stamp + "00" if len(stamp) == 15 else stamp, int(match.group("sequence") or 0), match.group("base")
+        return "", 0, path.name
 
     return sorted(matches, key=sort_key)
 

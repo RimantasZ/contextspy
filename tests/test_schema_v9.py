@@ -36,7 +36,7 @@ def _v8_database(path):
 
 
 def test_schema_version_and_migration_are_registered():
-    assert migrations.SCHEMA_VERSION == 9
+    assert migrations.SCHEMA_VERSION >= 9
     assert 9 in migrations._DATA_MIGRATIONS
 
 

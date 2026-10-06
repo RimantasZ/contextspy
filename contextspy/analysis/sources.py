@@ -15,7 +15,9 @@ Grammar: bare keys ``system``, ``user``, ``assistant``, ``reasoning``, ``other``
 * ``<wrapper>:<program>``    produced by a registered parser, e.g. ``bash:git``, ``exec:rg``;
                              ``<wrapper>:multi`` / ``<wrapper>:js`` when it could not say more
 
-Parsers only ever record program names, never arguments, paths or other command content.
+Parsers record program names. The only argument ever read is the file a known read/edit tool
+targets, stored separately in ``blocks.file_path`` (``analysis/paths.py`` is the single choke point);
+command text, URLs, patterns and patch bodies are never stored. See plans/file-paths.md.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ from dataclasses import dataclass
 from typing import Callable, Sequence
 
 from contextspy.analysis.blocks import BlockType, BlockView
+from contextspy.analysis.paths import MAX_FILES, normalize_file_path, patch_file_paths, structured_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,9 @@ class SourceInfo:
     key: str
     # JSON-serialisable refinement stored in the block's attrs["source"], e.g. {"calls": ["rg", "sed"]}.
     detail: dict | None = None
+    # The file a read/edit tool call targets (first one; all of them in detail["files"] when several).
+    # Tool results inherit it from their call.
+    file_path: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -110,14 +116,14 @@ def resolve_sources(blocks: Sequence[BlockView], *, agent: str | None) -> list[S
     """One ``SourceInfo`` per block, same order. Pure and never raises.
 
     Tool calls are parsed by a registered parser when one applies; a tool result inherits the
-    key of the call it answers (found by ``tool_call_id``); everything else is the baseline.
+    key and file of the call it answers (found by ``tool_call_id``); everything else is the baseline.
     """
     call_infos: dict[str, SourceInfo] = {}
     result: list[SourceInfo | None] = [None] * len(blocks)
     for index, block in enumerate(blocks):
         try:
             if block.block_type == BlockType.TOOL_CALL:
-                info = _parsed_call_source(block, agent) or baseline_source(block)
+                info = _with_files(_parsed_call_source(block, agent) or baseline_source(block), block, agent)
                 result[index] = info
                 if block.tool_call_id:
                     call_infos.setdefault(block.tool_call_id, info)
@@ -132,7 +138,8 @@ def resolve_sources(blocks: Sequence[BlockView], *, agent: str | None) -> list[S
                 if block.block_type == BlockType.TOOL_RESULT and block.tool_call_id else None
             )
             if inherited is not None and not (block.tool_name and inherited.key == "tool:unknown"):
-                result[index] = SourceInfo(inherited.key)  # key only: detail stays on the call
+                # key and file only: the rest of the detail stays on the call
+                result[index] = SourceInfo(inherited.key, file_path=inherited.file_path)
             else:
                 result[index] = baseline_source(block)
         except Exception:
@@ -189,6 +196,32 @@ def _split_segments(command: str) -> list[str]:
     return segments
 
 
+def _segment_words(segment: str) -> list[str]:
+    """The words of one command segment starting at its program (prefix wrappers and ``VAR=x`` skipped)."""
+    import shlex
+
+    segment = segment.strip().lstrip("({").strip()
+    if not segment:
+        return []
+    try:
+        words = shlex.split(segment, posix=True)
+    except ValueError:
+        words = segment.split()
+    index = 0
+    while index < len(words):
+        word = words[index]
+        wrapper = _PREFIX_WRAPPERS.get(word.rsplit("/", 1)[-1])
+        if _ENV_ASSIGNMENT.match(word):
+            index += 1
+        elif wrapper is not None:
+            index += 1
+            while index < len(words) and (words[index].startswith("-") or _ENV_ASSIGNMENT.match(words[index])):
+                index += 2 if words[index] in wrapper else 1
+        else:
+            break
+    return words[index:]
+
+
 def shell_program(command: str) -> str | None:
     """The program a shell command line mainly runs, e.g. ``git`` for ``cd x && git diff | head``.
 
@@ -196,35 +229,83 @@ def shell_program(command: str) -> str | None:
     ``VAR=value`` assignments and ``sudo``/``env``/``time``-style prefixes) and returns the
     basename of its first word, or None when nothing sensible is found.
     """
-    import shlex
-
     for segment in _split_segments(command[:_MAX_SCAN_CHARS]):
-        segment = segment.strip().lstrip("({").strip()
-        if not segment:
+        words = _segment_words(segment)
+        if not words:
             continue
-        try:
-            words = shlex.split(segment, posix=True)
-        except ValueError:
-            words = segment.split()
-        index = 0
-        while index < len(words):
-            word = words[index]
-            wrapper = _PREFIX_WRAPPERS.get(word.rsplit("/", 1)[-1])
-            if _ENV_ASSIGNMENT.match(word):
-                index += 1
-            elif wrapper is not None:
-                index += 1
-                while index < len(words) and (words[index].startswith("-") or _ENV_ASSIGNMENT.match(words[index])):
-                    index += 2 if words[index] in wrapper else 1
-            else:
-                break
-        if index >= len(words):
-            continue
-        program = words[index].rsplit("/", 1)[-1].rstrip(")}")
+        program = words[0].rsplit("/", 1)[-1].rstrip(")}")
         if program in _SKIP_PROGRAMS:
             continue
         return program if _PROGRAM.match(program) else None
     return None
+
+
+# ---------------------------------------------------------------------------
+# Shell command helper (files of a closed list of read-only programs)
+# ---------------------------------------------------------------------------
+
+# Programs whose positional arguments are unambiguously files, with the options that consume the
+# next word. Everything else (rg, grep, find, curl, git, ...) has ambiguous or secret-bearing arguments.
+_FILE_READERS: dict[str, frozenset[str]] = {
+    "cat": frozenset(), "nl": frozenset({"-s", "-w", "-b", "-n", "-v", "-i", "-l"}),
+    "head": frozenset({"-n", "-c", "--lines", "--bytes"}), "tail": frozenset({"-n", "-c", "--lines", "--bytes"}),
+    "less": frozenset({"-p", "-P", "-b", "-h", "-j", "-x", "-y", "-z"}), "wc": frozenset({"--files0-from"}),
+    "bat": frozenset({"-l", "--language", "-r", "--line-range", "--theme", "--style", "--color", "-H"}),
+    "stat": frozenset({"-c", "--format", "--printf"}), "file": frozenset({"-f", "-m", "-e", "--mime-type"}),
+}
+_REDIRECT = re.compile(r"^\d*[<>]|^&>")
+_UNSAFE_WORD = re.compile(r"[$`()|;&{}]")
+
+
+def _positionals(words: list[str], value_options: frozenset[str]) -> tuple[list[str], set[str]]:
+    """Non-option words of a command (redirections skipped) and the options it was given."""
+    positional: list[str] = []
+    options: set[str] = set()
+    skip_next = False
+    for word in words:
+        if skip_next:
+            skip_next = False
+        elif _REDIRECT.match(word):
+            skip_next = word.strip("0123456789") in {">", ">>", "<", "&>"}
+        elif word == "--":
+            continue
+        elif word.startswith("-") and len(word) > 1:
+            options.add(word)
+            skip_next = word in value_options
+        elif word != "-" and not _UNSAFE_WORD.search(word):
+            positional.append(word)
+    return positional, options
+
+
+def _segment_files(words: list[str]) -> list[str | None]:
+    program = words[0].rsplit("/", 1)[-1]
+    if program == "sed":
+        positional, options = _positionals(words[1:], frozenset({"-e", "-f", "--expression", "--file"}))
+        if "-i" in options or any(o.startswith(("-i", "--in-place")) for o in options):
+            return []  # in-place editing is a different, ambiguous operation
+        scripted = bool(options & {"-e", "--expression", "-f", "--file"})
+        if not ({"-n", "--quiet", "--silent"} & options or scripted):
+            return []
+        return [normalize_file_path(w) for w in positional[0 if scripted else 1:]]
+    value_options = _FILE_READERS.get(program)
+    if value_options is None:
+        return []
+    positional, _ = _positionals(words[1:], value_options)
+    return [normalize_file_path(w) for w in positional]
+
+
+def shell_file_paths(command: str) -> list[str]:
+    """Files named by the ``cat``/``head``/``tail``/``sed -n``/... segments of a shell command line."""
+    found: list[str | None] = []
+    for segment in _split_segments(command[:_MAX_SCAN_CHARS]):
+        words = _segment_words(segment)
+        if words:
+            found.extend(_segment_files(words))
+    unique: list[str] = []
+    for path in found:
+        if path and path not in unique:
+            unique.append(path)
+    return unique[:MAX_FILES]
 
 
 # ---------------------------------------------------------------------------
@@ -275,14 +356,9 @@ def _js_string(text: str, start: int, quote: str) -> str | None:
     return None
 
 
-def _parse_codex_exec(block: BlockView, agent: str | None) -> SourceInfo | None:
-    snippet = (block.content or "")[:_MAX_SCAN_CHARS]
-    programs: list[str] = []
-
-    def add(program: str | None) -> None:
-        if program and _PROGRAM.match(program) and program not in programs:
-            programs.append(program)
-
+def _codex_steps(snippet: str) -> list[tuple[str, str]]:
+    """The ``("cmd", command)`` and ``("fn", name)`` steps of a Codex snippet, in order."""
+    steps: list[tuple[str, str]] = []
     matches = list(_TOOLS_CALL.finditer(snippet))
     for position, match in enumerate(matches):
         function = match.group(1)
@@ -292,17 +368,71 @@ def _parse_codex_exec(block: BlockView, agent: str | None) -> SourceInfo | None:
             if argument:
                 command = _js_string(snippet, argument.end(), argument.group(1))
                 if command is not None:
-                    add(shell_program(command))
+                    steps.append(("cmd", command))
         else:
-            add(function)
+            steps.append(("fn", function))
     if not matches and "*** Begin Patch" in snippet:
-        add("apply_patch")
+        steps.append(("fn", "apply_patch"))
+    return steps
+
+
+def _parse_codex_exec(block: BlockView, agent: str | None) -> SourceInfo | None:
+    snippet = (block.content or "")[:_MAX_SCAN_CHARS]
+    programs: list[str] = []
+
+    def add(program: str | None) -> None:
+        if program and _PROGRAM.match(program) and program not in programs:
+            programs.append(program)
+
+    for kind, value in _codex_steps(snippet):
+        add(shell_program(value) if kind == "cmd" else value)
 
     if not programs:
         return SourceInfo("exec:js")
     if len(programs) == 1:
         return SourceInfo(f"exec:{programs[0]}")
     return SourceInfo("exec:multi", {"calls": programs[:_MAX_DETAIL_CALLS]})
+
+
+# ---------------------------------------------------------------------------
+# Files targeted by a tool call (stored in blocks.file_path; see analysis/paths.py)
+# ---------------------------------------------------------------------------
+
+def _call_files(block: BlockView, agent: str | None) -> list[str]:
+    """Files a tool call reads or edits; empty when unknown or the content was purged."""
+    content = (block.content or "")[:_MAX_SCAN_CHARS]
+    if not content:
+        return []
+    name = (block.tool_name or "").lower()
+    if name in {"bash"}:
+        try:
+            arguments = json.loads(content)
+        except (TypeError, ValueError):
+            return []
+        command = arguments.get("command", arguments.get("cmd")) if isinstance(arguments, dict) else None
+        return shell_file_paths(command) if isinstance(command, str) else []
+    if agent == "codex" and (block.tool_name in ("exec", "js")):
+        files: list[str | None] = [
+            *(path for kind, value in _codex_steps(content) if kind == "cmd" for path in shell_file_paths(value)),
+            *patch_file_paths(content),
+        ]
+        return [p for i, p in enumerate(files) if p and p not in files[:i]][:MAX_FILES]
+    if name == "apply_patch":
+        return patch_file_paths(content)
+    path = structured_file_path(block.tool_name, content)
+    return [path] if path else []
+
+
+def _with_files(info: SourceInfo, block: BlockView, agent: str | None) -> SourceInfo:
+    try:
+        files = _call_files(block, agent)
+    except Exception:  # a heuristic must never break capture or a backfill
+        logger.debug("file extraction failed for %s", block.tool_name, exc_info=True)
+        return info
+    if not files:
+        return info
+    detail = {**(info.detail or {}), "files": files} if len(files) > 1 else info.detail
+    return SourceInfo(info.key, detail, files[0])
 
 
 register_source_parser(

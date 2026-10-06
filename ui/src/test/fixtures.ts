@@ -17,6 +17,7 @@ export function makeBlock(overrides: Partial<RequestBlock> = {}): RequestBlock {
     source_key: null,
     activity: null,
     json_path: null,
+    file_path: null,
     linked_call_id: null,
     linked_definition_id: null,
     linked_previous_message_id: null,

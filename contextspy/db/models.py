@@ -354,6 +354,9 @@ class BlockRecord(Base):
     # Typed path into the canonical request/response JSON the block derives from, as a
     # compact JSON array (e.g. ["messages",3,"content",1]); NULL when unknown.
     json_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The file a read/edit tool call (and its result) targets; written only via analysis/paths.py.
+    # Kept after archive. See plans/file-paths.md.
+    file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def to_dict(
         self,
@@ -380,6 +383,7 @@ class BlockRecord(Base):
             "source_key": self.source_key,
             "activity": activity_for(self.source_key),
             "json_path": json.loads(self.json_path) if self.json_path else None,
+            "file_path": self.file_path,
             "linked_call_id": linked_call_id,
             "linked_definition_id": linked_definition_id,
             "linked_previous_message_id": linked_previous_message_id,
@@ -394,6 +398,7 @@ Index("idx_blocks_request", BlockRecord.request_id)
 Index("idx_blocks_content_hash", BlockRecord.content_hash)
 Index("idx_blocks_type", BlockRecord.block_type)
 Index("idx_blocks_source_key", BlockRecord.source_key)
+Index("idx_blocks_file_path", BlockRecord.file_path)
 
 
 class SchemaMeta(Base):

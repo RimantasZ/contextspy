@@ -53,6 +53,23 @@ describe('BlockInspector', () => {
     expect(screen.getByText('input[4].content[1]')).toBeTruthy()
   })
 
+  it('shows the file a read/edit tool call targets, and every file of a multi-file call', () => {
+    const block = makeBlock({
+      id: 7, block_type: 'tool_call', tool_name: 'apply_patch', file_path: 'src/a.py',
+      attrs: { source: { files: ['src/a.py', 'b.txt'] } },
+    })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.getByText('src/a.py', { selector: 'dd' })).toBeTruthy()
+    expect(screen.getByText('src/a.py, b.txt')).toBeTruthy()
+  })
+
+  it('omits the file rows when no file is known', () => {
+    const block = makeBlock({ id: 8, block_type: 'tool_call' })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.queryByText('File')).toBeNull()
+    expect(screen.queryByText('Files in call')).toBeNull()
+  })
+
   it('omits source rows for blocks that were captured before classification existed', () => {
     const block = makeBlock({ id: 6 })
     render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
