@@ -118,8 +118,8 @@ Nothing is deleted automatically. The contents of requests (observed payloads, c
 stream event logs, and block contents) are kept until you **archive** a session (the Archive button on the session
 screen, or `contextspy session archive`); archiving is one-way and keeps token counts, block structure,
 classifications and the conversation analysis. Run `contextspy db-compact` (with ContextSpy stopped) to give the freed
-space back to the disk. An older time-based purge (`[retention]` in `~/.contextspy/config.toml`, off by default; it
-used to default to 7 days) is still honoured if you set it explicitly, and only runs at server startup.
+space back to the disk. A time-based purge exists only as an opt-in: set `[retention]` in `~/.contextspy/config.toml` explicitly and it runs
+at server startup.
 
 The file paths that read/edit tool calls target are stored locally with the analysis and survive archive; no other tool argument does.
 

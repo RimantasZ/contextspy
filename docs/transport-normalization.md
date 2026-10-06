@@ -111,7 +111,7 @@ The request record may contain several related artifacts:
 For a reconstructed WebSocket invocation, `raw_response_body` may currently equal
 `canonical_response_body`, while `response_events` separately retains the larger event history.
 This intentional compatibility duplication affects local database size, not token accounting.
-All of these sensitive payloads follow the configured raw-body retention policy.
+All of these sensitive payloads are removed together when a session is archived (and by the opt-in time-based purge, if configured).
 
 ## Usage and visible composition
 

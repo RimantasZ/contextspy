@@ -158,7 +158,7 @@ including committed WAL content, before changing derived data. Migration names r
 `contextspy_backup_v6_to_v7_2026-09-30-1445.back` form. Leave at least the current database
 size available for that backup, plus room for newly materialized canonical requests and blocks.
 The Anthropic thread backfill reports retained rows reanalyzed and partial/opaque results;
-payloads already removed by retention cannot be recovered.
+payloads already removed (archived or purged) cannot be recovered.
 
 To restore, stop all ContextSpy processes and other programs using the database. Preview with
 `contextspy db-restore BACKUP.back --dry-run`, then run `contextspy db-restore BACKUP.back` and
@@ -171,7 +171,7 @@ before starting ContextSpy. A pre-WAL backup can be restored; startup will enabl
 
 ### Shrinking the database file (`db-compact`)
 
-Deleting request bodies or block contents (the retention purge, and later session archive) does not make
+Deleting request bodies or block contents (session archive, or the opt-in time-based purge) does not make
 the `.db` file smaller: SQLite keeps the freed pages inside the file for reuse. A database that has been
 purged for a while can therefore be mostly empty space (`contextspy db-stats` shows the file size, the free
 space inside it and the auto-vacuum mode). Stop ContextSpy and run:

@@ -543,7 +543,7 @@ CREATE TABLE requests (
 
     tokenizer                       TEXT NOT NULL DEFAULT 'tiktoken/o200k_base',
 
-    -- Raw content — purged per [retention] settings
+    -- Raw content — removed by session archive (or the opt-in [retention] purge)
     raw_request_body                TEXT,               -- complete decoded request payload
     canonical_request_body          TEXT,               -- exact JSON analyzed/displayed
     canonical_response_body         TEXT,               -- exact JSON analyzed/displayed
@@ -1121,10 +1121,10 @@ ContextSpy session end   (or UI button)
         ▼
   UPDATE sessions SET ended_at=now, is_active=0
         │
-        ▼   (retention runs on next application startup)
-  Raw/canonical bodies, event logs, and expired block content are purged
-  only if a [retention] window is set (off by default); an explicit
-  "archive session" action removes them for one ended session
+        ▼   (nothing is removed automatically)
+  Raw/canonical bodies, event logs and block content stay until the user runs the
+  "archive session" action for one ended session (an opt-in [retention] window
+  can additionally purge them at startup)
 ```
 
 ### Rules
@@ -1132,7 +1132,7 @@ ContextSpy session end   (or UI button)
 - Only one session is active at a time.
 - Starting a new session automatically ends the active one (with a warning message).
 - Requests captured while no session is active have `session_id = NULL`.
-- Sensitive payload retention applies consistently to session and session-less requests.
+- Sensitive payload removal (archive, and the opt-in purge) applies consistently to session and session-less requests.
 
 ---
 
@@ -1307,8 +1307,7 @@ db_path = "~/.contextspy/contextspy.db"
 [retention]
 # Legacy time-based purge: raw request/response bodies and block content text
 # are purged at server startup only (no background timer) once they're older
-# than these many days. 0 = keep forever, which is the default (it was 7 up to
-# 0.5.4). Block/category/type metadata is never purged, only the underlying
+# than these many days. 0 = keep forever, which is the default. Block/category/type metadata is never purged, only the underlying
 # text. Prefer `contextspy session archive`; `contextspy db-compact` shrinks
 # the file after data was removed.
 raw_body_days = 0
@@ -1352,7 +1351,7 @@ When `contextspy start` is called:
    installation attempt; an existing valid CA is reused without reinstalling it.
 4. Create the FastAPI application and start Uvicorn on the configured web bind address/port. Unless
    `--no-browser` is set, schedule the dashboard to open after a short delay.
-5. During the FastAPI lifespan startup, initialise the DB again, run the one-time retention vacuum,
+5. During the FastAPI lifespan startup, initialise the DB again, run the startup vacuum (a no-op unless `[retention]` is set),
    and start mitmproxy `DumpMaster` with `ContextSpyAddon` in a daemon thread.
 6. On shutdown, stop/join the proxy thread and dispose the DB engine.
 
@@ -1365,7 +1364,7 @@ When `contextspy start-local` is called:
 2. Abort with a configuration example if `reverse_targets` is empty.
 3. Skip CA generation/installation, create the local FastAPI application, and start Uvicorn. Unless
    `--no-browser` is set, schedule the dashboard to open after a short delay.
-4. During FastAPI lifespan startup, initialise the DB again, run the one-time retention vacuum, and
+4. During FastAPI lifespan startup, initialise the DB again, run the startup vacuum (a no-op unless `[retention]` is set), and
    start one staggered daemon-thread `DumpMaster` per `[[reverse_targets]]` entry in `reverse:` mode
    with `ContextSpyAddon(provider_override=target.provider)`.
 5. On shutdown, stop/join all reverse-proxy threads and dispose the DB engine.

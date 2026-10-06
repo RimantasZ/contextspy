@@ -119,7 +119,7 @@ event logs, plus the content-addressed `block_contents` table (see below), are r
 The older time-based purge is configured via `[retention]` in `config.toml` (`raw_body_days`,
 `block_content_days`) and is **off by default (`0`)**; explicit values are honoured and `startup_vacuum` logs a notice
 when it is enabled. It only runs once, at server startup — there is no background timer, so a `contextspy`
-process left running for many days won't purge again until restarted.
+process left running won't purge again until restarted.
 
 Archive details worth knowing when changing `session_archive.py`: it only runs for ended sessions and is repeatable; the
 content cleanup is chunked (≤ 500 hashes) and every chunk takes the write lock first (`_take_write_lock`) before measuring and
@@ -180,7 +180,7 @@ For Anthropic `thread.continue`, the canonical request is an expanded logical co
 `thread.previous_message_id`; the separate diagnostics predecessor ID compares cache fingerprints.
 Inherited system-block tails are treated as uncertain, and server-side context edits may leave
 the actual post-edit prompt opaque. A versioned data migration reanalyzes retained thread rows;
-requests already purged by retention cannot be reconstructed from usage numbers.
+requests whose payloads were already removed (archived or purged) cannot be reconstructed from usage numbers.
 
 Reconstruction and block-analysis failures are recorded in `capture_error` without discarding the
 canonical application payload. The UI's JSON is provider-level application content, not
@@ -213,7 +213,7 @@ content part (system prompt, tool definition, a single tool call or tool result,
 thinking segment, ...).
 Each block's semantic `category` (one of the 8 breakdown categories) and structural `block_type`
 are kept forever; only the block's `content` (in `block_contents`, deduplicated by content hash
-across requests) is subject to the retention window above.
+across requests) is removed when a session is archived (or by the opt-in time-based purge above).
 
 ### Request purpose, block source and block location
 
@@ -333,7 +333,7 @@ context. It does nothing for Anthropic, whose tokenizer matches neither encoder.
 Every `Request` records which encoder produced its counts in the `tokenizer` column
 (`tiktoken/o200k_base`, or `tiktoken/cl100k_base` for rows captured before 0.3.4). Existing
 rows are **not** recounted — there is no migration, because the raw bodies needed to redo the
-work are purged on the retention schedule. Sessions spanning the upgrade therefore mix both,
+work are removed when a session is archived. Sessions spanning the upgrade therefore mix both,
 which given the ~0.0% difference is immaterial in aggregate but is recorded per row should it
 ever matter.
 

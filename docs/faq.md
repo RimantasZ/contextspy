@@ -218,7 +218,7 @@ classifications and the conversation analysis, and the request page then says th
 session whose conversations you may continue later: a continuation whose earlier request was archived is recorded with
 partial context.
 
-Older versions deleted payloads automatically after 7 days. That time-based purge is now off by default; a config that sets
+Payloads are kept until you archive a session. A time-based purge exists only as an opt-in: a config that sets
 `[retention]` (`raw_body_days`, `block_content_days`) explicitly is still honoured, and logs a notice at startup. It only
 runs at server startup, not on a background timer.
 Aggregated token counts and classifications are kept indefinitely until you run `contextspy reset-db`.

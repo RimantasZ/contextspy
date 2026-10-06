@@ -5,122 +5,67 @@
 ### Upgrading from 0.5.4
 
 - **Run `contextspy db-upgrade` once before starting** (the server refuses to start until you do). It backs the
-  database up first, applies the two data migrations of this release (v9: purpose, block sources and locations; v10: file
-  paths) and prints progress; it took 2-3 minutes on a database with about 7,000 requests and 1.5 million blocks.
-  New databases need nothing. Afterwards `contextspy db-compact` (with ContextSpy stopped) can give disk space back if you
-  had purged data before. Information that was already purged (tool-call text) cannot be recovered, so older requests
-  keep generic source labels and no file paths.
-- Behaviour changes: payloads are no longer deleted after 7 days by default, and new databases use incremental
-  auto-vacuum (details below).
+  database up first and migrates your data (schema v8 to v10); it took 2-3 minutes on a database with about 7,000
+  requests and 1.5 million blocks. New databases need nothing. Text that was already purged cannot be recovered, so
+  older requests keep generic source labels and have no file paths.
+- Two defaults changed: payloads are **no longer deleted after 7 days** (see *Retention and archive*), and new
+  databases use incremental auto-vacuum.
 
 ### Hot spots
 
-- **Profiler-style rows.** Each row has a bar proportional to the largest row, the main metric (total tokens or occurrences, following *Sort by*) with its share in parentheses, and expands on click to show the other metric, counts, preview and the *Open latest request* button. A *Labels* switch (`layout=bar` in the URL) tries the label on the bar. The API summary gained `occurrences_total`.
+- **New session view: Hot spots.** Ranks what the context window keeps carrying: the blocks (tool definitions, big
+  tool results, ...) that add up to the most visible tokens across all requests, for one conversation or the whole
+  session. Group by **Blocks**, **Sources** (which tool or program costs the most) or **Files** (read vs. edited
+  tokens); sort by total tokens or occurrences; filter by category, block type and *Still in context* / *Dropped*.
+- Profiler-style rows: a bar proportional to the largest row, the main metric with its share in parentheses, and a
+  row that expands to show the other metric, counts, a preview and **Open latest request**. A *Labels* switch tries
+  the label on the bar instead of in its own column.
+- Each conversation in the Conversations view links to its hot spots. Archived sessions work too (no previews).
+- Counts are visible tokens only. Identical text is matched exactly, so a changed file counts as a new block.
+- The first load of a very long session can take up to about a minute (the same one-off analysis as the
+  Conversations view); after that it takes about a second.
 
-- **New session view: Hot spots.** On a session page, **Hot spots** ranks what the context window keeps carrying: the
-  blocks (tool definitions, big tool results, compaction items, ...) that add up to the most **visible tokens** over all
-  the requests that contain them, for one conversation or the whole session. Switch between **Blocks**, **Sources**
-  (which tool or program costs the most) and **Files** (tokens attributed to each file, split into read and edited), sort
-  by total tokens or by occurrences, filter blocks by category (the same ones as the context bar), by type and by *Still in context* / *Dropped*, and click a row to open
-  the latest request that carries it with the block selected. Rows marked *reappears* left the context and came back;
-  *dropped* means gone from the latest request. Works on archived sessions (no previews there). Each conversation in the
-  Conversations view links to its hot spots. Counts are visible tokens only (partial or opaque requests are flagged); same
-  content is matched by exact text, so a file that changed counts as a different block, and a path written relative and
-  absolute shows as two files.
-- The first conversation-scoped Hot spots load of a very long session pays the same one-off conversation analysis as the
-  Conversations view (up to about a minute at 4,000 requests); after that the ranking itself takes about a second.
-- Fixed: the "Present in" panel and hot spots reuse the conversation analysis for up to a minute; the cache lifetime was
-  counted from the start of a slow analysis, so on very long sessions it could expire before it was used.
+### Block analysis
+
+- Each request gets an inferred **purpose** (user turn, tool continuation, compaction), shown in the request header
+  with a summary such as "results from Read, Grep → calls Edit"; `GET /api/requests` accepts `?purpose=`.
+- Each block records a **source** (`tool:Read`, `mcp:github/create_issue`, `bash:git`, `user`, `system`, ...), an
+  **activity** (read, search, edit, vcs, test, command, ...) and **where in the request/response JSON it came from**.
+  Shell commands are reduced to the program name; arguments are never stored.
+- **File paths** of read/edit tool calls (`Read`/`Edit`/`Write`, `cat`/`sed -n`, `apply_patch`, ...) and of the results
+  that answer them are recorded and shown as **File** in the block inspector. They are the only command argument kept
+  and survive archiving. Ollama's adapter captures no tool calls, so it has none.
+- The block inspector has a **Present in** section: how many requests of the conversation (or the whole session) contain
+  the block, tokens per occurrence and in total, first and last request, and the runs it appears in. Clicking a request
+  opens it with that block selected, and the selection stays in the URL (`?block=<id>`).
 
 ### Retention and archive
 
-- **Sessions can be archived.** An ended session has an **Archive** button on the session screen and in the sessions
-  list, and `contextspy session archive <id>` does the same from the terminal. Archiving removes the session's raw request
-  and response payloads and the stored text of its blocks (except text that another, non-archived session still uses),
-  **cannot be undone**, and keeps token counts, block structure and categories, source and JSON-location labels, and the
-  conversation and lineage analysis. The result shows what was removed and how much disk space was returned; if the database
-  is in incremental auto-vacuum mode (see `db-compact` below) the file shrinks straight away, otherwise it tells you to run
-  `contextspy db-compact`. Archived sessions show an **Archived** badge, and a request page of an archived session says why its
-  payloads are missing. `contextspy session list` shows the status. Archiving again repeats the cleanup for anything captured since.
-  Don't archive a session whose conversations you may continue later: a continuation whose earlier request was archived is
-  recorded with partial context. Only a database backup made earlier still contains the removed content.
-- **Behaviour change: payloads are no longer deleted after 7 days by default.** The time-based purge is now off (`0`).
-  Configs that set `[retention]` explicitly (the generated config file used to contain `raw_body_days = 7`) keep working and
-  log a notice at startup; set both values to `0` to stop it. Use archive and `db-compact` to manage disk usage instead.
-
-### Database
-
-- **File paths of read/edit tool calls are now recorded** (schema v10, run `contextspy db-upgrade`). A block that reads
-  or edits a file (`Read`/`Edit`/`Write`-style tools, `cat`/`head`/`sed -n`/... commands, `apply_patch` headers) and the result
-  that answers it now carry the file's path, shown as **File** in the block inspector; this prepares per-file totals. This is
-  the one command argument ContextSpy keeps; everything else stays unstored. Paths stay in the database after a session is
-  archived and are stored exactly as the agent wrote them. The upgrade fills them in for existing requests only where the
-  tool-call text is still stored. Ollama's adapter does not capture tool calls, so it has no paths.
-- Fixed: `contextspy status` / restore could list the newest backup wrongly once schema versions reached two digits.
-- New **`contextspy db-compact`** shrinks the database file. Deleting request bodies or block contents (the
-  retention purge) never made the file smaller, so a purged database could be mostly empty space (a 6.6 GB file
-  with 65% free space compacted to 2.4 GB in about 12 seconds on an SSD). Stop ContextSpy and run it; `--backup` writes
-  a restorable `..._pre_compact_...back` snapshot first, `--yes` skips the prompt. It checks free disk space before
-  starting and leaves the original untouched if interrupted. It also switches the database to incremental
-  auto-vacuum, so space freed later can be returned without another rebuild; **new databases start that way**.
-  Existing backups are unaffected and still restore; a restored backup comes back as it was and can be compacted again.
-- `contextspy db-stats` now shows the file size, the free space inside it and the auto-vacuum mode, and suggests
-  `db-compact` when a lot of space is reclaimable.
-
-### Analysis
-
-- Every request now gets an inferred **purpose**: `user_turn` (the last message is the user's),
-  `tool_continuation` (the last message carries tool results, with the tool names), `compaction`
-  (the request ends in an explicit provider compaction trigger) or `unknown`. The request detail
-  header shows it with a one-line summary such as "results from Read, Grep → calls Edit", and
-  `GET /api/requests` accepts `?purpose=`. Trailing system/developer instruction messages and
-  reasoning items are not treated as the last turn.
-- Every block now records a **source** (`tool:Read`, `mcp:github/create_issue`, `bash:git`,
-  `exec:rg`, `user`, `system`, ...) and an **activity** derived from it (read, search, edit, vcs,
-  test, command, web, orchestration, mcp, other). Shell tools are reduced to the program name
-  only; arguments are never stored. The block inspector shows both.
-- Every block records **where in the request or response JSON it came from** (`messages[3].content[1]`),
-  for all four wire formats, and the block inspector shows it. Blocks whose retained documents no
-  longer match what was analysed keep no location rather than a guessed one.
-- The block inspector has a **Present in** section: in how many requests of the conversation (or the whole
-  session, via a toggle) the selected block's content occurs, its tokens per occurrence and in total, first
-  and last request, whether it is still in the latest request, and the runs of requests it appears in
-  (expand a run to list them). Clicking a request opens it with that block selected. Totals are visible-block
-  tokens, not provider-billed tokens; blocks with hidden or empty content cannot be matched across requests.
-  Request detail now keeps the selected block in the URL (`?block=<id>`), so a selection survives a refresh.
-  On long sessions the first conversation-scope lookup can take a while (seconds, and about a minute on a session with
-  thousands of requests); later lookups of the same session are fast for a minute.
-- Existing data is filled in by `contextspy db-upgrade` (schema v9; see *Upgrading* above). Source keys for tool calls whose text was already purged fall back to the
-  tool name; locations are only recoverable where the canonical request/response was retained.
+- **Sessions can be archived** (**Archive** button, or `contextspy session archive <id>`). It removes the raw
+  payloads and stored block text and **cannot be undone**; token counts, block structure, source/path labels and the
+  conversation analysis stay. The result shows how much space was freed; archived sessions show an **Archived** badge.
+  Don't archive a session you may continue later: a continuation of an archived request is recorded with partial context.
+- **The 7-day payload purge is now off by default.** Configs that set `[retention]` explicitly keep working and log a
+  notice at startup; set both values to `0` to stop the purge. Use archive and `db-compact` to manage disk space.
+- New **`contextspy db-compact`** (run with ContextSpy stopped) shrinks the database file, which the retention purge
+  never did (a 6.6 GB file compacted to 2.4 GB in about 12 seconds). `--backup` writes a restorable snapshot first.
+  New databases start in incremental auto-vacuum mode, so freed space can be returned later without a rebuild.
+  `contextspy db-stats` now shows file size, free space and auto-vacuum mode.
 
 ### Request detail
 
-- Added a **Show** control next to **Size** in the block toolbar: **All**, **New only** (only
-  blocks that were not in the previous request) and **Highlight new** (blocks already present in
-  the previous request are drawn at 50% opacity). The previous request is the lineage parent, or
-  the previous request in the same conversation when no parent was established. It applies to the
-  Request direction only, and the choice survives Parent/Child navigation but resets when you
-  leave the page.
-- The page title is now the request's conversation ID, such as `Request #C1-33` or
-  `Request #AUX-34`, matching the conversation request cards. Parent and child buttons show the
-  same IDs.
-- When no direct parent or child was established, **Previous in conversation** / **Next in
-  conversation** buttons let you step through the conversation anyway. They carry a warning icon
-  because a neighbour is not necessarily the request that was actually continued; when a real
-  parent or child exists the neighbour is shown as an extra button when it is a different request.
-- The block inspector shows a **Per-request header** row for system prompts that carried one.
+- A **Show** control in the block toolbar: **All**, **New only** (blocks not in the previous request) or **Highlight new**.
+- The page title is the request's conversation ID (`Request #C1-33`, `#AUX-34`), matching the conversation cards.
+- Without an established parent or child, **Previous / Next in conversation** buttons (with a warning icon, since a
+  neighbour is not necessarily the continued request) let you step through the conversation.
+- The block inspector shows a **Per-request header** row for system prompts that carry one.
 
-### Capture
+### Fixes
 
-- Claude Code's `x-anthropic-billing-header: …` line, which changes on every request, no longer
-  makes the system prompt look like a new block each time. The header is kept in the block's
-  attributes, the block's identity and stored text use the stable remainder, and token counts
-  still describe what was sent. **Run `contextspy db-upgrade`** (schema v8) to apply this to
-  existing data; blocks whose content was already purged cannot be re-keyed.
-
-### Conversations
-
-- Compact request cards now show the top-right lineage icon tooltip on hover and focus.
+- Claude Code's per-request `x-anthropic-billing-header` line no longer makes the system prompt look like a new block
+  each time (applied to existing data by `db-upgrade`; already-purged blocks cannot be re-keyed).
+- `contextspy status` / restore listed the newest backup wrongly once schema versions reached two digits.
+- Compact request cards show the lineage icon tooltip on hover and focus.
 
 ## v0.5.3
 

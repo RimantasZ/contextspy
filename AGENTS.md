@@ -155,6 +155,6 @@ share-of-total and exact-value tool views; semantic light/dark theme tokens live
 - `docs/` also has install/cloud-mode/local-mode/examples/cli guides.
 - `~/.contextspy/`: `contextspy.db` (SQLite), `config.toml` (auto-created). Nothing is purged
   automatically by default: the time-based purge (`startup_vacuum`, `[retention]` in `config.toml`) defaults to `0` = off
-  (it was 7 days up to 0.5.4 and still runs, with a startup notice, if a config sets it). Users free space with
+  (it still runs, with a startup notice, if a config sets it). Users free space with
   `contextspy session archive` (one-way: removes raw payloads and block text, keeps token counts, structure, sources,
   file paths and the analysis) and `contextspy db-compact` (offline VACUUM; new databases use incremental auto-vacuum).
