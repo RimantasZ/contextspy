@@ -1,7 +1,7 @@
 # ContextSpy UI critique
 
 > **Status:** Historical pre-redesign assessment (September 2026). The redesign described here
-> has been implemented on `ui-revamp-poc`; see [`SPEC.md`](../SPEC.md#56-web-ui) for the current
+> has been implemented on `ui-revamp-poc`; see [`SPEC.md`](../../SPEC.md#56-web-ui) for the current
 > behavior. This file is retained as design rationale, so statements about the "current" UI below
 > describe the interface that existed when the critique was written.
 

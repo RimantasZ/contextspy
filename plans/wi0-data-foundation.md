@@ -382,6 +382,8 @@ purpose chip + one-line summary in `RequestSummaryHeader`, Source / Activity / C
 and jumping from the JSON location to the raw JSON viewer (that is the future context-tree plan).
 
 ### Findings from the dry run (read before releasing)
+*Decisions (user, 2026-10-06): the `compaction_trigger` rule in slice 3 is kept (roadmap D24); the legacy leaf-form `json_path` rows of finding 1 are left as they are (D25).*
+
 1. **The live database already has a `blocks.json_path` column** that this work did not add (live schema is still v8, with none of the other
    v9 columns). 6,794 blocks from 2026-08-28 (7 requests) hold values in a *different convention*: leaf paths such as
    `["input", 55, "input"]` or `["input", 259, "output"]`, where this implementation records the item (`["input", 259]`). They come from an

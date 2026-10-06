@@ -60,6 +60,11 @@ body lazily for the selected request.
    request + "introduced" mode first, since compare (plan 6) builds on it.)
 3. URL state (`?request=&node=&mode=`) for shareable links — likely yes.
 4. Where the page is entered from (Request detail button, conversation view, session header).
+5. Should the "By turn" mode wait for turn grouping (`turn_index` / `turn_start_request_id`, not implemented, see `request-purpose.md`), or can the first version derive turns request-locally from message order?
+6. Is a conversation-scoped tree acceptable before the cold conversation analysis is faster (issue #68; ~65 s on a 4,032-request session), or should the first version be single-request?
+7. Which parts of the Hot spots toolbar (scope select, group/sort controls) should the tree share? Wait for the author's styling remarks on the Hot spots page first (D9).
+
+*Status of these questions (user, 2026-10-06): all seven are deliberately left open; review them when work on this plan starts.*
 
 ## State of the code (2026-10-06): what this draft can build on, and what changed
 
@@ -80,10 +85,10 @@ Everything below was verified against the code on the date above; plans 1-4 are 
 - *Diff:* `analysis/context_diff.py` (`diff_contexts`, `ContextDelta.removed` exists) and `GET /requests/{id}/context-diff?parent_id=`.
 - *Bulk loading:* `crud.get_blocks` is one query per request; the occurrence and hot-spots services show the pattern for constant-statement-count tests and for scope temp tables.
 
-**Performance facts that constrain a conversation-scoped tree (samples):** the conversation membership (existing lineage analysis) takes ~65 s cold on a 4,032-request session and ~7 s on a 570-request one, ~5 s on a warm graph, and is cached for 60 s once built; session scope does not need it (0.1 s). Listing the requests of an unarchived session costs ~0.4 s per 570 requests because of large inline body columns. Plan the first version around a single request (or a bounded window) to stay clear of this, or fix it first (candidate `perf:` issue).
+**Performance facts that constrain a conversation-scoped tree (samples):** the conversation membership (existing lineage analysis) takes ~65 s cold on a 4,032-request session and ~7 s on a 570-request one, ~5 s on a warm graph, and is cached for 60 s once built; session scope does not need it (0.1 s). Listing the requests of an unarchived session costs ~0.4 s per 570 requests because of large inline body columns. Plan the first version around a single request (or a bounded window) to stay clear of this, or fix it first (issues [#68](https://github.com/RimantasZ/contextspy/issues/68) and [#69](https://github.com/RimantasZ/contextspy/issues/69), draft plans `perf-*.md` in this folder).
 
 **Archived sessions:** block rows, hashes, tokens, sources, file paths and `json_path` survive; text, previews, raw and canonical JSON do not (`Request.content_state`, `ContentStateNotice`). The Content and Raw JSON tabs need an honest "removed by archive" state; nodes stay visible with token counts (D3).
 
 **Fidelity (D11):** opaque/partial requests hide part of their window; a tree shows only visible blocks, and totals say "visible tokens".
 
-**Additional open questions raised by the code:** (a) should mode 2 wait for turn grouping, or can the first version derive turns request-locally from message order? (b) is a conversation tree acceptable before the cold-membership cost is reduced? (c) which pieces of the hot-spots toolbar (scope select, group/sort controls) should the tree share?
+**Additional open questions raised by the code** are numbered 5-7 in "Open questions" below.

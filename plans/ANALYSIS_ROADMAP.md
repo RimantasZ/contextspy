@@ -43,6 +43,8 @@ serves one of those four questions.
 | D21 | **Hot-spots semantics** (architect, agreed): identity = `content_hash`; input blocks only; tokens are *visible* tokens; file rows split `result_tokens` (reads) from `call_tokens` (edits/patch text) because patches are carried too; relative and absolute spellings of one file are **not** unified (the proxy does not see the working directory). | `hot-spots.md`. |
 | D22 | **Category filter is in the hot-spots UI** (user, 2026-10-06), using the labels the dashboard already has (`ContextBar.tsx`). My first reason for leaving it out (UI must not know the vocabulary) was wrong. | |
 | D23 | **Sequence after this work** (user, 2026-10-06): merge `analysis_revamp`, produce a release for users to test, then continue the draft plans (5-8) and UI styling fixes (the Hot spots page has styling remarks pending) once the plans are sorted out. | See "Release readiness". |
+| D24 | **`compaction_trigger` purpose rule stays** (user, 2026-10-06): a request whose last conversational message contains a provider `compaction_trigger` item (OpenAI Responses) is `compaction`. It is a wire-format signal, not an agent heuristic. Other agents' compaction (e.g. Claude Code's summarisation prompt looks like `user_turn`) is not detected until captures justify an agent detector. | `wi0-data-foundation.md` §17. |
+| D25 | **Legacy leaf-form `blocks.json_path` rows stay as they are** (user, 2026-10-06): 6,794 blocks from an earlier prototype in the author's own database; valid paths, only more specific, never overwritten. No release impact. Revisit only if the context tree needs one convention. | `wi0-data-foundation.md` §17. |
 | D10 | One plan file per feature. Plans that are confirmed live in `plans/`; plans still being refined live in `plans/unconfirmed_drafts/`. | |
 
 ## Repository policies that constrain every plan (from `AGENTS.md`)
@@ -136,8 +138,7 @@ so they were written first.
 
 Plans 1-4 and WI-0 are implemented (see the table above; each plan file's "Implementation status" is the authoritative record of what exists and how it differs from its text). **Plans 5-8 are drafts**: each now has a "State of the code" section listing what it can build on and which assumptions changed, but their open questions are still unanswered and the user wants them kept as drafts until after the release.
 WI-0 follow-ups that still wait for captures from Copilot, Ollama, llama.cpp and vLLM: housekeeping/compaction detectors per agent and more
-source parsers. Review the `compaction_trigger` rule (a judgement call) and decide what to do with the legacy leaf-form `json_path` values in
-the author's DB (see WI-0 §17) before treating either as settled.
+source parsers. The `compaction_trigger` rule and the legacy leaf-form `json_path` values in the author's DB were reviewed and settled on 2026-10-06 (D24, D25).
 
 1. Read this file, then the plan you are asked to work on, then `AGENTS.md`.
 2. If the plan is a **draft**, it is *not* an approved spec: list its "Open questions", ask the user,
@@ -165,7 +166,7 @@ Pitfalls found the hard way (each cost real time):
 - Pysqlite begins transactions lazily at the first DML; to make "measure then delete" consistent, take the write lock first with a harmless write.
 - The server refuses to start while a data migration is pending (`contextspy db-upgrade` first); the live database is **still not compacted/archived/upgraded by the agent**, and the author's `blocks.json_path` column already holds 6,794 legacy leaf-form values from an earlier prototype (see `wi0-data-foundation.md` §17).
 
-Where things stand at the end of the 2026-10-06 session: WI-0 and Plans 1, 3a, 3b, 4a, 4b are implemented and committed (not released, not seen in a browser by the author); Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: review the `compaction_trigger` purpose rule; what to do with the legacy leaf-form `json_path` rows; answers to Plan 5's open questions; whether to do something about the 65 s cold conversation analysis (below). The user's plan (D23): merge the branch, release for testing, then continue the drafts and UI styling.
+Where things stand at the end of the 2026-10-06 session: WI-0 and Plans 1, 3a, 3b, 4a, 4b are implemented and committed (not released, not seen in a browser by the author); Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: answers to Plan 5's seven open questions (deliberately deferred until work on that plan starts); whether to do something about the 65 s cold conversation analysis (issue #68, draft plan) and the slow request-listing query (issue #69, a small covering-index fix). The user's plan (D23): merge the branch, release for testing, then continue the drafts and UI styling.
 
 ## Release readiness (merge of `analysis_revamp`, written 2026-10-06)
 
@@ -189,7 +190,7 @@ Invariants to keep (each has a test; do not "simplify" them away):
 - **Block row ids are request-local** and change if a migration rebuilds a request's blocks, so `?block=` links are not durable across such migrations.
 - **Frontend policy:** the UI shows what the API computed. The category labels live in `ContextBar.tsx` (shared by donut, bar and hot spots); block colours in `lib/blockVisuals.ts` (`visualForType`).
 - **Test hazards:** tiktoken is pathologically slow on long runs of one repeated character (use prose); pytest runs ~15 s, Vitest ~6 s; `setupTests.ts` stubs `scrollIntoView`.
-- **Known performance facts** (samples): cold lineage/conversation membership 65 s (4,032 requests), 7 s (570); `select ... from requests where session_id=?` is slow on unarchived sessions because SQLite walks the large inline body columns (0.38 s for 570 requests); both are candidates for a `perf:` issue.
+- **Known performance facts** (samples): cold lineage/conversation membership 65 s (4,032 requests), 7 s (570); `select ... from requests where session_id=?` is slow on unarchived sessions because SQLite walks the large inline body columns (0.38 s for 570 requests); both now have a `perf:` issue and a draft plan: cold lineage analysis [#68](https://github.com/RimantasZ/contextspy/issues/68) ([`perf-cold-lineage-analysis-68.md`](unconfirmed_drafts/perf-cold-lineage-analysis-68.md); profile: ~67% candidate scoring via `diff_contexts`, ~19% the per-call revision hash, ~14% snapshot loading) and the request-listing query [#69](https://github.com/RimantasZ/contextspy/issues/69) ([`perf-session-request-listing-index-69.md`](unconfirmed_drafts/perf-session-request-listing-index-69.md); a covering index took 0.6-0.9 s to ~0 ms on the sample, `context_fidelity` is column 57, after the body columns).
 
 ## Inputs for the draft plans (details in each draft's "State of the code")
 - **Context tree (5):** needs request-level *turn grouping* (not implemented), a controlled JSON viewer reveal (the viewer was rebuilt: `components/ui/content-viewer/`, `useTreeExpansion`), and per-block fields that now exist (`source_key`, `activity`, `file_path`, `json_path`, link ids). Its conversation scope inherits the cold-membership cost.
