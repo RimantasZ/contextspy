@@ -5,6 +5,8 @@ Status: **specified in [wi0-data-foundation.md](wi0-data-foundation.md) (impleme
 > Naming: this was "C. Request purpose inference" in the brainstorm and briefly called "classification
 > plan". It is deliberately **not** about `analysis/classifier.py` token *categories*; those stay as they are.
 
+> **Reader's note (2026-10-06):** this file is background. What was built, and how it differs, is in `wi0-data-foundation.md` §17. The migration checklist and the "derived at read time" block-source section below are **obsolete** (source keys are persisted; the migration is v9/v10). The one part that is **still to be built** is *Turn grouping* (`turn_index` / `turn_start_request_id` on lineage nodes): it is not implemented and the context-tree draft's "By turn" mode depends on it. `housekeeping` and per-agent detectors are not implemented either.
+
 ## Goal
 
 Infer and show the **main purpose of each request** (user prompt, tool-result continuation,

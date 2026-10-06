@@ -82,7 +82,8 @@ Both proxy modes feed the same pipeline. The key sequence to understand spans th
    `per_tool_tokens` produces per-tool breakdowns.
    Right after classification, `analysis/purpose.py: classify_request` stamps each block's
    `source_key` (`analysis/sources.py`) and derives the request's `purpose` (structural baseline plus
-   registered agent plug-ins); each adapter also records every block's `json_path`. `analysis/activity.py`
+   registered agent plug-ins); each adapter also records every block's `json_path`, and tool calls that read or edit
+   a file get `blocks.file_path` (`analysis/paths.py: normalize_file_path` is the single writer; results inherit it). `analysis/activity.py`
    maps a `source_key` to an activity label at read time. See docs/development.md ("Request purpose,
    block source and block location").
 4. **`analysis/tokenizer.py`** — `count_tokens` via tiktoken `o200k_base` (`ENCODING_NAME`; was `cl100k_base` up to 0.3.3). **All counts are
@@ -108,7 +109,7 @@ port actually bound (`_BindWatcher`) — port-in-use is a common failure surface
 `api/main.py` `create_app(settings)` is an app factory (note `--factory` in the uvicorn
 commands). Its lifespan starts the DB and the proxy thread, so running the FastAPI app *is*
 running the whole tool. Routers under `api/routers/` (requests, sessions, stats, proxy,
-tokenize) back the SPA; the built SPA is served as static files from `contextspy/_web/`.
+tokenize) back the SPA (the session hot-spots ranking lives in `db/hotspots_service.py`; its SQL must keep the scope table as outer loop, see docs/development.md "Hot spots queries"); the built SPA is served as static files from `contextspy/_web/`.
 
 ### CLI
 `cli.py` (Typer, entrypoint `contextspy`) is the user-facing surface: `start`, `start-local`,
@@ -141,7 +142,7 @@ Forgetting step 2 means existing requests silently never get the new derived dat
 ### Frontend
 `ui/src/` — React + react-router + @tanstack/react-query + recharts + Tailwind. Data comes through
 `api/client.ts` (REST) and `api/useWebSocket.ts` (live updates). Pages live in `pages/`
-(Dashboard, Requests, RequestDetail, Sessions, SessionDetail, Settings). The main request-detail
+(Dashboard, Requests, RequestDetail, Sessions, SessionDetail, Settings). `SessionDetail` has three views (Summary, Conversations, Hot spots; `?view=`); Hot spots lives in `components/hotspots/`. The main request-detail
 surface is `components/request/RequestWorkbench.tsx`, backed by compact/relative-size block maps,
 a persistent inspector, and searchable content viewer. `ToolTreemap` and `ToolBreakdown` provide
 share-of-total and exact-value tool views; semantic light/dark theme tokens live in `index.css`.
@@ -152,6 +153,8 @@ share-of-total and exact-value tool views; semantic light/dark theme tokens live
   `plans/` are historical implementation plans unless their status note says otherwise.
 - `docs/development.md` — architecture diagrams, data storage layout, token accuracy bands.
 - `docs/` also has install/cloud-mode/local-mode/examples/cli guides.
-- `~/.contextspy/`: `contextspy.db` (SQLite), `config.toml` (auto-created). Raw request bodies
-  and block contents are purged after capture on server startup (`startup_vacuum`), per the
-  `[retention]` settings in `config.toml` (default 7 days for both; 0 = keep forever).
+- `~/.contextspy/`: `contextspy.db` (SQLite), `config.toml` (auto-created). Nothing is purged
+  automatically by default: the time-based purge (`startup_vacuum`, `[retention]` in `config.toml`) defaults to `0` = off
+  (it was 7 days up to 0.5.4 and still runs, with a startup notice, if a config sets it). Users free space with
+  `contextspy session archive` (one-way: removes raw payloads and block text, keeps token counts, structure, sources,
+  file paths and the analysis) and `contextspy db-compact` (offline VACUUM; new databases use incremental auto-vacuum).

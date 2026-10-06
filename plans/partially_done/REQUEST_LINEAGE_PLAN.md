@@ -19,7 +19,7 @@ linked path a **conversation**. The older uses of “capture” below refer to a
 in the lineage API is retained as a response property. Conversations are derived at read time,
 and forked conversations can share earlier requests.
 
-It extends, and partially corrects, [SESSION_ANALYSIS_PLAN.md](../postponed/SESSION_ANALYSIS_PLAN.md):
+It extends, and partially corrects, `SESSION_ANALYSIS_PLAN.md` (since deleted; see ../ANALYSIS_ROADMAP.md D6):
 
 - the current session-analysis plan assumes requests form one sequence;
 - this plan treats a capture as a directed acyclic graph of invocations;
@@ -951,7 +951,7 @@ The companion plan and parts of the product documentation already acknowledge gr
 lineage. The graph-based request tree, branch-aware introduction default, block-to-JSON navigation,
 and remaining documentation and help updates are pending.
 
-- Update [SESSION_ANALYSIS_PLAN.md](../postponed/SESSION_ANALYSIS_PLAN.md) so its default request tree follows graph topology.
+- Update `SESSION_ANALYSIS_PLAN.md` (since deleted; see ../ANALYSIS_ROADMAP.md D6) so its default request tree follows graph topology.
 - Replace capture-global introduction as the default with `introduced_relative_to_parent`.
 - Retain the planned block-to-canonical-JSON navigation as a complementary edge/node inspector.
 - Update `SPEC.md`, development documentation, CLI help, FAQ, screenshots, and changelog.

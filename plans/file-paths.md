@@ -1,6 +1,6 @@
 # Plan 4a: Capture the file a block is about (`blocks.file_path`)
 
-Status: **implemented 2026-10-06 (uncommitted); see "Implementation status" at the end.** Prerequisite of [hot-spots.md](hot-spots.md) (Plan 4b). Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
+Status: **implemented 2026-10-06, committed in `d608561`; not released; not seen in a browser. See "Implementation status" at the end.** Prerequisite of [hot-spots.md](hot-spots.md) (Plan 4b). Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
 
 ## Decision (user, 2026-10-06) and its consequence
 Hot spots should be able to say "this file's contents are carried N times and cost T tokens". That needs the file a read/edit tool targeted. The user decided to **store full file paths**
@@ -43,7 +43,7 @@ Paths now **persist after archive** (the column is on block rows, which archive 
 ## Open questions
 None blocking. Later: obfuscation setting (see hook); unifying relative/absolute spellings (needs a working directory the proxy does not see).
 
-## Implementation status (2026-10-06, uncommitted)
+## Implementation status (2026-10-06)
 
 Implemented as designed: schema v10 (`blocks.file_path` + `idx_blocks_file_path`, `CLASSIFIER_VERSION` 2, `_migrate_to_v10`), `analysis/paths.py` (`normalize_file_path`, structured-argument and `apply_patch` extraction), shell extraction in `analysis/sources.py` (`shell_file_paths`), `SourceInfo.file_path`, inheritance by results, persistence in `crud.insert_blocks`, `file_path` in block payloads, a "File" (and "Files in call") row in the block inspector, docs (`development.md`, `SPEC.md`, `changelog.md`, `faq.md`, `README.md`; the WI-0 privacy rule is marked narrowly superseded).
 

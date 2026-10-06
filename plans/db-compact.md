@@ -92,5 +92,5 @@ Auto-compaction at startup (needs exclusive access and can take minutes on large
 **Not done / still open**
 - The author's live database is not compacted; run `contextspy db-compact` with ContextSpy stopped (use `--backup` if you want a copy; it needs ~6.6 GB free for it).
 - Not exercised: Windows (`msvcrt` lock path), a database on a volume with a separate `SQLITE_TMPDIR`, very large databases (> 10 GB).
-- Plan 3b (archive) builds on this and is not started; the retention default / startup notice change belongs to 3b.
+- Plan 3b (archive) builds on this and is implemented (`a2a4b8c`); the retention default / startup notice change belongs to 3b.
 

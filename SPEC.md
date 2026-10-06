@@ -24,8 +24,9 @@ ContextSpy operates in two complementary modes:
 - Classify each context window into meaningful content categories.
 - Count tokens per category using `tiktoken` (fast approximation, good enough for composition analysis).
 - Support named sessions so the user can group requests into logical work units.
-- Purge retained payloads and block text on startup after their configured retention windows,
-  while keeping token stats and structural metadata.
+- Let the user free disk space explicitly: archive an ended session (removes raw payloads and block text, keeps token
+  stats, structure and analysis) and compact the database file. An optional, off-by-default time-based purge on startup
+  remains for older configs.
 - Display statistics and graphs in a browser UI served locally.
 - Bind network services to `127.0.0.1` by default.
 
@@ -481,7 +482,7 @@ CREATE TABLE sessions (
     ended_at    DATETIME,
     is_active   INTEGER NOT NULL DEFAULT 1, -- 1 = active, 0 = ended
     next_request_seq INTEGER NOT NULL DEFAULT 1,
-    archived_at DATETIME                    -- reserved for the explicit archive action; NULL for now
+    archived_at DATETIME                    -- set by the explicit archive action; NULL while not archived
 );
 
 CREATE TABLE requests (
@@ -660,7 +661,7 @@ both of:
    user at `db-upgrade` or `reset-db`) if any data migration is pending — this prevents the app
    from running against a DB with stale/missing derived data.
 
-Currently `SCHEMA_VERSION = 9`; `_migrate_to_v2` backfills `session_seq` (per-session request
+Currently `SCHEMA_VERSION = 10`; `_migrate_to_v2` backfills `session_seq` (per-session request
 ordinal, assigned by `timestamp` order) and reconstructs `blocks`/`block_contents` rows for
 pre-existing requests from their still-present `raw_request_body`/`raw_response_body` (re-running
 the adapter → classify → insert_blocks pipeline). `_migrate_to_v3` copies retained provider JSON
@@ -1122,7 +1123,8 @@ ContextSpy session end   (or UI button)
         │
         ▼   (retention runs on next application startup)
   Raw/canonical bodies, event logs, and expired block content are purged
-  according to [retention] settings
+  only if a [retention] window is set (off by default); an explicit
+  "archive session" action removes them for one ended session
 ```
 
 ### Rules
@@ -1165,20 +1167,30 @@ contextspy/                         # repo root
 │   │   │   ├── openai_responses.py
 │   │   │   └── ollama.py
 │   │   ├── classifier.py           # classify_blocks / classify / per_tool_tokens
+│   │   ├── sources.py              # block source keys + parser registry (Bash, Codex exec/js), shell helpers
+│   │   ├── paths.py                # blocks.file_path: normalize_file_path (single writer) and extractors
+│   │   ├── purpose.py              # request purpose + classify_request, CLASSIFIER_VERSION
+│   │   ├── activity.py             # source key -> activity label (read time)
+│   │   ├── block_occurrences.py    # runs/totals of one block across a scope ("Present in")
+│   │   ├── block_hotspots.py       # pure helpers for the hot-spots ranking
 │   │   └── tokenizer.py            # tiktoken wrapper (with proxy bypass)
 │   ├── db/
 │   │   ├── __init__.py
 │   │   ├── models.py               # SQLAlchemy ORM models (incl. BlockRecord, BlockContent, SchemaMeta)
 │   │   ├── database.py             # Engine + session factory + additive column migration + startup_vacuum
 │   │   ├── migrations.py           # SCHEMA_VERSION + data migrations (contextspy db-upgrade)
+│   │   ├── block_occurrence_service.py # scope_for_session + membership cache + "Present in" queries
+│   │   ├── hotspots_service.py     # hot-spots aggregation (scope temp table, one pass)
+│   │   ├── session_archive.py      # explicit archive of an ended session
+│   │   ├── compaction.py           # contextspy db-compact (offline VACUUM, incremental auto-vacuum)
 │   │   └── crud.py                 # Database read/write helpers (incl. block link resolution)
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── main.py                 # FastAPI app factory
 │   │   ├── websocket.py            # WebSocket manager
 │   │   └── routers/
-│   │       ├── sessions.py
-│   │       ├── requests.py         # incl. GET /requests/{id}/blocks
+│   │       ├── sessions.py         # incl. archive and GET /sessions/{id}/hotspots
+│   │       ├── requests.py         # incl. GET /requests/{id}/blocks and block occurrences
 │   │       ├── stats.py
 │   │       ├── proxy.py
 │   │       └── tokenize.py
@@ -1205,6 +1217,7 @@ contextspy/                         # repo root
 │   │       ├── ToolTreemap.tsx
 │   │       ├── ToolBreakdown.tsx
 │   │       ├── request/             # Workbench, maps, toolbar, inspector, notices
+│   │       ├── hotspots/            # Hot spots view of the session page
 │   │       └── ui/                  # Shared primitives, content viewer, and theme control
 │   ├── package.json
 │   └── vite.config.ts              # outDir → ../contextspy/_web, dev port 5174
@@ -1292,12 +1305,14 @@ bind_addr = "127.0.0.1"
 db_path = "~/.contextspy/contextspy.db"
 
 [retention]
-# Raw request/response bodies and block content text are purged at server
-# startup only (no background timer) once they're older than these many
-# days. 0 = keep forever. Block/category/type metadata is never purged,
-# only the underlying text.
-raw_body_days = 7
-block_content_days = 7
+# Legacy time-based purge: raw request/response bodies and block content text
+# are purged at server startup only (no background timer) once they're older
+# than these many days. 0 = keep forever, which is the default (it was 7 up to
+# 0.5.4). Block/category/type metadata is never purged, only the underlying
+# text. Prefer `contextspy session archive`; `contextspy db-compact` shrinks
+# the file after data was removed.
+raw_body_days = 0
+block_content_days = 0
 
 [intercepted_hosts]
 # Reserved setting. It is parsed into Settings.extra_hosts but is not yet

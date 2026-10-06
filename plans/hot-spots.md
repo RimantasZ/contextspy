@@ -1,6 +1,6 @@
 # Plan 4b: Hot spots — what stays in the context window, and what it costs
 
-Status: **implemented 2026-10-06 (uncommitted); see "Implementation status" at the end.** Reviewed and decided 2026-10-06, re-reviewed after Plan 4a the same day ("Second review"). Depends on [info-panel.md](info-panel.md) (implemented: occurrence semantics, `?block=` deep link, conversation membership), [session-archive.md](session-archive.md) (implemented: analysis must work without content) and, for the *Files* grouping, [file-paths.md](file-paths.md) (Plan 4a). Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
+Status: **implemented 2026-10-06, committed in `e6c4396` (category filter `4cb4c84`); not released; not seen in a browser (styling remarks from the author are pending). See "Implementation status" at the end.** Reviewed and decided 2026-10-06, re-reviewed after Plan 4a the same day ("Second review"). Depends on [info-panel.md](info-panel.md) (implemented: occurrence semantics, `?block=` deep link, conversation membership), [session-archive.md](session-archive.md) (implemented: analysis must work without content) and, for the *Files* grouping, [file-paths.md](file-paths.md) (Plan 4a). Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
 
 ## Goal
 Show the **top blocks** of a conversation (or whole session) ranked by **total visible tokens** or by **occurrence count**, so the user sees what information is carried through the window repeatedly and what it costs over time. Also rank by **source** (which tool costs the most) and by **file** (which file's contents are carried most).
@@ -103,9 +103,9 @@ Cache reporting (D2), money (D1), optimisation hints (Plan 7, which reads these 
 ## Open questions
 None blocking.
 
-## Implementation status (2026-10-06, uncommitted)
+## Implementation status (2026-10-06)
 
-Implemented: `GET /api/sessions/{id}/hotspots` (all three groupings, both sorts, scope/conversation selection, filters, paging, `in_context`), `analysis/block_hotspots.py` (pure helpers), `db/hotspots_service.py`, `block_occurrence_service.scope_for_session` (shared with Plan 1), the **Hot spots** view in the session page (`components/hotspots/HotSpots.tsx`, `?view=hotspots`), a per-conversation "Hot spots" link in the Conversations view, docs (`SPEC.md`, `development.md`, `changelog.md`, `faq.md`). Backend 685 tests passed, frontend 199 passed, `npm run check` clean. **Not seen in a browser; not released; the live database has not been upgraded** (the feature needs schema v10 for the Files grouping only).
+Implemented: `GET /api/sessions/{id}/hotspots` (all three groupings, both sorts, scope/conversation selection, filters, paging, `in_context`), `analysis/block_hotspots.py` (pure helpers), `db/hotspots_service.py`, `block_occurrence_service.scope_for_session` (shared with Plan 1), the **Hot spots** view in the session page (`components/hotspots/HotSpots.tsx`, `?view=hotspots`), a per-conversation "Hot spots" link in the Conversations view, docs (`SPEC.md`, `development.md`, `changelog.md`, `faq.md`). Backend 685 tests passed, frontend 199 passed (after the category filter), `npm run check` clean. **Not seen in a browser; not released; the live database has not been upgraded** (the feature needs schema v10 for the Files grouping only).
 
 Differences from the plan:
 - **No cache** (postponed, [postponed/hot-spots-cache.md](postponed/hot-spots-cache.md), issue #67). The grouping is one function, `aggregate_select`, independent of sort/paging/in-context, as required.

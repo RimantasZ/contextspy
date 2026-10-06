@@ -26,7 +26,7 @@ serves one of those four questions.
 | D3 | **Analysis must keep working when content is purged.** Block rows (hash, type, tokens) are kept forever; only content/raw bodies go. Purged blocks render as greyed nodes with token counts, never hidden. | |
 | D4 | **Retention becomes explicit.** Replace implicit "N days at startup" purge with a session lifecycle `active → ended → archived`. Archive is a user action on the session screen, **one-way, with confirmation**. No auto-archive rule in the first version. | See `session-archive.md` (Plan 3b) and `db-compact.md` (Plan 3a). |
 | D5 | **Scope of analysis = per conversation by default, with a switch to whole session**, mirroring the dashboard. Conversation membership **must reuse the existing dashboard/lineage definition** (`db/session_lineage_service.py`, `crud._node_group_key`, `annotated_lineage_nodes`), not a new one. | Lineage breaks (compaction, client restart, uncaptured request) are *events the user wants to see*, not things to hide. |
-| D6 | **Drop `plans/postponed/SESSION_ANALYSIS_PLAN.md`** (deleted). It predates lineage, conversations and many other changes. Ideas worth keeping from it are folded into the individual plans (typed `json_path` per block, one bulk query instead of N+1, lazy tokenization of the selected block only, controlled JSON viewer that can reveal a path). | `REQUEST_LINEAGE_PLAN.md` lines ~22 and ~954 still link to the deleted file; fix when that plan is next touched. |
+| D6 | **Drop `SESSION_ANALYSIS_PLAN.md`** (deleted from `plans/postponed/`). It predates lineage, conversations and many other changes. Ideas worth keeping from it are folded into the individual plans (typed `json_path` per block, one bulk query instead of N+1, lazy tokenization of the selected block only, controlled JSON viewer that can reveal a path). | `REQUEST_LINEAGE_PLAN.md`'s links to the deleted file were replaced by plain text on 2026-10-06. |
 | D7 | **Classification must be extensible**: future work will differentiate tools, MCP servers, subagents, etc. Use coarse stable enums + free-form JSON detail + `classifier_version`, never a growing enum. | See `request-purpose.md`. |
 | D8 | **Info panel is the shared surface for actions/insights** on blocks and requests (cost/"present in", compare, etc.). Existing panels (block inspector in Request detail, context-change panel in the conversation view) are enough for now; the tree page gets the panel as its right-hand pane, reacting to node selection. No drawer variant, no new panel framework. | See `info-panel.md`. |
 | D9 | **Tree/compare pages must visually match the Request detail page.** Earlier attempts looked bad. Focus: tree representation, node icons, collapse/expand animation, lightweight minimal node labels; details live in the info panel. | See `unconfirmed_drafts/context-tree.md`. |
@@ -38,6 +38,11 @@ serves one of those four questions.
 | D15 | **Batched schema migration v9** for all new columns (requests purpose fields, blocks `source_key`/`json_path`, sessions `archived_at`). | **Done** (columns, backfill, tests). See `analysis-architecture.md` §5. |
 | D17 | **Compaction before archive; incremental auto-vacuum** (user, 2026-10-05). Deleting rows never shrinks a SQLite file (the author's 6.6 GB DB is 65% free pages). `db-compact` (offline VACUUM + converts to `auto_vacuum=INCREMENTAL`) ships first; new databases start incremental; archive then shrinks the file online. | `db-compact.md`. D14 refined: default `0` **plus a startup notice** when a config explicitly enables the purge. |
 | D18 | **File paths are stored** (user, 2026-10-06; "the retention policy was a mistake anyway"). Read/edit tool calls get their target file in `blocks.file_path`, persisting after archive; every other argument stays unstored. This reverses WI-0's "program names only" rule for that one field. A single function (`analysis/paths.py: normalize_file_path`) is the only writer, so obfuscation (basename/hash/setting) can be added later if paths become a problem. | `file-paths.md`. |
+| D19 | **Hot-spots cache is postponed** (user, 2026-10-06). 4b ships without it; the grouping is one function (`aggregate_select`) so a cache can wrap it later. | `postponed/hot-spots-cache.md`, GitHub issue #67 (`perf:` prefix for performance issues). |
+| D20 | **Similarity grouping (changed-and-reloaded blocks, version timelines) is v2** (user, 2026-10-06). Hot spots group by **exact content hash** only. | Plan 8 draft. |
+| D21 | **Hot-spots semantics** (architect, agreed): identity = `content_hash`; input blocks only; tokens are *visible* tokens; file rows split `result_tokens` (reads) from `call_tokens` (edits/patch text) because patches are carried too; relative and absolute spellings of one file are **not** unified (the proxy does not see the working directory). | `hot-spots.md`. |
+| D22 | **Category filter is in the hot-spots UI** (user, 2026-10-06), using the labels the dashboard already has (`ContextBar.tsx`). My first reason for leaving it out (UI must not know the vocabulary) was wrong. | |
+| D23 | **Sequence after this work** (user, 2026-10-06): merge `analysis_revamp`, produce a release for users to test, then continue the draft plans (5-8) and UI styling fixes (the Hot spots page has styling remarks pending) once the plans are sorted out. | See "Release readiness". |
 | D10 | One plan file per feature. Plans that are confirmed live in `plans/`; plans still being refined live in `plans/unconfirmed_drafts/`. | |
 
 ## Repository policies that constrain every plan (from `AGENTS.md`)
@@ -74,32 +79,25 @@ implementing any plan.** Where it conflicts with an individual plan, it wins and
   `ui/src/components/dashboard/ContextChangePanel.tsx` (request-level panel in conversation view),
   `RequestWorkbench`, `ParsedViewer`/`RawViewer`/content viewers under `components/ui/`.
 - Request-level cache fields and `context_accounting` already exist (shown in Request detail metadata).
-- Prior related plan, implemented: `plans/show-new-block-only.md` (baseline = lineage parent, falling
+- Prior related plan, implemented: `plans/archive/show-new-block-only.md` (baseline = lineage parent, falling
   back to previous request in the conversation). Reuse its baseline rule wherever a "previous request" is needed.
 
-## What is implemented right now (2026-10-06)
+## What is implemented right now (2026-10-06, everything below is committed on branch `analysis_revamp`)
 
-Implemented (WI-0, tests green, not released): schema v9; per-request `purpose`/`purpose_detail`/`classifier_version`; per-block
-`source_key` (+ derived `activity`) and `json_path` for all four adapters; the v9 backfill (`contextspy db-upgrade`, ~3 min on a
-7k-request database); `GET /api/requests?purpose=`; purpose chip and block Source/Activity/JSON-location rows in Request detail; docs.
+Schema is **v10**. Tests at this point: 685 backend, 199 frontend, `npm run check` clean. **Nothing is released, none of the new UI has been reviewed in a browser by the author, and the author's live database has not been upgraded, compacted or archived by any agent.**
 
-**Also implemented (Plan 1; committed in `153a9d0`):** `GET /api/requests/{id}/blocks/{block_id}/occurrences` (+ `/occurrences/requests`), the "Present in" section in the block inspector, and `?block=<id>` selection in Request detail.
+| Area | What exists | Commits |
+|------|-------------|---------|
+| WI-0 (data foundation, schema v9) | `requests.purpose/purpose_detail/classifier_version`; `blocks.source_key` (+ derived `activity`) and `blocks.json_path` for all four adapters; `sessions.archived_at`; the v9 backfill (`contextspy db-upgrade`); `GET /api/requests?purpose=`; purpose chip and Source/Activity/JSON-location rows in Request detail | `528f3db`, `88bd6e0` |
+| Plan 1 (info panel) | `GET /api/requests/{id}/blocks/{block_id}/occurrences` (+ `/occurrences/requests`), "Present in" section in the block inspector, `?block=<id>` deep link in Request detail | `153a9d0` |
+| Plan 3a (`db-compact`) | offline VACUUM with optional `--backup`, `pre_compact` backups, new databases in incremental auto-vacuum, size/free-space lines in `db-stats`. Verified on a copy (6.60 to 2.36 GB) | `f34fa29` |
+| Plan 3b (archive) | `POST /api/sessions/{id}/archive`, `contextspy session archive`, Archive button/badge/notice, `Session.status`, `Request.content_state`, retention default `0` with startup notice, online file shrinking | `a2a4b8c` |
+| Plan 4a (file paths, schema v10) | `blocks.file_path` for read/edit tool calls and their results (`analysis/paths.py` is the single writer), `_migrate_to_v10`, "File" row in the block inspector; fixed `list_backups` ordering (two-digit schema versions) | `d608561` |
+| Plan 4b (hot spots) | `GET /api/sessions/{id}/hotspots` and the **Hot spots** session view (blocks / sources / files; conversation or whole session; sort; category, block-type and in-context filters; click-through to the request with the block selected; Conversations view links); `block_occurrence_service.scope_for_session`; fixed the membership cache lifetime | `e6c4396`, `4cb4c84` (category filter) |
 
-**Also implemented (Plan 3b; committed in `a2a4b8c`):** session archive (`POST /api/sessions/{id}/archive`, `contextspy session archive`, Archive button/badge/notice in the UI), session `status`, request `content_state`, retention default `0` with a startup notice, online file shrinking after an archive. Verified on a copy of the author's database; no real database archived.
+Facts worth knowing about the data, measured on a copy of the author's database (samples, not rules, D16): upgrading 7.2k requests / 1.5M blocks from schema 8 takes ~2-3 min (v9 117-174 s, v10 alone 104 s); 8.4% of blocks have a `file_path`; hot-spots aggregation ~1.1 s on a 4,032-request session; **the existing conversation (lineage) analysis costs 65 s cold on that session** and every conversation-scoped feature inherits it.
 
-**Also implemented (Plan 3a; committed in `f34fa29`):** `contextspy db-compact` (offline VACUUM, optional `--backup`), `pre_compact` backups recognised by restore, new databases created in incremental auto-vacuum mode, file-size/free-space lines in `db-stats`. Verified on a copy of the author's database (6.60 → 2.36 GB); **the live database itself has not been compacted.**
-
-**Also implemented (Plan 4a; uncommitted):** schema v10 `blocks.file_path` (file targeted by read/edit tool calls, inherited by results; `analysis/paths.py` is the single writer), `_migrate_to_v10` re-derivation, a "File" row in the block inspector. Timed on a copy of the author's DB: ~2 min for v9/v10 (7.2k requests); 8.4% of blocks got a path, relative and absolute spellings of one file stay separate; Ollama has none (its adapter emits no tool blocks).
-
-**Also implemented (Plan 4b; uncommitted):** `GET /api/sessions/{id}/hotspots` and the **Hot spots** session view (blocks / sources / files, per conversation or whole session, sort, block-type and in-context filters, click-through to the request with the block selected). Timed on a copy of the author's DB: ~1.1 s on a 4,032-request session; the cold conversation membership it needs costs 65 s there (existing lineage cost, see `hot-spots.md`). No cache (issue #67).
-
-**Not implemented:** everything in Plans 5, 6, 7 (context tree, compare, hints) and 8;
-`housekeeping` detection and any agent purpose detectors; source parsers beyond Codex `exec`/`js` and `Bash`; purpose in the request
-list/conversation cards; any use of `json_path` beyond displaying it; cache reporting (D2); (the retention-default change and startup notice, D14, are part of Plan 3b and are implemented).
-Nothing from this roadmap has been released, and the real database has not been upgraded.
-
-**Known issue to resolve:** the author's live DB already contains a `blocks.json_path` column with 6,794 values in a different (leaf-level)
-convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Findings".
+**Not implemented:** Plans 5, 6, 7, 8 (context tree, compare, hints, similarity); `housekeeping` purpose detection and any agent purpose detectors; turn grouping (`turn_index`; specified in `request-purpose.md`, needed by the tree's "by turn" mode); source/file parsers beyond Codex `exec`/`js`, `Bash` and the generic structured tools (no MCP file tools); Ollama tool-call blocks (its adapter emits none, so no sources/paths there); purpose in the request list and conversation cards; jumping from a block's JSON location to the raw JSON viewer; cache reporting (D2); the hot-spots cache (D19).
 
 ## Plans and order
 
@@ -124,11 +122,11 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 | 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **baseline implemented in WI-0** (`user_turn`, `tool_continuation`, `compaction`, `unknown`; `housekeeping` and agent detectors NOT implemented; UI shows it in Request detail only) | — |
 | 3a | `contextspy db-compact` (reclaim free pages, enable incremental auto-vacuum) | [`db-compact.md`](db-compact.md) | **implemented and committed** (`f34fa29`); not released; the author's live DB not yet compacted | — |
 | 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **implemented and committed** (`a2a4b8c`); not released, not checked in a browser; only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
-| 4a | Capture the file a block is about (`blocks.file_path`, schema v10) | [`file-paths.md`](file-paths.md) | **implemented, uncommitted** (2026-10-06); not released; not seen in a browser | WI-0 |
-| 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **implemented, uncommitted** (2026-10-06); not released, not seen in a browser; cache postponed ([`postponed/hot-spots-cache.md`](postponed/hot-spots-cache.md), issue #67) | 1, 3b, 4a |
-| 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
-| 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
-| 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | idea only | 4b |
+| 4a | Capture the file a block is about (`blocks.file_path`, schema v10) | [`file-paths.md`](file-paths.md) | **implemented and committed** (`d608561`); not released; not seen in a browser | WI-0 |
+| 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **implemented and committed** (`e6c4396`, category filter `4cb4c84`); not released; not seen in a browser (styling remarks pending); cache postponed ([`postponed/hot-spots-cache.md`](postponed/hot-spots-cache.md), issue #67) | 1, 3b, 4a |
+| 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | **draft** (updated 2026-10-06 with what the code now offers; open questions unanswered) | 1, 2 (needs turn grouping), 4a/4b helpers |
+| 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | **draft** (updated 2026-10-06) | 5 |
+| 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | **idea only** (inputs from 4b now exist; see the draft) | 4b |
 | 8 | Similarity grouping: changed-and-reloaded blocks, version timelines (**v2**) | [`unconfirmed_drafts/similarity-grouping.md`](unconfirmed_drafts/similarity-grouping.md) | idea only, postponed to v2 | 4a, 4b, 6 |
 
 Plans 1, 2 and 3 are independent and can proceed in parallel. 1 and 2 set contracts others use,
@@ -136,8 +134,7 @@ so they were written first.
 
 ## How to continue
 
-**WI-0 ([`wi0-data-foundation.md`](wi0-data-foundation.md)) is implemented**; its §17 is the authoritative record of what exists and how it
-differs from its own spec. Plan 1 (info panel "present in"), Plan 3a (`db-compact`) and Plan 3b (archive) are implemented too. Plan 4 (hot spots) is split into 4a (file paths, schema v10) and 4b (the feature); both are implemented (uncommitted); Plan 5 (context tree) is still a draft whose open questions need answers.
+Plans 1-4 and WI-0 are implemented (see the table above; each plan file's "Implementation status" is the authoritative record of what exists and how it differs from its text). **Plans 5-8 are drafts**: each now has a "State of the code" section listing what it can build on and which assumptions changed, but their open questions are still unanswered and the user wants them kept as drafts until after the release.
 WI-0 follow-ups that still wait for captures from Copilot, Ollama, llama.cpp and vLLM: housekeeping/compaction detectors per agent and more
 source parsers. Review the `compaction_trigger` rule (a judgement call) and decide what to do with the legacy leaf-form `json_path` values in
 the author's DB (see WI-0 §17) before treating either as settled.
@@ -146,7 +143,7 @@ the author's DB (see WI-0 §17) before treating either as settled.
 2. If the plan is a **draft**, it is *not* an approved spec: list its "Open questions", ask the user,
    fold the answers in, then move the file from `unconfirmed_drafts/` to `plans/` and update the
    status table above.
-3. Verify every code reference in a plan before relying on it; plans record the state on 2026-10-05.
+3. Verify every code reference in a plan before relying on it; plans record the state on 2026-10-05/06.
 4. When a plan is implemented, mark its status here and in the plan, update `SPEC.md`,
    `docs/development.md`, `docs/changelog.md` as relevant.
 
@@ -168,7 +165,37 @@ Pitfalls found the hard way (each cost real time):
 - Pysqlite begins transactions lazily at the first DML; to make "measure then delete" consistent, take the write lock first with a harmless write.
 - The server refuses to start while a data migration is pending (`contextspy db-upgrade` first); the live database is **still not compacted/archived/upgraded by the agent**, and the author's `blocks.json_path` column already holds 6,794 legacy leaf-form values from an earlier prototype (see `wi0-data-foundation.md` §17).
 
-Where things stand at the end of the 2026-10-06 session: WI-0, Plans 1, 3a, 3b are implemented and committed (not released, not seen in a browser); Plans 4a and 4b are implemented (uncommitted, added 2026-10-06 after the first handoff); Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: review the `compaction_trigger` purpose rule; what to do with the legacy leaf-form `json_path` rows; answers to Plan 5's open questions.
+Where things stand at the end of the 2026-10-06 session: WI-0 and Plans 1, 3a, 3b, 4a, 4b are implemented and committed (not released, not seen in a browser by the author); Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: review the `compaction_trigger` purpose rule; what to do with the legacy leaf-form `json_path` rows; answers to Plan 5's open questions; whether to do something about the 65 s cold conversation analysis (below). The user's plan (D23): merge the branch, release for testing, then continue the drafts and UI styling.
+
+## Release readiness (merge of `analysis_revamp`, written 2026-10-06)
+
+What a user upgrading from 0.5.4 (schema 8) experiences, and what has *not* been verified:
+- `contextspy start` **refuses to start** until `contextspy db-upgrade` has run (existing gating). The upgrade backs the database up first (`..._backup_v8_to_v10_<UTC>.back`), runs v9 then v10 and prints progress; ~2-3 min per 7k requests / 1.5M blocks on the author's machine, longer on slower disks. v10 finds nothing to do after v9 because v9 now already derives file paths. New databases are created at the current version.
+- Behaviour changes to call out in release notes: time-based purge default is now off (`[retention]` values of 0; explicit values keep working with a startup notice); new databases use incremental auto-vacuum; sessions can be archived (one-way); `db-compact` exists.
+- Source keys and file paths for requests whose tool-call text was already purged stay generic (`tool:<name>`) / NULL; this is permanent for that data.
+- **Not verified:** any new UI in a browser (Present in, purpose chip, File row, Archive modal/badge/notice, Hot spots page); Windows (`db-compact` lock path, incremental vacuum); packaging (Homebrew/.deb/standalone: run `make ui` so `contextspy/_web/` is current, and confirm the new modules `analysis/paths.py`, `analysis/block_hotspots.py`, `db/hotspots_service.py` are picked up); upgrading a database that was captured while another version ran; a fresh install end to end.
+- Known limitations to state honestly: the first conversation-scoped view of a very long session can take a minute (cold lineage analysis); hot spots count visible tokens only; relative/absolute spellings of one file are separate rows; Ollama's adapter does not capture tool calls; only Codex `exec`/`js`, `Bash` and structured file tools are parsed for sources/paths.
+- Release mechanics (not done): version bump in `pyproject.toml` (currently 0.5.4), rename the changelog's "Unreleased" heading, tag/package as usual. The changelog's Unreleased section was reviewed against the code on 2026-10-06.
+
+## Maintenance notes for the implemented code
+
+Invariants to keep (each has a test; do not "simplify" them away):
+- **Classification versioning:** any change to `sources.py`/`purpose.py`/`paths.py` output means bump `analysis/purpose.py: CLASSIFIER_VERSION` and add a data migration that re-derives rows below it; v10 shows the pattern (`migrations._backfill_classification(db, label, json_paths=...)`, shared with v9). Capture-time classification is what matters; backfill is best effort over retained content.
+- **Single writers:** `analysis/paths.py: normalize_file_path` is the only function that decides what goes into `blocks.file_path` (privacy/obfuscation hook, D18); `resolve_sources` is the only producer of `source_key`/`file_path`. Never read other tool arguments into stored fields (the secret-argument tests guard this).
+- **Hot-spots SQL:** the scope temp table must be the outer loop (`FROM hs_scope s CROSS JOIN blocks b ...`); `tests/test_hotspots.py` asserts the plan for all groupings; `aggregate_select` must not depend on sort/paging/in-context (cache seam, issue #67). The latest occurrence is packed as `position * 2**32 + block id` (block ids must stay below 2**32), run counts come from `GROUP_CONCAT(pos)`.
+- **Scope resolution:** `block_occurrence_service.scope_for_session` is the one place that turns (session, conversation) into an ordered request list; positions are indexes in *scope order*, not `session_seq`. `with_conversations=True` builds the conversation membership even for session scope (slow when cold); the membership cache is 60 s per session, keyed by request count, with the lifetime counted from the end of the build.
+- **Archive/compaction:** blocks of archived sessions never keep shared content alive; the write lock is taken first (`UPDATE sessions SET name = name`); `auto_vacuum` must be set before `journal_mode=WAL`; `incremental_vacuum` needs a raw DBAPI connection; backups made before a compaction are unaffected by it; `list_backups` orders by the timestamp in the name.
+- **Analysis must work without content (D3):** block rows, hashes, token counts, source keys, file paths and labels survive archive; text, previews and raw JSON do not. Hot-spot labels come from stored structure (`analysis/block_hotspots.py: block_label`).
+- **Block row ids are request-local** and change if a migration rebuilds a request's blocks, so `?block=` links are not durable across such migrations.
+- **Frontend policy:** the UI shows what the API computed. The category labels live in `ContextBar.tsx` (shared by donut, bar and hot spots); block colours in `lib/blockVisuals.ts` (`visualForType`).
+- **Test hazards:** tiktoken is pathologically slow on long runs of one repeated character (use prose); pytest runs ~15 s, Vitest ~6 s; `setupTests.ts` stubs `scrollIntoView`.
+- **Known performance facts** (samples): cold lineage/conversation membership 65 s (4,032 requests), 7 s (570); `select ... from requests where session_id=?` is slow on unarchived sessions because SQLite walks the large inline body columns (0.38 s for 570 requests); both are candidates for a `perf:` issue.
+
+## Inputs for the draft plans (details in each draft's "State of the code")
+- **Context tree (5):** needs request-level *turn grouping* (not implemented), a controlled JSON viewer reveal (the viewer was rebuilt: `components/ui/content-viewer/`, `useTreeExpansion`), and per-block fields that now exist (`source_key`, `activity`, `file_path`, `json_path`, link ids). Its conversation scope inherits the cold-membership cost.
+- **Compare (6):** `ContextDelta` already exposes `removed`; block ids are request-local; archived content cannot be diffed (D3); `compaction` purpose helps explain lineage breaks.
+- **Hints (7):** hot-spots rows already carry the inputs (`run_count`, `in_latest_request`, `dropped`, first/last seen, read vs edit tokens); file-path coverage is partial (8% of blocks in the sample) and spellings split.
+- **Similarity (8):** exact-hash grouping is what exists; file version chains need path unification and are only as good as path coverage.
 
 ## Cross-cutting open questions
 

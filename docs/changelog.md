@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Upgrading from 0.5.4
+
+- **Run `contextspy db-upgrade` once before starting** (the server refuses to start until you do). It backs the
+  database up first, applies the two data migrations of this release (v9: purpose, block sources and locations; v10: file
+  paths) and prints progress; it took 2-3 minutes on a database with about 7,000 requests and 1.5 million blocks.
+  New databases need nothing. Afterwards `contextspy db-compact` (with ContextSpy stopped) can give disk space back if you
+  had purged data before. Information that was already purged (tool-call text) cannot be recovered, so older requests
+  keep generic source labels and no file paths.
+- Behaviour changes: payloads are no longer deleted after 7 days by default, and new databases use incremental
+  auto-vacuum (details below).
+
 ### Hot spots
 
 - **New session view: Hot spots.** On a session page, **Hot spots** ranks what the context window keeps carrying: the
@@ -14,6 +25,8 @@
   Conversations view links to its hot spots. Counts are visible tokens only (partial or opaque requests are flagged); same
   content is matched by exact text, so a file that changed counts as a different block, and a path written relative and
   absolute shows as two files.
+- The first conversation-scoped Hot spots load of a very long session pays the same one-off conversation analysis as the
+  Conversations view (up to about a minute at 4,000 requests); after that the ranking itself takes about a second.
 - Fixed: the "Present in" panel and hot spots reuse the conversation analysis for up to a minute; the cache lifetime was
   counted from the start of a slow analysis, so on very long sessions it could expire before it was used.
 
@@ -73,11 +86,9 @@
   (expand a run to list them). Clicking a request opens it with that block selected. Totals are visible-block
   tokens, not provider-billed tokens; blocks with hidden or empty content cannot be matched across requests.
   Request detail now keeps the selected block in the URL (`?block=<id>`), so a selection survives a refresh.
-  On long sessions the first conversation-scope lookup can take a few seconds.
-- Sessions gained an `archived_at` column. Nothing sets it yet.
-- **Run `contextspy db-upgrade`** (schema v9) to fill these in for existing data. It makes a backup
-  first, prints progress, and took about three minutes on a database with ~7,000 requests and
-  1.4 million blocks. Source keys for tool calls whose text was already purged fall back to the
+  On long sessions the first conversation-scope lookup can take a while (seconds, and about a minute on a session with
+  thousands of requests); later lookups of the same session are fast for a minute.
+- Existing data is filled in by `contextspy db-upgrade` (schema v9; see *Upgrading* above). Source keys for tool calls whose text was already purged fall back to the
   tool name; locations are only recoverable where the canonical request/response was retained.
 
 ### Request detail

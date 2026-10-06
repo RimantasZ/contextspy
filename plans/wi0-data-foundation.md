@@ -1,6 +1,6 @@
 # WI-0: Data foundation — migration v9, capture-time classification, `json_path`
 
-Status: **implemented (all five slices) on 2026-10-05. Committed: slice 1 in `528f3db`, slices 2–5 in `88bd6e0`. Not released.**
+Status: **implemented (all five slices) on 2026-10-05. Committed: slice 1 in `528f3db`, slices 2–5 in `88bd6e0`. Not released.** *Later changes: Plan 4a (`d608561`) raised `CLASSIFIER_VERSION` to 2 and the schema to v10, and the v9 backfill loop is now shared as `_backfill_classification` (a database upgraded straight from schema 8 gets file paths in the v9 step). The "program names only" privacy rule in §4.3 was narrowly superseded by D18 for `blocks.file_path`.*
 Spec written 2026-10-05. Where the code differs from the text below, §17 (Implementation log) is authoritative.
 
 | Slice (§13) | Status |

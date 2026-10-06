@@ -1,6 +1,6 @@
 # Idea 8 (v2): Similarity grouping — track blocks that changed and were reloaded
 
-Status: **IDEA, postponed to v2 (user, 2026-10-06).** Not refined. Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Extends [../hot-spots.md](../hot-spots.md) (Plan 4b), which groups blocks by **exact** content hash only.
+Status: **IDEA, postponed to v2 (user, 2026-10-06).** Not refined. Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Extends [../hot-spots.md](../hot-spots.md) (Plan 4b, **implemented**), which groups blocks by **exact** content hash only.
 
 ## Why
 Exact identity (`content_hash`) hides a pattern that matters for optimisation: a file is read, edited, and read again; or a tool definition / system prompt changes by a few characters; or a large tool result is regenerated with small differences. Each variant is a separate row in hot spots, so the user cannot see "this one thing was reloaded 7 times in slightly different forms and paid for each time". The user wants to **see cases where a file was changed and reloaded**, compared with today's behaviour (exact matches only).
@@ -25,3 +25,12 @@ Exact identity (`content_hash`) hides a pattern that matters for optimisation: a
 
 ## Depends on
 Plan 4a (`file_path`) and Plan 4b (hot spots) being implemented and used first; Plan 6 (compare) for the shared text-diff machinery.
+
+## State of the code (2026-10-06)
+
+- **Plans 4a and 4b are implemented**, so idea 1 (file-path version chains) has its inputs: `blocks.file_path` on read/edit tool calls and their results, and a **Files** grouping in hot spots with `distinct_versions` (distinct content hashes per file), `result_tokens` (reads) and `call_tokens` (edits/patch text), first/last seen and `in_latest_request`. What is missing is the *timeline* (ordered versions, per-version occurrence ranges, overlap of old and new, diff size).
+- **Measured limits (samples from the author's database, D16 applies):** ~8% of blocks have a path; relative and absolute spellings of the same file appear as separate rows (the proxy does not see the working directory), so a version chain needs path unification first (candidate: match on the longest common path suffix within a conversation, with an explicit confidence); apply-patch call text is a carried block of its own and often dominates a file's tokens.
+- **Content availability:** text diffs and fingerprints are only computable where block text is retained; archive removes it (D3). A fingerprint column on `block_contents` would survive only if it is computed before archive, and `block_contents` rows are deduplicated by hash and garbage-collected by archive, so a derived column there disappears with them: store fingerprints on `blocks` (or a new table keyed by content hash and kept after archive) if archived sessions must stay comparable.
+- **Aggregation seam:** hot spots group in one pass (`db/hotspots_service.py: aggregate_select`); any "Versions" grouping should reuse that pass and the scope temp table rather than add queries, and must keep the CROSS JOIN query shape (the plan test fails otherwise).
+- **Block text is not needed for exact matching but is for similarity;** `compaction` requests (purpose) are a natural place where "reloaded in slightly different form" appears.
+

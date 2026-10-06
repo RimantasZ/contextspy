@@ -1,6 +1,6 @@
 # Analysis features: architecture review and data-model decisions
 
-Status: architect review, 2026-10-05. Companion to [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
+Status: architect review, 2026-10-05; **its decisions are implemented** (WI-0, Plans 1, 3, 4; see "What changed after implementation" at the end). Companion to [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md). The measurements below are 2026-10-05 samples.
 Items marked **[PROPOSED]** await user confirmation; items marked **[DECIDED]** follow from roadmap decisions D1–D14
 or are forced by measured data. Section 5 lists the schema changes as one batched migration.
 User answers of 2026-10-05 (fidelity, tool source, json_path order, retention) are folded in below.
@@ -71,7 +71,7 @@ In the sample only ~31% of distinct input tool_call hashes still have retained c
 `requests.purpose`, `purpose_detail` (JSON), `classifier_version`. `turn_*` stays derived at read time from the lineage graph (lineage is never persisted). Agent-specific signals (e.g. orchestration tools such as `spawn_agent`, Claude Code `Task`, title-generation side calls) go through the same pluggable-registry mechanism; the baseline structural rule (trailing user text vs trailing tool results; response kind) must work for every adapter.
 
 ### 2.4 `json_path` on blocks — [DECIDED, priority PROPOSED]
-`blocks.json_path` TEXT (JSON array, nullable). Capture-time only; backfill only from retained canonical bodies (≈28% of requests today; archive reduces this further). Implement for **all adapters in one change (user decision D13)**: `anthropic.py`, `openai_chat.py`, `openai_responses.py`, `ollama.py` (llama.cpp/vLLM/Copilot ride the OpenAI-compatible paths — confirm which adapter each uses via `get_adapter` path dispatch). Each adapter needs exact-path fixtures. For WS/delta transports the *canonical* (reconstructed) request body is the path target, not the raw delta. For WS/delta transports the *canonical* (reconstructed) request body is the path target, not the raw delta.
+`blocks.json_path` TEXT (JSON array, nullable). Capture-time only; backfill only from retained canonical bodies (≈28% of requests today; archive reduces this further). Implement for **all adapters in one change (user decision D13)**: `anthropic.py`, `openai_chat.py`, `openai_responses.py`, `ollama.py` (llama.cpp/vLLM/Copilot ride the OpenAI-compatible paths — confirm which adapter each uses via `get_adapter` path dispatch). Each adapter needs exact-path fixtures. For WS/delta transports the *canonical* (reconstructed) request body is the path target, not the raw delta.
 
 ### 2.5 Archive — [DECIDED, details in draft]
 `sessions.archived_at` (nullable). Derived `status` = active|ended|archived. See `session-archive.md` and `db-compact.md`.
@@ -118,3 +118,11 @@ Mechanics (per `AGENTS.md`): additive columns in `db/database.py:_migrate()`; ba
 3. Session archive (plan 3) — unblocks storage and honest "purged" states.
 4. Hot spots (plan 4).
 5. Tree (plan 5), then compare (plan 6), then hints (plan 7).
+
+## 7. What changed after implementation (2026-10-06)
+- **Schema is v10, not v9.** v9 is the batched migration of section 5. v10 added `blocks.file_path` (+ index) and re-derives source keys/paths for requests below `CLASSIFIER_VERSION` 2 (decision D18 reversed the "program names only" rule for that one field; see `file-paths.md`). The two share one batched backfill (`migrations._backfill_classification`).
+- **Delivery order (section 6) was followed**: v9 + classification, info panel, archive (with `db-compact` first), file paths, hot spots. Hot spots is a view of a *session*, not a request-level page.
+- **Contract 4 (revision-cached heavy aggregates) was not applied to hot spots**: one aggregation pass fits the budget (~1.1 s for 4,032 requests). Only the conversation *membership* is cached (60 s, per session, keyed by request count). A hot-spots cache is postponed (issue #67); the aggregation is shaped so one can wrap it.
+- **Contract 2 (run-length occurrences) held** for "Present in"; hot spots add per-row `run_count` and a `latest` pointer instead of listing occurrences.
+- **Provider neutrality (D16) held**: parsers shipped are Codex `exec`/`js`, JSON-argument `Bash`, and generic structured read/edit tools (`Read`, `read_file`, `str_replace_editor`, ...). No Copilot, llama.cpp or vLLM captures were available; Ollama's adapter emits no tool-call blocks at all.
+- **New performance facts**: the cold conversation membership (existing lineage analysis) costs 65 s on a 4,032-request session; listing requests of an unarchived session is slow because of large inline body columns. Neither was caused by this work; both limit how fast conversation-scoped features can feel. Measure before building more on them.

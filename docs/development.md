@@ -256,7 +256,7 @@ Capture stamps three derived facts, all in Python (`analysis/`), none computed i
 `BlockRecord.to_dict` also returns `activity`, derived at read time from `source_key` by
 `analysis/activity.py` (a plain table, so it can be refined without a migration).
 
-`contextspy db-upgrade` (schema v9) backfills existing rows with the same functions: classification
+`contextspy db-upgrade` (schema v9, and v10 for file paths, which re-derives rows below `CLASSIFIER_VERSION` 2 with the same loop) backfills existing rows with the same functions: classification
 from the stored block rows, and `json_path` by re-parsing a retained canonical document and copying
 paths only when the parse matches the stored blocks exactly (same count, block types and content
 hashes per direction). It processes requests in keyset batches, prints progress, and is safe to
