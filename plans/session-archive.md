@@ -1,6 +1,6 @@
 # Plan 3b: Session lifecycle and explicit archive
 
-Status: **implemented 2026-10-06 (uncommitted); not released; not checked in a browser; no real database archived.** Reviewed twice before implementation (2026-10-05 and 2026-10-06). See "Implementation status" at the end for what exists and how it differs from this text. Depends on [db-compact.md](db-compact.md) (Plan 3a, implemented).
+Status: **implemented 2026-10-06, committed in `a2a4b8c`; not released; not checked in a browser; no real database archived.** Reviewed twice before implementation (2026-10-05 and 2026-10-06). See "Implementation status" at the end for what exists and how it differs from this text. Depends on [db-compact.md](db-compact.md) (Plan 3a, implemented).
 [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md). Decisions D3, D4, D14, D17.
 
 ## Why
@@ -100,7 +100,7 @@ None blocking. To revisit later: auto-archive after N days (the former option (c
 
 ## Implementation status (2026-10-06)
 
-**Implemented** (backend 542 tests, frontend 183 tests, `npm run check` clean; uncommitted):
+**Implemented** (backend 542 tests, frontend 183 tests, `npm run check` clean; committed in `a2a4b8c`):
 - `contextspy/db/session_archive.py`: `archive_session_data(db, session_id)` (404/409 errors as exceptions, per-session in-progress guard, repeatable), chunked content cleanup (≤ 500 hashes, write lock taken first), `reclaim_space(engine)` on the raw DBAPI connection (1000-page steps, 30 s budget, `wal_checkpoint(PASSIVE)` after).
 - `POST /api/sessions/{id}/archive` (404 unknown, 409 active or already running) broadcasting `session_archived`; `Session.status` in `Session.to_dict` and in `get_sessions_summary` entries (`status`, `archived_at`); `Request.to_dict` detail adds `content_state` and `session_archived_at`.
 - Retention: `RetentionSettings` defaults `0`/`0`, the generated config template follows, `startup_vacuum` logs a notice when either value is > 0 (explicit values still honoured).

@@ -85,7 +85,7 @@ Implemented (WI-0, tests green, not released): schema v9; per-request `purpose`/
 
 **Also implemented (Plan 1; committed in `153a9d0`):** `GET /api/requests/{id}/blocks/{block_id}/occurrences` (+ `/occurrences/requests`), the "Present in" section in the block inspector, and `?block=<id>` selection in Request detail.
 
-**Also implemented (Plan 3b; in the working tree, not committed):** session archive (`POST /api/sessions/{id}/archive`, `contextspy session archive`, Archive button/badge/notice in the UI), session `status`, request `content_state`, retention default `0` with a startup notice, online file shrinking after an archive. Verified on a copy of the author's database; no real database archived.
+**Also implemented (Plan 3b; committed in `a2a4b8c`):** session archive (`POST /api/sessions/{id}/archive`, `contextspy session archive`, Archive button/badge/notice in the UI), session `status`, request `content_state`, retention default `0` with a startup notice, online file shrinking after an archive. Verified on a copy of the author's database; no real database archived.
 
 **Also implemented (Plan 3a; committed in `f34fa29`):** `contextspy db-compact` (offline VACUUM, optional `--backup`), `pre_compact` backups recognised by restore, new databases created in incremental auto-vacuum mode, file-size/free-space lines in `db-stats`. Verified on a copy of the author's database (6.60 → 2.36 GB); **the live database itself has not been compacted.**
 
@@ -119,7 +119,7 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 | 1 | Info panel: "present in" / totals for a block | [`info-panel.md`](info-panel.md) | **implemented and committed** (`153a9d0`); not released, not checked in a browser; shared-pieces extraction was dropped in review | WI-0 |
 | 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **baseline implemented in WI-0** (`user_turn`, `tool_continuation`, `compaction`, `unknown`; `housekeeping` and agent detectors NOT implemented; UI shows it in Request detail only) | — |
 | 3a | `contextspy db-compact` (reclaim free pages, enable incremental auto-vacuum) | [`db-compact.md`](db-compact.md) | **implemented and committed** (`f34fa29`); not released; the author's live DB not yet compacted | — |
-| 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **implemented** (uncommitted, not released, not checked in a browser); only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
+| 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **implemented and committed** (`a2a4b8c`); not released, not checked in a browser; only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
 | 4a | Capture the file a block is about (`blocks.file_path`, schema v10) | [`file-paths.md`](file-paths.md) | **reviewed and decided, not started** | WI-0 |
 | 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **reviewed and decided, not started** | 1, 3b, 4a (Files grouping only) |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
@@ -145,6 +145,26 @@ the author's DB (see WI-0 §17) before treating either as settled.
 3. Verify every code reference in a plan before relying on it; plans record the state on 2026-10-05.
 4. When a plan is implemented, mark its status here and in the plan, update `SPEC.md`,
    `docs/development.md`, `docs/changelog.md` as relevant.
+
+## Working agreements and practical notes (for agents continuing this work)
+
+How the user works (observed 2026-10-05/06, consistent across all plans):
+- **Plan → review → decide → implement.** A plan is written, then *reviewed against the code and real measurements*, open questions are answered (the user answers product/privacy ones, the agent answers technical ones), the plan file is updated, and only then implemented. After implementing, the plan gets an "Implementation status" section that lists exactly what exists, every difference from the plan, what was *not* done and what was *not* verified. **Never leave the roadmap or a plan claiming more (or less) than the code does; the user asked for this explicitly.**
+- **The user commits.** Do not commit unless asked. Status lines say "uncommitted" while true; check `git log`/`git status` and correct them (they go stale when the user commits).
+- **Provider neutrality (D16):** never justify a decision with the contents of the author's local database (heavily Codex); use it only for sizing, plausibility and fixtures. Agent-specific logic is an optional registered plug-in over a generic baseline.
+- **Measure before deciding, on a copy.** Copy the live DB with SQLite's online backup API into the scratchpad (`sqlite3.connect("file:...?mode=ro", uri=True).backup(dest)`); never run migrations, compaction or archive on the live `~/.contextspy/contextspy.db`. Record measured numbers in the plan and label them as samples.
+- **One plan file per feature; drafts in `unconfirmed_drafts/`** until their open questions are answered. Update `SPEC.md`, `docs/*`, `docs/changelog.md` with each change; run `pytest`, and for UI changes `cd ui && npm run check` and `make ui`.
+- Policies in `AGENTS.md` still apply: analysis in Python/SQL, UI only renders; any `models.py` change needs the `_migrate()`/`migrations.py` step.
+
+Pitfalls found the hard way (each cost real time):
+- macOS has no `timeout` command; run long probes in the background writing to a log in the scratchpad and poll the log. A `rm` whose target contains a shell variable is blocked by a safety check (use literal absolute paths; do not rely on cleanup commands inside a larger command, the whole command is dropped, including any heredoc that creates a script).
+- **tiktoken is pathologically slow (and can overflow its regex stack) on long runs of one repeated character**; tests that need large text must use prose-like text (`tests/test_session_archive.py: prose()`).
+- **SQLAlchemy cannot step `PRAGMA incremental_vacuum`** (it closes the result after one step); use `engine.raw_connection()` and `fetchall()`. `auto_vacuum` must be set *before* `journal_mode=WAL` on a new file.
+- SQLite plans: an aggregate `GROUP BY content_hash` over a join can make the planner scan `idx_blocks_content_hash` (15-100x slower); drive from the scope table with `CROSS JOIN`. Cheap-looking per-click lineage calls cost 1-7 s on long sessions (revision check hashes every block row); cache membership (see `db/block_occurrence_service.py`).
+- Pysqlite begins transactions lazily at the first DML; to make "measure then delete" consistent, take the write lock first with a harmless write.
+- The server refuses to start while a data migration is pending (`contextspy db-upgrade` first); the live database is **still not compacted/archived/upgraded by the agent**, and the author's `blocks.json_path` column already holds 6,794 legacy leaf-form values from an earlier prototype (see `wi0-data-foundation.md` §17).
+
+Where things stand at the end of the 2026-10-06 session: WI-0, Plans 1, 3a, 3b are implemented and committed (not released, not seen in a browser); Plans 4a/4b are reviewed and decided, **not started (4a is next)**; Plans 5, 6, 7, 8 are drafts/ideas. Open decisions waiting for the user: review the `compaction_trigger` purpose rule; what to do with the legacy leaf-form `json_path` rows; answers to Plan 5's open questions.
 
 ## Cross-cutting open questions
 
