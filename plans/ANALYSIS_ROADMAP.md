@@ -37,6 +37,7 @@ serves one of those four questions.
 | D14 | **Retention:** time-based purge defaults to off (`0`), setting kept as legacy; explicit archive is the main path. | Refined by D17: also log a startup notice when a config explicitly enables it. |
 | D15 | **Batched schema migration v9** for all new columns (requests purpose fields, blocks `source_key`/`json_path`, sessions `archived_at`). | **Done** (columns, backfill, tests). See `analysis-architecture.md` §5. |
 | D17 | **Compaction before archive; incremental auto-vacuum** (user, 2026-10-05). Deleting rows never shrinks a SQLite file (the author's 6.6 GB DB is 65% free pages). `db-compact` (offline VACUUM + converts to `auto_vacuum=INCREMENTAL`) ships first; new databases start incremental; archive then shrinks the file online. | `db-compact.md`. D14 refined: default `0` **plus a startup notice** when a config explicitly enables the purge. |
+| D18 | **File paths are stored** (user, 2026-10-06; "the retention policy was a mistake anyway"). Read/edit tool calls get their target file in `blocks.file_path`, persisting after archive; every other argument stays unstored. This reverses WI-0's "program names only" rule for that one field. A single function (`analysis/paths.py: normalize_file_path`) is the only writer, so obfuscation (basename/hash/setting) can be added later if paths become a problem. | `file-paths.md`. |
 | D10 | One plan file per feature. Plans that are confirmed live in `plans/`; plans still being refined live in `plans/unconfirmed_drafts/`. | |
 
 ## Repository policies that constrain every plan (from `AGENTS.md`)
@@ -88,7 +89,7 @@ Implemented (WI-0, tests green, not released): schema v9; per-request `purpose`/
 
 **Also implemented (Plan 3a; committed in `f34fa29`):** `contextspy db-compact` (offline VACUUM, optional `--backup`), `pre_compact` backups recognised by restore, new databases created in incremental auto-vacuum mode, file-size/free-space lines in `db-stats`. Verified on a copy of the author's database (6.60 → 2.36 GB); **the live database itself has not been compacted.**
 
-**Not implemented:** everything in Plans 4, 5, 6, 7 (hot spots, context tree, compare, hints);
+**Not implemented:** everything in Plans 4a, 4b, 5, 6, 7 (file paths, hot spots, context tree, compare, hints);
 `housekeeping` detection and any agent purpose detectors; source parsers beyond Codex `exec`/`js` and `Bash`; purpose in the request
 list/conversation cards; any use of `json_path` beyond displaying it; cache reporting (D2); (the retention-default change and startup notice, D14, are part of Plan 3b and are implemented).
 Nothing from this roadmap has been released, and the real database has not been upgraded.
@@ -119,7 +120,8 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 | 2 | Request purpose & extensible classification | [`request-purpose.md`](request-purpose.md) → implemented by WI-0 | **baseline implemented in WI-0** (`user_turn`, `tool_continuation`, `compaction`, `unknown`; `housekeeping` and agent detectors NOT implemented; UI shows it in Request detail only) | — |
 | 3a | `contextspy db-compact` (reclaim free pages, enable incremental auto-vacuum) | [`db-compact.md`](db-compact.md) | **implemented and committed** (`f34fa29`); not released; the author's live DB not yet compacted | — |
 | 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **implemented** (uncommitted, not released, not checked in a browser); only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
-| 4 | Hot spots (per conversation / per session) | [`unconfirmed_drafts/hot-spots.md`](unconfirmed_drafts/hot-spots.md) | draft | 1, 3b |
+| 4a | Capture the file a block is about (`blocks.file_path`, schema v10) | [`file-paths.md`](file-paths.md) | **reviewed and decided, not started** | WI-0 |
+| 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **reviewed and decided, not started** | 1, 3b, 4a (Files grouping only) |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
 | 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
 | 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | idea only | 4 |
@@ -130,7 +132,7 @@ so they were written first.
 ## How to continue
 
 **WI-0 ([`wi0-data-foundation.md`](wi0-data-foundation.md)) is implemented**; its §17 is the authoritative record of what exists and how it
-differs from its own spec. Plan 1 (info panel "present in"), Plan 3a (`db-compact`) and Plan 3b (archive) are implemented too. Plans 4 (hot spots) and 5 (context tree) are drafts: their open questions need answers before they can be specified. Plan 4 depends on 1 and 3b (both implemented), Plan 5 on 1 and 2.
+differs from its own spec. Plan 1 (info panel "present in"), Plan 3a (`db-compact`) and Plan 3b (archive) are implemented too. Plan 4 (hot spots) is reviewed and split into 4a (file paths, schema v10) and 4b (the feature); Plan 5 (context tree) is still a draft whose open questions need answers. 4b depends on 1 and 3b (implemented) and, for its Files grouping, on 4a.
 WI-0 follow-ups that still wait for captures from Copilot, Ollama, llama.cpp and vLLM: housekeeping/compaction detectors per agent and more
 source parsers. Review the `compaction_trigger` rule (a judgement call) and decide what to do with the legacy leaf-form `json_path` values in
 the author's DB (see WI-0 §17) before treating either as settled.

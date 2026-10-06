@@ -1,7 +1,7 @@
 # Idea 7: Optimisation hints ("carried but dead")
 
 Status: IDEA only; not refined with the user. Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md).
-Depends on: [hot-spots](hot-spots.md). Do not start before hot spots exist.
+Depends on: [hot-spots](../hot-spots.md). Do not start before hot spots exist.
 
 ## Idea
 
