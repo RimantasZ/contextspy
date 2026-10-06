@@ -114,11 +114,31 @@ the older build. The current build enables WAL again on its next start; never re
 files manually as a rollback method.
 
 Observed request payloads, canonical request/response payloads, normalized SSE/NDJSON/WebSocket
-event logs, plus the content-addressed `block_contents` table (see below), become eligible for
-purging 7 days after capture by default to limit disk usage — configurable via
-`[retention]` in `config.toml` (`raw_body_days`, `block_content_days`; `0` disables purging).
-Purging only runs once, at server startup — there is no background timer, so a `contextspy`
-process left running for many days won't purge again until restarted.
+event logs, plus the content-addressed `block_contents` table (see below), are removed explicitly by
+**archiving a session** (`db/session_archive.py`; `POST /api/sessions/{id}/archive`, `contextspy session archive`).
+The older time-based purge is configured via `[retention]` in `config.toml` (`raw_body_days`,
+`block_content_days`) and is **off by default (`0`)**; explicit values are honoured and `startup_vacuum` logs a notice
+when it is enabled. It only runs once, at server startup — there is no background timer, so a `contextspy`
+process left running won't purge again until restarted.
+
+Archive details worth knowing when changing `session_archive.py`: it only runs for ended sessions and is repeatable; the
+content cleanup is chunked (≤ 500 hashes) and every chunk takes the write lock first (`_take_write_lock`) before measuring and
+deleting with the "not referenced outside this session" condition inside the `DELETE`, because a capture inserts
+`block_contents` (INSERT OR IGNORE) and its block row in one transaction and must never lose content it just reused; only
+requests of other sessions that are *not archived*, and requests without a session, keep a hash alive. Returning freed pages
+(`reclaim_space`) must use the raw DBAPI connection (`engine.raw_connection()`): through SQLAlchemy `PRAGMA incremental_vacuum`
+closes its result after one step and frees about one page per call. Capture reads stored bodies of the request it continues
+(`proxy/addon.py: _DatabaseLineageRepository`, looked up by provider response ID across sessions), so a resumed conversation whose
+predecessor was archived is captured with partial context; this is documented behaviour, covered by a test.
+
+Purging (`db/database.py: startup_vacuum`, despite its name) only frees pages inside the file: SQLite never
+shrinks the file by itself, so a purged database keeps its size. `contextspy db-compact` (`db/compaction.py`)
+runs `VACUUM` offline under the maintenance lock and switches the database to incremental auto-vacuum
+(`PRAGMA auto_vacuum = INCREMENTAL`); `init_db` puts new databases in that mode (it must be set before
+`journal_mode=WAL` writes the file header and before any table exists), after which `PRAGMA incremental_vacuum`
+(its result rows must be fetched for it to do any work) returns freed pages to the filesystem online. Backups are
+independent standalone copies and are unaffected by compaction; `pre_compact` is a backup purpose recognised by
+`list_backups` and `db-restore`.
 
 ### Capture and analysis boundary
 
@@ -160,7 +180,7 @@ For Anthropic `thread.continue`, the canonical request is an expanded logical co
 `thread.previous_message_id`; the separate diagnostics predecessor ID compares cache fingerprints.
 Inherited system-block tails are treated as uncertain, and server-side context edits may leave
 the actual post-edit prompt opaque. A versioned data migration reanalyzes retained thread rows;
-requests already purged by retention cannot be reconstructed from usage numbers.
+requests whose payloads were already removed (archived or purged) cannot be reconstructed from usage numbers.
 
 Reconstruction and block-analysis failures are recorded in `capture_error` without discarding the
 canonical application payload. The UI's JSON is provider-level application content, not
@@ -193,7 +213,72 @@ content part (system prompt, tool definition, a single tool call or tool result,
 thinking segment, ...).
 Each block's semantic `category` (one of the 8 breakdown categories) and structural `block_type`
 are kept forever; only the block's `content` (in `block_contents`, deduplicated by content hash
-across requests) is subject to the retention window above.
+across requests) is removed when a session is archived (or by the opt-in time-based purge above).
+
+### Request purpose, block source and block location
+
+Capture stamps three derived facts, all in Python (`analysis/`), none computed in the UI:
+
+- **`requests.purpose` / `purpose_detail` / `classifier_version`** (`analysis/purpose.py`,
+  `classify_request`). The baseline is structural and provider-neutral: it finds the last
+  *conversational* message (messages made only of system/developer instructions or reasoning items are
+  skipped, because providers append them after the real last turn) and returns `tool_continuation`
+  when it carries tool results, `user_turn` when it carries user text, `compaction` when it contains
+  a `compaction_trigger` item, otherwise `unknown`. `purpose_detail` adds the trailing tool names,
+  whether user text accompanied them, and what the response was (`tool_calls`, `mixed`,
+  `final_text`, `empty`). A request whose analysis produced no blocks stays unclassified (NULL).
+  To teach it an agent-specific case, call `register_purpose_detector(agents=..., detector=...)`; a
+  detector may return any purpose (e.g. `housekeeping`). Bump `CLASSIFIER_VERSION` when the logic
+  changes (now 2: file paths) and add a migration that re-derives rows below the new version.
+- **`blocks.source_key`** (`analysis/sources.py`, `resolve_sources`): what produced the block. The
+  baseline is `system|user|assistant|reasoning|other`, `tool:<name>` and `mcp:<server>/<tool>`.
+  Tool calls can be refined by registered parsers (`register_source_parser`), which currently cover
+  JSON-argument shell tools (`Bash`) and Codex's JavaScript `exec`/`js` snippets. Parsers return the
+  program name only (`bash:git`, `exec:rg`, `exec:multi`) and must never record arguments or other
+  command content: the key outlives the block's text. Results inherit the key of their call.
+- **`blocks.file_path`** (`analysis/paths.py`, set by `resolve_sources`): the one argument that is kept, the file a
+  read/edit tool call targets. Sources: a JSON-object argument (`file_path`, `path`, ... of `Read`, `Edit`,
+  `Write`, `read_file`, `str_replace_editor`, ...), the positional files of a closed list of shell programs
+  (`cat`, `head`, `tail`, `nl`, `bat`, `less`, `wc`, `stat`, `file`, `sed -n`), and `*** Add/Update/Delete File:`
+  headers of an `apply_patch` (patch bodies are never stored). Several files: the first goes in the column, all
+  of them in `attrs["source"]["files"]` (max 20). Results inherit the path of their call. Every path passes
+  `normalize_file_path`, the only place that decides what is stored: to obfuscate paths later (basename, salted
+  hash, a setting) change that function and re-derive; nothing else writes the column. Paths are not resolved
+  against a working directory, so relative and absolute spellings of one file differ. They survive archive.
+  A parser that raises, or content that was purged, falls back to the baseline.
+- **`blocks.json_path`**: typed path into the canonical request (input blocks) or response (output
+  blocks) JSON, set by each adapter (`Block.make(..., json_path=(...))`). It points at the smallest
+  node the block derives from: a content-part object, the string value for plain-string content, or
+  the enclosing container when several parts were joined. `None` means there is no honest location
+  (for example the block synthesised for provider-reported reasoning tokens). New adapters must set
+  it and add an exact-path test (`tests/test_json_path.py`), which also checks that every path resolves.
+
+`BlockRecord.to_dict` also returns `activity`, derived at read time from `source_key` by
+`analysis/activity.py` (a plain table, so it can be refined without a migration).
+
+`contextspy db-upgrade` (schema v9, and v10 for file paths, which re-derives rows below `CLASSIFIER_VERSION` 2 with the same loop) backfills existing rows with the same functions: classification
+from the stored block rows, and `json_path` by re-parsing a retained canonical document and copying
+paths only when the parse matches the stored blocks exactly (same count, block types and content
+hashes per direction). It processes requests in keyset batches, prints progress, and is safe to
+re-run.
+
+### Hot spots queries
+
+`db/hotspots_service.py` ranks the blocks, sources or files of a scope by visible tokens carried
+(`GET /api/sessions/{id}/hotspots`). One pass groups the scope's input blocks into a TEMP table; rows,
+totals, the summary, sorting, paging and the in-context filter come from that table, and only the
+returned rows pay a second, bounded lookup (descriptive columns of the latest occurrence by primary
+key). Rules to keep when changing it:
+
+- **The scope table must be the outer loop** (`FROM hs_scope s CROSS JOIN blocks b ON b.request_id = s.id`).
+  Left free, SQLite walks `idx_blocks_content_hash` for a `GROUP BY content_hash` and is 15-100 times slower.
+  `tests/test_hotspots.py` asserts the query plan for all three groupings.
+- `aggregate_select` must not depend on sort, paging or the in-context filter, so a cache can wrap it
+  later (postponed, GitHub issue #67).
+- The latest occurrence of a group is found in the same pass by maximising `position * 2**32 + block id`
+  (`analysis/block_hotspots.py: unpack_latest`); run counts come from a `GROUP_CONCAT` of positions.
+- Conversation membership comes from `block_occurrence_service.scope_for_session`, shared with the block
+  "Present in" panel; it is cached per session (60 s, measured from the end of the build).
 
 ---
 
@@ -248,7 +333,7 @@ context. It does nothing for Anthropic, whose tokenizer matches neither encoder.
 Every `Request` records which encoder produced its counts in the `tokenizer` column
 (`tiktoken/o200k_base`, or `tiktoken/cl100k_base` for rows captured before 0.3.4). Existing
 rows are **not** recounted — there is no migration, because the raw bodies needed to redo the
-work are purged on the retention schedule. Sessions spanning the upgrade therefore mix both,
+work are removed when a session is archived. Sessions spanning the upgrade therefore mix both,
 which given the ~0.0% difference is immaterial in aggregate but is recorded per row should it
 ever matter.
 

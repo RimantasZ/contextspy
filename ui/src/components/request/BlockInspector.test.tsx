@@ -1,8 +1,11 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import { makeBlock } from '../../test/fixtures'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { makeBlock, makeOccurrences } from '../../test/fixtures'
 import { BlockInspector } from './BlockInspector'
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('BlockInspector', () => {
   it('shows a block-shaped tool flow and invokes linked navigation', async () => {
@@ -37,4 +40,63 @@ describe('BlockInspector', () => {
     render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
     expect(screen.queryByText(/Per-request header/)).toBeNull()
   })
+
+  it('shows source, activity and the raw JSON location when they are known', () => {
+    const block = makeBlock({
+      id: 5, block_type: 'tool_call', tool_name: 'exec', source_key: 'exec:multi', activity: 'command',
+      json_path: ['input', 4, 'content', 1], attrs: { source: { calls: ['git', 'rg'] } },
+    })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.getByText('exec:multi')).toBeTruthy()
+    expect(screen.getByText('command')).toBeTruthy()
+    expect(screen.getByText('git, rg')).toBeTruthy()
+    expect(screen.getByText('input[4].content[1]')).toBeTruthy()
+  })
+
+  it('shows the file a read/edit tool call targets, and every file of a multi-file call', () => {
+    const block = makeBlock({
+      id: 7, block_type: 'tool_call', tool_name: 'apply_patch', file_path: 'src/a.py',
+      attrs: { source: { files: ['src/a.py', 'b.txt'] } },
+    })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.getByText('src/a.py', { selector: 'dd' })).toBeTruthy()
+    expect(screen.getByText('src/a.py, b.txt')).toBeTruthy()
+  })
+
+  it('omits the file rows when no file is known', () => {
+    const block = makeBlock({ id: 8, block_type: 'tool_call' })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.queryByText('File')).toBeNull()
+    expect(screen.queryByText('Files in call')).toBeNull()
+  })
+
+  it('omits source rows for blocks that were captured before classification existed', () => {
+    const block = makeBlock({ id: 6 })
+    render(<BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} />)
+    expect(screen.queryByText('Source')).toBeNull()
+    expect(screen.queryByText('Activity')).toBeNull()
+    expect(screen.queryByText('Raw JSON location')).toBeNull()
+  })
+
+  describe('Present in section', () => {
+    function renderInspector(block: ReturnType<typeof makeBlock>, requestId?: string) {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(makeOccurrences()), { status: 200 }))
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      return render(<QueryClientProvider client={client}><BlockInspector block={block} blocks={[block]} onJump={() => {}} onClear={() => {}} requestId={requestId} /></QueryClientProvider>)
+    }
+
+    it('is shown for input blocks of a known request', async () => {
+      renderInspector(makeBlock({ id: 9 }), 'request-1')
+      expect(await screen.findByText(/of 5 requests/)).toBeTruthy()
+      expect(screen.getByRole('region', { name: 'Present in' })).toBeTruthy()
+    })
+
+    it('is hidden for output blocks and without a request id', () => {
+      renderInspector(makeBlock({ id: 9, direction: 'output' }), 'request-1').unmount()
+      expect(screen.queryByRole('region', { name: 'Present in' })).toBeNull()
+      renderInspector(makeBlock({ id: 9 }))
+      expect(screen.queryByRole('region', { name: 'Present in' })).toBeNull()
+    })
+  })
 })
+

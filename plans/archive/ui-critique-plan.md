@@ -1,7 +1,7 @@
 # ContextSpy UI redesign implementation plan
 
 > **Status:** Implemented with documented deviations on `ui-revamp-poc` (September 2026). The
-> authoritative current behavior is in [`SPEC.md`](../SPEC.md#56-web-ui); this file remains the
+> authoritative current behavior is in [`SPEC.md`](../../SPEC.md#56-web-ui); this file remains the
 > original delivery plan. The shipped **Proportional** view uses a capped logarithmic whole-block
 > span instead of token-linear split segments, zero-token blocks are visible by default with muted
 > styling, selected content appears below the map beside a metadata inspector, and only the theme

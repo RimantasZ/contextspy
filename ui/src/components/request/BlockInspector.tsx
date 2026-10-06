@@ -1,5 +1,7 @@
-import type { RequestBlock } from '../../api/client'
+import type { OccurrenceEntry, RequestBlock } from '../../api/client'
+import { BlockOccurrences } from './BlockOccurrences'
 import { BLOCK_VISUALS, blockBackground, blockLabel, visualOf } from '../../lib/blockVisuals'
+import { formatJsonPath } from '../../lib/jsonPath'
 
 const TOOL_VISUAL_ORDER = { tool_definition: 0, tool_call: 1, tool_result: 2 } as const
 
@@ -33,11 +35,14 @@ function BlockCue({ block, selected, onJump }: {
   )
 }
 
-export function BlockInspector({ block, blocks, onJump, onClear }: {
+export function BlockInspector({ block, blocks, onJump, onClear, requestId, onOpenOccurrence }: {
   block: RequestBlock | null
   blocks: RequestBlock[]
   onJump: (targetId: number) => void
   onClear: () => void
+  /** The request the block belongs to; enables the "Present in" section for input blocks. */
+  requestId?: string
+  onOpenOccurrence?: (entry: OccurrenceEntry) => void
 }) {
   if (!block) {
     return (
@@ -47,6 +52,9 @@ export function BlockInspector({ block, blocks, onJump, onClear }: {
     )
   }
 
+  const sourceDetail = block.attrs?.source as { calls?: unknown; files?: unknown } | undefined
+  const sourceCalls = Array.isArray(sourceDetail?.calls) ? sourceDetail.calls.map(String) : []
+  const sourceFiles = Array.isArray(sourceDetail?.files) ? sourceDetail.files.map(String) : []
   const linkedIds = [block.linked_definition_id, block.linked_call_id].filter((id): id is number => id != null)
   if (block.block_type === 'tool_call') {
     const result = blocks.find((candidate) => candidate.linked_call_id === block.id)
@@ -79,8 +87,18 @@ export function BlockInspector({ block, blocks, onJump, onClear }: {
             <dd className="break-all font-mono text-[11px]">{block.attrs.volatile_header.trim()}</dd>
           </div>
         )}
+        {block.source_key && <div className="col-span-2"><dt className="text-[var(--text-muted)]">Source</dt><dd className="truncate font-mono text-[11px]" title={block.source_key}>{block.source_key}</dd></div>}
+        {block.activity && <div><dt className="text-[var(--text-muted)]">Activity</dt><dd className="font-medium capitalize">{block.activity}</dd></div>}
+        {block.file_path && <div className="col-span-2"><dt className="text-[var(--text-muted)]" title="The file this tool call reads or edits, as the agent wrote it">File</dt><dd className="break-all font-mono text-[11px]">{block.file_path}</dd></div>}
+        {sourceFiles.length > 1 && <div className="col-span-2"><dt className="text-[var(--text-muted)]">Files in call</dt><dd className="break-all font-mono text-[11px]">{sourceFiles.join(', ')}</dd></div>}
+        {sourceCalls.length > 0 && <div className="col-span-2"><dt className="text-[var(--text-muted)]">Commands in call</dt><dd className="font-mono text-[11px]">{sourceCalls.join(', ')}</dd></div>}
+        {block.json_path && <div className="col-span-2"><dt className="text-[var(--text-muted)]" title="Where in the request or response JSON this block was read from">Raw JSON location</dt><dd className="break-all font-mono text-[11px]">{formatJsonPath(block.json_path)}</dd></div>}
         {block.tool_call_id && <div className="col-span-2"><dt className="text-[var(--text-muted)]">Tool call ID</dt><dd className="truncate font-mono text-[11px]" title={block.tool_call_id}>{block.tool_call_id}</dd></div>}
       </dl>
+
+      {requestId && block.direction === 'input' && (
+        <BlockOccurrences key={`${requestId}:${block.id}`} requestId={requestId} blockId={block.id} onOpen={onOpenOccurrence} />
+      )}
 
       {toolFlow.length > 0 && (
         <div className="mt-4 space-y-2 border-t border-[var(--border)] pt-3">

@@ -1,11 +1,12 @@
 // Copyright 2026 Rimantas Zukaitis
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useRequest, useRequestToolStats, useSessionLineage } from '../api/hooks'
 import { TokenDonut } from '../components/TokenDonut'
 import { ToolBreakdownSection } from '../components/ToolBreakdown'
 import { CaptureNotice } from '../components/request/CaptureNotice'
+import { ContentStateNotice } from '../components/request/ContentStateNotice'
 import { RequestSummaryHeader } from '../components/request/RequestSummaryHeader'
 import { RequestWorkbench } from '../components/request/RequestWorkbench'
 import type { ShowMode, WorkbenchDirection } from '../components/request/RequestWorkbench'
@@ -65,6 +66,18 @@ function NeighbourButton({ label, direction, warning, onOpen }: {
 export default function RequestDetail() {
   const { id = '' } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const blockParam = searchParams.get('block')
+  const initialBlockId = blockParam && /^\d+$/.test(blockParam) ? Number(blockParam) : null
+  // Mirror the selected block in the URL (replacing, not pushing, history entries) so it survives a refresh and can be linked.
+  const handleBlockSelect = useCallback((blockId: number | null) => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      if (blockId == null) next.delete('block')
+      else next.set('block', String(blockId))
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
   const requestQuery = useRequest(id)
   const toolStats = useRequestToolStats(id)
   const lineage = useSessionLineage(requestQuery.data?.request.session_id ?? '')
@@ -127,6 +140,7 @@ export default function RequestDetail() {
     <div className="page-shell">
       <RequestSummaryHeader request={request} label={nodeLabel(request.id, request.session_seq)} onBack={() => navigate(-1)} onDirection={setActiveDirection} />
       <CaptureNotice request={request} />
+      <ContentStateNotice request={request} />
       {(parentEdge || childEdges.length > 0 || showPrevious || showNext) && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-3 text-xs">
           <span className="font-semibold">Conversations</span>
@@ -158,6 +172,9 @@ export default function RequestDetail() {
         lineageLoading={lineage.isLoading}
         showMode={showMode}
         onShowModeChange={setShowMode}
+        initialBlockId={initialBlockId}
+        onBlockSelect={handleBlockSelect}
+        onOpenOccurrence={(entry) => navigate(`/requests/${entry.request_id}?block=${entry.block_id}`)}
       />
 
       <Disclosure title="Analytics">

@@ -48,7 +48,10 @@ class OllamaAdapter(WireFormatAdapter):
             if not content:
                 continue
             block_type = _BLOCK_TYPE_FOR_ROLE.get(role, BlockType.USER_MESSAGE)
-            blocks.append(Block.make(Direction.INPUT, block_type, content, message_index=i))
+            blocks.append(Block.make(
+                Direction.INPUT, block_type, content, message_index=i,
+                json_path=("messages", i, "content"),
+            ))
         return blocks, {}
 
     def parse_response(self, resp_body: dict) -> tuple[list[Block], Usage]:
@@ -56,10 +59,15 @@ class OllamaAdapter(WireFormatAdapter):
         message = resp_body.get("message") or {}
         thinking = flatten_content(message.get("thinking", ""))
         if thinking:
-            blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, thinking))
+            blocks.append(Block.make(
+                Direction.OUTPUT, BlockType.THINKING, thinking, json_path=("message", "thinking"),
+            ))
         content = flatten_content(message.get("content", ""))
         if content:
-            blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, content))
+            blocks.append(Block.make(
+                Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, content,
+                json_path=("message", "content"),
+            ))
         usage = Usage(
             input_tokens=resp_body.get("prompt_eval_count"),
             output_tokens=resp_body.get("eval_count"),

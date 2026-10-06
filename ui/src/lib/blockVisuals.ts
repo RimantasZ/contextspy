@@ -34,9 +34,16 @@ const TYPE_TO_VISUAL: Record<string, BlockVisual> = {
   assistant_prefill: 'prefill',
 }
 
-export function visualOf(block: RequestBlock): BlockVisual {
-  return TYPE_TO_VISUAL[block.block_type] ?? 'other'
+export function visualForType(blockType: string | null | undefined): BlockVisual {
+  return (blockType && TYPE_TO_VISUAL[blockType]) || 'other'
 }
+
+export function visualOf(block: RequestBlock): BlockVisual {
+  return visualForType(block.block_type)
+}
+
+/** Block types a hot-spots filter can offer, in display order. */
+export const FILTERABLE_BLOCK_TYPES = Object.keys(TYPE_TO_VISUAL)
 
 /** Preserve a block's category hue while muting zero-token structural blocks. */
 export function blockBackground(block: RequestBlock): string {

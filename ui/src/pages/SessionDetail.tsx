@@ -23,9 +23,12 @@ import { ToolBreakdownSection } from '../components/ToolBreakdown';
 import { OutputSplit } from '../components/OutputSplit';
 import { CacheSplit } from '../components/CacheSplit';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
+import { ArchiveSessionModal } from '../components/ArchiveSessionModal';
+import { formatDateTime } from '../lib/format';
 import { SessionLineage } from '../components/SessionLineage';
 import { SessionConversationSequences } from '../components/SessionConversationSequences';
 import { SegmentedControl } from '../components/ui/SegmentedControl';
+import { HotSpots, HOTSPOT_URL_PARAMS } from '../components/hotspots/HotSpots';
 import type jsPDF from 'jspdf';
 
 type Bucket = 'minute' | 'hour' | 'day';
@@ -54,7 +57,8 @@ export default function SessionDetail() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [bucket, setBucket] = useState<Bucket>('hour');
-  const view: 'summary' | 'lineage' = searchParams.get('view') === 'lineage' ? 'lineage' : 'summary';
+  const viewParam = searchParams.get('view');
+  const view: 'summary' | 'lineage' | 'hotspots' = viewParam === 'lineage' || viewParam === 'hotspots' ? viewParam : 'summary';
   const mode: 'conversations' | 'fragments' = searchParams.get('mode') === 'fragments' ? 'fragments' : 'conversations';
   const conversationKey = searchParams.get('conversation');
   const conversationLayout: 'sequence' | 'conversations' = conversationKey || searchParams.get('layout') === 'conversations' ? 'conversations' : 'sequence';
@@ -81,6 +85,7 @@ export default function SessionDetail() {
   const endSession = useEndSession();
   const renameSession = useRenameSession();
   const [deletingSession, setDeletingSession] = useState(false);
+  const [archivingSession, setArchivingSession] = useState(false);
 
   // focus input when rename mode activates
   useEffect(() => {
@@ -357,6 +362,11 @@ export default function SessionDetail() {
               Active
             </span>
           )}
+          {s.status === 'archived' && (
+            <span className="app-badge" title={s.archived_at ? `Archived ${formatDateTime(s.archived_at)}: raw payloads and block text were removed` : 'Raw payloads and block text were removed'}>
+              Archived
+            </span>
+          )}
         </div>
         <div className="flex gap-2">
           {s.ended_at === null && (
@@ -374,6 +384,16 @@ export default function SessionDetail() {
           >
             Export PDF
           </button>
+          {s.status !== 'archived' && (
+            <button
+              onClick={() => setArchivingSession(true)}
+              disabled={s.ended_at === null}
+              title={s.ended_at === null ? 'End the session before archiving it' : 'Remove raw payloads and block text (cannot be undone)'}
+              className="app-button"
+            >
+              Archive
+            </button>
+          )}
           <button
             onClick={startRename}
             className="app-button"
@@ -396,17 +416,23 @@ export default function SessionDetail() {
           options={[
             { value: 'summary', label: 'Summary' },
             { value: 'lineage', label: 'Conversations', count: conversationCount },
+            { value: 'hotspots', label: 'Hot spots' },
           ]}
           onChange={(nextView) => {
+            if (nextView === 'hotspots' && view === 'hotspots') return
             const next = new URLSearchParams(searchParams)
+            for (const name of HOTSPOT_URL_PARAMS) next.delete(name)  // each view starts from its own defaults
             if (nextView === 'lineage') next.set('view', 'lineage')
+            else if (nextView === 'hotspots') { next.set('view', 'hotspots'); next.delete('mode'); next.delete('layout') }
             else { next.delete('view'); next.delete('mode') }
             setSearchParams(next)
           }}
         />
       </div>
 
-      {view === 'lineage' ? (
+      {view === 'hotspots' ? (
+        <HotSpots sessionId={s.id} />
+      ) : view === 'lineage' ? (
         <div className="min-w-0">
           <div className="mb-5 flex justify-end">
             <SegmentedControl
@@ -534,6 +560,14 @@ export default function SessionDetail() {
         />
       </div>
         </>
+      )}
+
+      {archivingSession && (
+        <ArchiveSessionModal
+          sessionId={s.id}
+          sessionName={s.name}
+          onClose={() => setArchivingSession(false)}
+        />
       )}
 
       {deletingSession && (

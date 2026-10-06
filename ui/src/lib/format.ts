@@ -1,3 +1,17 @@
+/** Human-readable byte size, e.g. 3.0 MiB. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes.toLocaleString()} bytes`
+  const units = ['KiB', 'MiB', 'GiB', 'TiB']
+  let value = bytes
+  let unit = 'bytes'
+  for (const next of units) {
+    if (value < 1024) break
+    value /= 1024
+    unit = next
+  }
+  return `${value.toFixed(1)} ${unit}`
+}
+
 export function formatRequestDuration(milliseconds: number | null): string {
   if (milliseconds == null || milliseconds < 0) return '—'
   return milliseconds < 1000 ? `${milliseconds}ms` : `${(milliseconds / 1000).toFixed(1)}s`

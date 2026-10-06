@@ -1,6 +1,6 @@
 // Copyright 2026 Rimantas Zukaitis
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useRequestContext } from '../api/hooks'
 import type { SessionConversationsData } from '../api/client'
 import { ConversationGroupRow } from './dashboard/ConversationGroupRow'
@@ -77,6 +77,8 @@ export function SessionConversationSequences({ data, initialGroupKey, layout = '
               selectedId={selectedId} onSelect={setSelectedId}
               meta={<p className="text-xs text-[var(--text-muted)]">
                 {group.request_count} represented request{group.request_count === 1 ? '' : 's'} · latest {formatDateTimeCompact(group.latest_activity)} · {group.segment_count} lineage segment{group.segment_count === 1 ? '' : 's'}
+                {' · '}<Link className="underline hover:text-[var(--text)]" aria-label={`Hot spots of ${group.label}`}
+                  to={`/sessions/${data.session_id}?view=hotspots&conversation=${encodeURIComponent(group.key)}`}>Hot spots</Link>
               </p>}
               notice={group.unassigned_request_count > 0 && <p className="text-xs text-[var(--warning)]">{group.unassigned_request_count} request{group.unassigned_request_count === 1 ? '' : 's'} with uncertain stream membership</p>}
               beforeFlow={group.segment_index.length > 1 && (

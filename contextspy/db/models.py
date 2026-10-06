@@ -28,6 +28,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from contextspy.analysis.activity import activity_for
 from contextspy.analysis.tokenizer import TOKENIZER_ID
 
 
@@ -46,10 +47,18 @@ class Session(Base):
     next_request_seq: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default="1"
     )
+    # Set once by the explicit, one-way archive action (raw bodies and block
+    # contents dropped). NULL for every session that has not been archived.
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     requests: Mapped[list["Request"]] = relationship(
         "Request", back_populates="session", passive_deletes=True
     )
+
+    @property
+    def status(self) -> str:
+        """Lifecycle state: ``archived`` once archived, else ``active`` or ``ended``."""
+        return "archived" if self.archived_at else ("active" if self.is_active else "ended")
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +67,8 @@ class Session(Base):
             "started_at": self.started_at.isoformat(),
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
             "is_active": bool(self.is_active),
+            "archived_at": self.archived_at.isoformat() if self.archived_at else None,
+            "status": self.status,
         }
 
 
@@ -134,6 +145,14 @@ class Request(Base):
     # Ordinal of this request within its session (1, 2, 3, ...); NULL when session_id is NULL
     session_seq: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # Inferred main purpose of the request (analysis/purpose.py): a coarse, stable enum
+    # (user_turn, tool_continuation, compaction, housekeeping, unknown), request-local
+    # refinements in ``purpose_detail`` (JSON object) and the derivation version.
+    # NULL = not classified (unparsed request, or a database not yet upgraded to v9).
+    purpose: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    purpose_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+    classifier_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     # Which encoder produced this row's counts. Rows captured before 0.3.4 read
     # "tiktoken/cl100k_base"; see analysis/tokenizer.py for why it changed.
     tokenizer: Mapped[str] = mapped_column(
@@ -201,6 +220,9 @@ class Request(Base):
             "usage_extra": json.loads(self.usage_extra) if self.usage_extra else None,
             "session_seq": self.session_seq,
             "tokenizer": self.tokenizer,
+            "purpose": self.purpose,
+            "purpose_detail": json.loads(self.purpose_detail) if self.purpose_detail else None,
+            "classifier_version": self.classifier_version,
         }
         provider_input = self.provider_input_tokens
         visible_input = self.tokens_total_input
@@ -232,6 +254,22 @@ class Request(Base):
             d["request_body"] = self.canonical_request_body or self.raw_request_body
             d["response_body"] = self.canonical_response_body or self.raw_response_body
             d["response_events"] = json.loads(self.response_events) if self.response_events else None
+            # Why content may be missing: still stored, removed by an explicit archive, or simply not stored
+            # (everything the old time-based purge removed lands here). Not part of list rows (needs the session).
+            bodies = (
+                self.raw_request_body, self.raw_response_body, self.canonical_request_body,
+                self.canonical_response_body, self.response_events,
+            )
+            if any(body is not None for body in bodies):
+                d["content_state"] = "retained"
+            elif self.session is not None and self.session.archived_at is not None:
+                d["content_state"] = "archived"
+            else:
+                d["content_state"] = "not_retained"
+            d["session_archived_at"] = (
+                self.session.archived_at.isoformat()
+                if self.session is not None and self.session.archived_at else None
+            )
         return d
 
 
@@ -241,6 +279,7 @@ Index("idx_requests_timestamp", Request.timestamp)
 Index("idx_requests_provider", Request.provider)
 Index("idx_requests_provider_response", Request.provider, Request.provider_response_id)
 Index("idx_requests_predecessor_response", Request.predecessor_response_id)
+Index("idx_requests_session_purpose", Request.session_id, Request.purpose)
 class ToolStat(Base):
     """Per-tool token breakdown — one row per tool name per request."""
 
@@ -309,6 +348,15 @@ class BlockRecord(Base):
     tool_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     tool_call_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     attrs: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+    # What produced the block, e.g. "tool:Read", "mcp:github/create_issue", "bash:git"
+    # (analysis/sources.py). Persisted because tool-call arguments are purged by archive.
+    source_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Typed path into the canonical request/response JSON the block derives from, as a
+    # compact JSON array (e.g. ["messages",3,"content",1]); NULL when unknown.
+    json_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The file a read/edit tool call (and its result) targets; written only via analysis/paths.py.
+    # Kept after archive. See plans/file-paths.md.
+    file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def to_dict(
         self,
@@ -332,6 +380,10 @@ class BlockRecord(Base):
             "tool_name": self.tool_name,
             "tool_call_id": self.tool_call_id,
             "attrs": json.loads(self.attrs) if self.attrs else {},
+            "source_key": self.source_key,
+            "activity": activity_for(self.source_key),
+            "json_path": json.loads(self.json_path) if self.json_path else None,
+            "file_path": self.file_path,
             "linked_call_id": linked_call_id,
             "linked_definition_id": linked_definition_id,
             "linked_previous_message_id": linked_previous_message_id,
@@ -345,6 +397,8 @@ class BlockRecord(Base):
 Index("idx_blocks_request", BlockRecord.request_id)
 Index("idx_blocks_content_hash", BlockRecord.content_hash)
 Index("idx_blocks_type", BlockRecord.block_type)
+Index("idx_blocks_source_key", BlockRecord.source_key)
+Index("idx_blocks_file_path", BlockRecord.file_path)
 
 
 class SchemaMeta(Base):

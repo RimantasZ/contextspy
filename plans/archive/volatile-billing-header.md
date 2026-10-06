@@ -35,7 +35,7 @@ only differing block among the first 144 input blocks.
 
 Consequences:
 
-- The "Show: New only / Highlight new" view (`plans/show-new-block-only.md`) flags the system prompt as new on every
+- The "Show: New only / Highlight new" view (`plans/archive/show-new-block-only.md`) flags the system prompt as new on every
   request. Lineage `replaced` counts, first-seen tracking (`first_seen_session_seq`) and `context_diff` are
   affected the same way.
 - `block_contents` stores a fresh ~7 KB copy of the system block per request instead of one per session.

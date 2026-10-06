@@ -293,3 +293,14 @@ def test_restore_rejects_copied_wal_main_file(tmp_path):
         assert _markers(path) == ["original", "not-checkpointed"]
     finally:
         source.close()
+
+
+def test_list_backups_orders_by_timestamp_not_by_schema_version_text(tmp_path):
+    db = tmp_path / "contextspy.db"
+    older = tmp_path / "contextspy_backup_v6_to_v10_2026-10-06-0521.back"
+    newer = tmp_path / "contextspy_backup_v10_pre_restore_2026-10-06-052130Z.back"
+    newest = tmp_path / "contextspy_backup_v9_2026-10-07-010101Z.back"
+    for path in (newest, newer, older):
+        path.write_bytes(b"x")
+    # "v10" sorts before "v6" and "v9" as text; the order must still be oldest first.
+    assert backups.list_backups(db) == [older, newer, newest]

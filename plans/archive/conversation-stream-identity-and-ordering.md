@@ -11,7 +11,7 @@ the database file occupied about 6.6 GB, so the CLI's additional backup needs co
 free space. The conversation presentation was subsequently refined to keep all visible
 requests in one scrollable row per conversation, with each card marking its own parent
 evidence; diagnostic segment boundaries remain available in the segment index. This is a follow-up to
-[`session-conversations-and-lineage-views.md`](archive/session-conversations-and-lineage-views.md).
+[`session-conversations-and-lineage-views.md`](session-conversations-and-lineage-views.md).
 That archived plan delivered the two Session Detail modes and a shared dashboard/session
 projection. This plan changes the **Python conversation classification and display ordering**;
 it is not merely a React layout adjustment. Do not merge branches or modify the user's live

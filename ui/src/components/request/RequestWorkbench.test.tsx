@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { makeBlock, makeRequest } from '../../test/fixtures'
+import { makeBlock, makeOccurrences, makeRequest } from '../../test/fixtures'
 import { RequestWorkbench } from './RequestWorkbench'
 import type { ShowMode, WorkbenchDirection } from './RequestWorkbench'
 import type { Request } from '../../api/client'
@@ -16,20 +16,23 @@ const blocks = [
 ]
 const tokenTotals = { input: { system: 20, user: 10, tool_definition: 0 }, output: { assistant: 5 } }
 
-function Harness({ request, parentRequestId }: { request: Request; parentRequestId?: string | null }) {
+interface HarnessSelection { initialBlockId?: number | null; onBlockSelect?: (id: number | null) => void }
+
+function Harness({ request, parentRequestId, initialBlockId, onBlockSelect }: { request: Request; parentRequestId?: string | null } & HarnessSelection) {
   const [direction, setDirection] = useState<WorkbenchDirection>('input')
   const [showMode, setShowMode] = useState<ShowMode>('all')
-  return <RequestWorkbench request={request} activeDirection={direction} onDirectionChange={setDirection} parentRequestId={parentRequestId} showMode={showMode} onShowModeChange={setShowMode} />
+  return <RequestWorkbench request={request} activeDirection={direction} onDirectionChange={setDirection} parentRequestId={parentRequestId} showMode={showMode} onShowModeChange={setShowMode} initialBlockId={initialBlockId} onBlockSelect={onBlockSelect} />
 }
 
-function renderWorkbench(request = makeRequest(), parentRequestId: string | null = null) {
+function renderWorkbench(request = makeRequest(), parentRequestId: string | null = null, selection: HarnessSelection = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={client}><Harness request={request} parentRequestId={parentRequestId} /></QueryClientProvider>)
+  return render(<QueryClientProvider client={client}><Harness request={request} parentRequestId={parentRequestId} {...selection} /></QueryClientProvider>)
 }
 
 function mockBlocksAndDiff(newIds: number[]) {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = String(input)
+    if (url.includes('/occurrences')) return new Response(JSON.stringify(makeOccurrences()), { status: 200 })
     if (url.includes('/context-diff')) return new Response(JSON.stringify({ parent_request_id: 'parent', child_request_id: 'request-1', delta: {}, new_child_block_ids: newIds }), { status: 200 })
     return new Response(JSON.stringify({ session_seq: 1, blocks, token_totals: tokenTotals }), { status: 200 })
   })
@@ -205,4 +208,42 @@ describe('RequestWorkbench', () => {
       expect((screen.getByRole('combobox', { name: 'Show' }) as HTMLSelectElement).disabled).toBe(true)
     })
   })
+
+  describe('block selection from the page', () => {
+    it('selects the block named by initialBlockId once the blocks have loaded', async () => {
+      mockBlocksAndDiff([])
+      const onBlockSelect = vi.fn()
+      renderWorkbench(makeRequest(), null, { initialBlockId: 2, onBlockSelect })
+      const selected = await screen.findByRole('button', { name: /User.*position 2/i })
+      await waitFor(() => expect(selected.getAttribute('aria-pressed')).toBe('true'))
+      expect(onBlockSelect).toHaveBeenCalledWith(2)
+      expect(screen.getByRole('complementary', { name: /Block inspector/i })).toBeTruthy()
+    })
+
+    it('switches to the response when the initial block is an output block', async () => {
+      mockBlocksAndDiff([])
+      renderWorkbench(makeRequest(), null, { initialBlockId: 3 })
+      expect((await screen.findByRole('button', { name: /Assistant.*5 tokens/i })).getAttribute('aria-pressed')).toBe('true')
+    })
+
+    it('ignores an id that is not among the request blocks', async () => {
+      mockBlocksAndDiff([])
+      const onBlockSelect = vi.fn()
+      renderWorkbench(makeRequest(), null, { initialBlockId: 999, onBlockSelect })
+      await screen.findByRole('button', { name: /User.*position 2/i })
+      expect(onBlockSelect).not.toHaveBeenCalled()
+      expect(screen.getByText(/Select a block to inspect/i)).toBeTruthy()
+    })
+
+    it('reports selection changes so the page can mirror them', async () => {
+      mockBlocksAndDiff([])
+      const onBlockSelect = vi.fn()
+      renderWorkbench(makeRequest(), null, { onBlockSelect })
+      await userEvent.click(await screen.findByRole('button', { name: /User.*position 2/i }))
+      expect(onBlockSelect).toHaveBeenLastCalledWith(2)
+      await userEvent.click(screen.getByRole('button', { name: 'Close block inspector' }))
+      expect(onBlockSelect).toHaveBeenLastCalledWith(null)
+    })
+  })
 })
+

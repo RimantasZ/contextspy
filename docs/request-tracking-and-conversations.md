@@ -143,8 +143,8 @@ The projection follows these rules:
   enough.
 - For Codex requests to a Responses endpoint, a valid `prompt_cache_key` can be a
   **stream-affinity hint**. ContextSpy stores only its digest and source, not the raw key as a
-  separate field. The raw/canonical request body can still contain the key until normal payload
-  retention purges it. A matching hint **plus substantial shared non-configuration context** can
+  separate field. The raw/canonical request body can still contain the key until the session is
+  archived (or an opt-in time-based purge removes it). A matching hint **plus substantial shared non-configuration context** can
   place disconnected segments in the same display row. A distinct hint can support another
   row only when an independent accepted chain and dissimilar substantive context corroborate
   it. An exact parent edge overrides a changed hint. [OpenAI documents the key for cache
@@ -283,7 +283,7 @@ content has been purged.
 
 When upgrading an existing database, `contextspy db-upgrade` attempts to backfill supported
 stream-hint digests from request bodies that are still retained. It cannot recover a hint from a
-body already purged by retention. Missing historical hints leave the analyzer with the other
+body already removed (archived or purged). Missing historical hints leave the analyzer with the other
 lineage and context evidence; they do not justify guessing a separate conversation.
 
 For details on session commands, see the [CLI reference](cli.md#session-commands). For how visible

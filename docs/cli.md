@@ -113,10 +113,21 @@ recording labels, not proof that requests form one conversation.
 ```
 contextspy session start <name>   Start a named session
 contextspy session end            End the currently active session
-contextspy session list           List session names, IDs, timestamps, and active state
+contextspy session list           List session names, IDs, timestamps, and status (active / ended / archived)
+contextspy session archive <id>   Remove an ended session's raw payloads and block text (one-way)
 ```
 
 These commands require the dashboard/API to be running.
+
+**Archiving.** `contextspy session archive <id-or-unique-prefix>` (add `--yes` to skip the prompt) works on an *ended*
+session; end it first (`contextspy session end`). It removes the raw request/response payloads and the stored text of the
+blocks that no other session needs, and **cannot be undone**: only a database backup made earlier (`contextspy db-backup`)
+still contains them. Kept: token counts, block structure and categories, tool/source labels, JSON locations and the
+conversation and lineage analysis. It prints how much was removed and, when the database is in incremental auto-vacuum
+mode, how much disk space was returned; otherwise it tells you to run `contextspy db-compact`. Large sessions can take
+several seconds (the command waits up to five minutes). Archiving again repeats the cleanup for anything captured since.
+If you may continue one of the session's conversations later, do not archive it: a continuation whose earlier request was
+archived is recorded with partial context.
 
 ---
 
@@ -127,6 +138,7 @@ These commands work offline — no proxy or dashboard needs to be running.
 ```
 contextspy db-stats        Print database row counts
 contextspy db-backup       Create an on-demand SQLite backup
+contextspy db-compact      Shrink the database file (offline); add --backup / --yes
 contextspy db-restore FILE Restore FILE, preserving the current DB for rollback
 contextspy db-upgrade      Back up the DB and apply pending data migrations
 contextspy report          Print aggregate token stats and category breakdown table
@@ -146,7 +158,7 @@ including committed WAL content, before changing derived data. Migration names r
 `contextspy_backup_v6_to_v7_2026-09-30-1445.back` form. Leave at least the current database
 size available for that backup, plus room for newly materialized canonical requests and blocks.
 The Anthropic thread backfill reports retained rows reanalyzed and partial/opaque results;
-payloads already removed by retention cannot be recovered.
+payloads already removed (archived or purged) cannot be recovered.
 
 To restore, stop all ContextSpy processes and other programs using the database. Preview with
 `contextspy db-restore BACKUP.back --dry-run`, then run `contextspy db-restore BACKUP.back` and
@@ -156,6 +168,31 @@ and retains the former database as `contextspy_backup_v7_pre_restore_...back` be
 files. The source backup is not consumed. Restore replaces the database; it does not merge in
 newer requests. If the restored backup has pending data migrations, run `contextspy db-upgrade`
 before starting ContextSpy. A pre-WAL backup can be restored; startup will enable WAL again.
+
+### Shrinking the database file (`db-compact`)
+
+Deleting request bodies or block contents (session archive, or the opt-in time-based purge) does not make
+the `.db` file smaller: SQLite keeps the freed pages inside the file for reuse. A database that has been
+purged for a while can therefore be mostly empty space (`contextspy db-stats` shows the file size, the free
+space inside it and the auto-vacuum mode). Stop ContextSpy and run:
+
+```
+contextspy db-compact            # asks for confirmation
+contextspy db-compact --yes      # no prompt
+contextspy db-compact --backup   # first writes contextspy_backup_vN_pre_compact_<UTC>.back
+```
+
+It rebuilds the file without the free pages (`VACUUM`) and switches the database to *incremental*
+auto-vacuum, so space freed later can be returned without another full rebuild. New databases start in that mode.
+It refuses to run while ContextSpy or another maintenance command is using the database, and checks beforehand that
+the disk has room: the rebuild needs about the live data size again (in SQLite's temporary directory, `SQLITE_TMPDIR`
+if you set it, and on the database volume), plus a full copy of the file when `--backup` is used. `VACUUM` is atomic:
+if it is interrupted the original database is unchanged. As a rough guide, a 6.6 GB file with 65% free space took
+about 12 seconds to compact on an SSD.
+
+Existing backups are not affected, and a pre-compaction backup is listed and restorable like any other. A restored backup
+comes back exactly as it was backed up (not compacted, with its old auto-vacuum mode); run `db-compact` again to shrink it.
+Backups copy every page, so compacting first also makes later backups smaller.
 
 ContextSpy enables SQLite WAL mode on startup for file-backed databases. Stop all ContextSpy
 processes before an offline copy or restore; a live `.db` file alone may omit committed data in

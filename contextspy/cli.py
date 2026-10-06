@@ -78,6 +78,15 @@ def _format_file_size(path: pathlib.Path) -> str:
     return f"{value:.1f} {unit} ({size:,} bytes)"
 
 
+def _format_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ("bytes", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:,.0f} {unit}" if unit == "bytes" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{size:,} bytes"
+
+
 def _print_previous_backups(backups: list[pathlib.Path]) -> None:
     if not backups:
         return
@@ -611,6 +620,64 @@ def session_end() -> None:
         raise typer.Exit(1)
 
 
+@session_app.command("archive")
+def session_archive_cmd(
+    session: str = typer.Argument(..., help="Session id or a unique id prefix (see `contextspy session list`)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Archive without a confirmation prompt"),
+) -> None:
+    """Remove an ended session's raw payloads and block text (cannot be undone).
+
+    Token counts, block structure, categories, sources and conversation analysis are kept. Only a database
+    backup made earlier still contains the removed content. If you may continue one of the session's conversations
+    later, do not archive it: a continuation whose predecessor was archived is recorded with partial context.
+    """
+    port = _web_port()
+    try:
+        sessions = httpx.get(_api(port, "/sessions"), timeout=10).json().get("sessions", [])
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}. Is contextspy running?[/red]")
+        raise typer.Exit(1)
+    matches = [s for s in sessions if s["id"] == session or s["id"].startswith(session)]
+    if len(matches) != 1:
+        console.print(
+            f"[red]{'No session' if not matches else 'More than one session'} matches '{session}'.[/red]"
+        )
+        raise typer.Exit(1)
+    target = matches[0]
+    if target.get("status") == "active" or target.get("is_active"):
+        console.print("[red]This session is still active. End it first (`contextspy session end`).[/red]")
+        raise typer.Exit(1)
+    if not yes:
+        typer.confirm(
+            f"Archive '{target['name']}'? Its raw request/response payloads and block text are removed and "
+            "this cannot be undone (only an earlier database backup keeps them).",
+            abort=True,
+        )
+    try:
+        # Large sessions can take a while: the default 5 second timeout used elsewhere is far too short.
+        response = httpx.post(_api(port, f"/sessions/{target['id']}/archive"), timeout=300)
+        if response.status_code != 200:
+            detail = response.json().get("detail", response.text) if response.headers.get("content-type", "").startswith("application/json") else response.text
+            console.print(f"[red]Archive failed:[/red] {detail}")
+            raise typer.Exit(1)
+        result = response.json()
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(1)
+    freed, space = result["freed"], result["space"]
+    console.print(f"[green]Session archived:[/green] {target['name']}" + (" (already archived; purged again)" if result["already_archived"] else ""))
+    console.print(
+        f"  Removed {_format_bytes(freed['request_body_bytes'])} of payloads from {freed['requests']:,} requests "
+        f"and {_format_bytes(freed['content_bytes'])} of block text ({freed['content_rows']:,} entries)."
+    )
+    if space["auto_vacuum"] == "incremental":
+        console.print(f"  File space returned: {_format_bytes(space['reclaimed_bytes'])}.")
+    if space.get("note"):
+        console.print(f"  [yellow]{space['note']}[/yellow]")
+
+
 @session_app.command("list")
 def session_list() -> None:
     """List all sessions."""
@@ -627,14 +694,16 @@ def session_list() -> None:
     table.add_column("ID")
     table.add_column("Started")
     table.add_column("Ended")
-    table.add_column("Active")
+    table.add_column("Status")
+    status_style = {"active": "[green]active[/green]", "ended": "ended", "archived": "[dim]archived[/dim]"}
     for s in sessions:
+        status = s.get("status") or ("active" if s["is_active"] else "ended")
         table.add_row(
             s["name"],
             s["id"][:8] + "…",
             s["started_at"][:19],
             s["ended_at"][:19] if s.get("ended_at") else "—",
-            "[green]yes[/green]" if s["is_active"] else "no",
+            status_style.get(status, status),
         )
     console.print(table)
 
@@ -666,6 +735,7 @@ def help_cmd() -> None:
             "db-upgrade",
             "Apply pending data migrations (e.g. backfill blocks from raw bodies)",
         ),
+        ("db-compact", "Shrink the database file (offline) and enable incremental auto-vacuum"),
         ("db-stats", "Print row counts for each database table"),
         ("report", "Print aggregate stats: requests, tokens, category breakdown"),
         (
@@ -835,6 +905,60 @@ def db_restore(
         console.print("Run [bold]contextspy db-upgrade[/bold] before starting ContextSpy.")
 
 
+@app.command("db-compact")
+def db_compact(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Compact without a confirmation prompt"),
+    backup: bool = typer.Option(False, "--backup", help="Create a standalone backup first (needs one extra database-sized copy of free space)"),
+) -> None:
+    """Shrink the database file by rebuilding it without free pages (ContextSpy must be stopped).
+
+    Deleting request bodies or block contents leaves free pages inside the file, so it never gets
+    smaller by itself. This rebuilds it (VACUUM) and switches it to incremental auto-vacuum so later deletions
+    can shrink it online. VACUUM is atomic: if it is interrupted, the original database is unchanged.
+    """
+    from contextspy.config import Settings
+    from contextspy.db.compaction import compact_database
+
+    settings = Settings.load()
+    db_path = settings.storage.db_path
+    if _configured_backend_reachable(settings):
+        console.print("[red]Stop ContextSpy before compacting the database.[/red]")
+        raise typer.Exit(1)
+
+    def confirm(space) -> bool:
+        console.print(f"Database: {db_path}")
+        console.print(f"  Size on disk: {_format_bytes(space.file_bytes + space.wal_bytes)}")
+        console.print(f"  Free space inside the file: {_format_bytes(space.free_bytes)} ({space.free_fraction:.0%})")
+        console.print(f"  Expected size after compacting: about {_format_bytes(space.live_bytes)}")
+        if yes:
+            return True
+        return typer.confirm("Compact the database now? Keep ContextSpy stopped until it finishes.")
+
+    try:
+        outcome = compact_database(db_path, backup=backup, confirm=confirm, report=console.print)
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        console.print(f"[red]Compaction failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if outcome.status == "empty":
+        console.print("[yellow]No database to compact yet.[/yellow]")
+    elif outcome.status == "already_compact":
+        console.print("[green]The database is already compact (incremental auto-vacuum, almost no free space).[/green]")
+    elif outcome.status == "declined":
+        console.print("Nothing changed.")
+    else:
+        assert outcome.before is not None and outcome.after is not None
+        console.print(
+            f"[green]Done in {outcome.seconds:.0f}s.[/green] "
+            f"{_format_bytes(outcome.before.file_bytes + outcome.before.wal_bytes)} -> "
+            f"{_format_bytes(outcome.after.file_bytes + outcome.after.wal_bytes)} "
+            f"(reclaimed {_format_bytes(outcome.reclaimed_bytes)})."
+        )
+        console.print("Incremental auto-vacuum is now enabled: space freed by later deletions can be returned online.")
+        if outcome.backup_path is not None:
+            console.print(f"Backup kept at {outcome.backup_path}; delete it when you no longer need it.")
+
+
 @app.command("db-upgrade")
 def db_upgrade() -> None:
     """Apply pending data migrations (e.g. backfill blocks from raw request bodies).
@@ -874,7 +998,11 @@ def db_upgrade() -> None:
             )
             return
         console.print(f"[bold]Applying data migrations:[/bold] {pending}")
-        applied = migrations.apply_data_migrations(db)
+        migrations.progress_reporter = console.print
+        try:
+            applied = migrations.apply_data_migrations(db)
+        finally:
+            migrations.progress_reporter = None
         thread_backfill = getattr(db, "info", {}).get("anthropic_thread_backfill")
 
     console.print(f"[green]Done.[/green] Applied migrations: {applied}")
@@ -925,6 +1053,22 @@ def db_stats() -> None:
         table.add_row(t, str(count))
     con.close()
     console.print(table)
+
+    from contextspy.db.compaction import inspect_space
+
+    space = inspect_space(db_path)
+    mode = {0: "off", 1: "full", 2: "incremental"}.get(space.auto_vacuum, str(space.auto_vacuum))
+    console.print(
+        f"File size: {_format_bytes(space.file_bytes + space.wal_bytes)}; free inside the file: "
+        f"{_format_bytes(space.free_bytes)} ({space.free_fraction:.0%}); auto-vacuum: {mode}"
+    )
+    if space.free_fraction >= 0.2 or not space.incremental:
+        console.print(
+            "[yellow]Run `contextspy db-compact` (with ContextSpy stopped) to reclaim the free space "
+            "and enable incremental auto-vacuum.[/yellow]"
+            if space.free_fraction >= 0.2 else
+            "Run `contextspy db-compact` (with ContextSpy stopped) to enable incremental auto-vacuum."
+        )
 
 
 # ---------------------------------------------------------------------------

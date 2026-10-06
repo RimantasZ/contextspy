@@ -1,5 +1,6 @@
 import type { Request } from '../../api/client'
 import { formatRequestDuration, formatDateTime } from '../../lib/format'
+import { purposeLabel, purposeSummary } from '../../lib/purpose'
 
 function statusTone(request: Request): string {
   if (request.invocation_outcome === 'completed' || (request.status_code != null && request.status_code >= 200 && request.status_code < 300)) return 'status-success'
@@ -16,6 +17,8 @@ export function RequestSummaryHeader({ request, label, onBack, onDirection }: {
   onDirection: (direction: 'input' | 'output') => void
 }) {
   const cachedSharePct = request.context_accounting.cached_share_pct
+  const purpose = purposeLabel(request.purpose)
+  const purposeText = purposeSummary(request)
 
   return (
     <header className="space-y-3">
@@ -25,8 +28,10 @@ export function RequestSummaryHeader({ request, label, onBack, onDirection }: {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight">{label ? `Request ${label}` : 'Request detail'}</h1>
             <span className={`app-badge ${statusTone(request)}`}>{request.status_code ?? request.invocation_outcome}</span>
+            {purpose && <span className="app-badge" title="Inferred main purpose of this request">{purpose}</span>}
           </div>
           <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">{request.provider} · {request.model ?? 'Unknown model'} · {formatDateTime(request.timestamp)}</p>
+          {purposeText && <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">{purposeText}</p>}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5">

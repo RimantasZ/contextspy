@@ -16,11 +16,20 @@ import { useNavigate } from 'react-router-dom';
 import { useSessionsSummary, useRenameSession } from '../api/hooks';
 import { SessionControls } from '../components/SessionControls';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
+import { ArchiveSessionModal } from '../components/ArchiveSessionModal';
 import { ContextBar } from '../components/ContextBar';
 import type { SessionSummaryEntry } from '../api/client';
 import { formatElapsedDuration, formatDateTime } from '../lib/format';
 
 type SessionSortKey = 'name' | 'started_at' | 'duration' | 'status' | 'request_count' | 'tokens_in' | 'tokens_out';
+
+type SessionStatus = NonNullable<SessionSummaryEntry['status']>;
+const STATUS_RANK: Record<SessionStatus, number> = { active: 2, ended: 1, archived: 0 };
+
+/** The lifecycle state the server reports; `is_active` only matters for servers that predate `status`. */
+function statusOf(entry: SessionSummaryEntry): SessionStatus {
+  return entry.status ?? (entry.is_active ? 'active' : 'ended');
+}
 
 function SortHeader({
   label, col, sortKey, sortDir, onSort, className = '',
@@ -81,6 +90,7 @@ export default function Sessions() {
   const { data, isLoading } = useSessionsSummary();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingSession, setDeletingSession] = useState<{ id: string; name: string } | null>(null);
+  const [archivingSession, setArchivingSession] = useState<{ id: string; name: string } | null>(null);
   const [sortKey, setSortKey] = useState<SessionSortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [renderedAt] = useState(() => Date.now());
@@ -114,7 +124,7 @@ export default function Sessions() {
           case 'name': av = a.name ?? ''; bv = b.name ?? ''; break;
           case 'started_at': av = a.started_at; bv = b.started_at; break;
           case 'duration': av = getDurationMs(a); bv = getDurationMs(b); break;
-          case 'status': av = a.is_active ? 1 : 0; bv = b.is_active ? 1 : 0; break;
+          case 'status': av = STATUS_RANK[statusOf(a)]; bv = STATUS_RANK[statusOf(b)]; break;
           case 'request_count': av = a.request_count; bv = b.request_count; break;
           case 'tokens_in': av = a.tokens_in; bv = b.tokens_in; break;
           case 'tokens_out': av = a.tokens_out; bv = b.tokens_out; break;
@@ -175,10 +185,14 @@ export default function Sessions() {
                     {formatElapsedDuration(getDurationMs(s))}
                   </td>
                   <td className="px-4 py-3">
-                    {s.ended_at === null ? (
+                    {statusOf(s) === 'active' ? (
                       <span className="app-badge status-success gap-1">
                         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--success)]" />
                         Active
+                      </span>
+                    ) : statusOf(s) === 'archived' ? (
+                      <span className="app-badge" title="Raw payloads and block text were removed">
+                        Archived
                       </span>
                     ) : (
                       <span className="app-badge">
@@ -209,6 +223,15 @@ export default function Sessions() {
                       >
                         Rename
                       </button>
+                      {statusOf(s) === 'ended' && (
+                        <button
+                          onClick={() => setArchivingSession({ id: s.session_id, name: s.name ?? '' })}
+                          title="Remove raw payloads and block text (cannot be undone)"
+                          className="app-button-ghost min-h-8 px-2 py-1 text-xs"
+                        >
+                          Archive
+                        </button>
+                      )}
                       <button
                         onClick={() => setDeletingSession({ id: s.session_id, name: s.name ?? '' })}
                         className="app-button-danger-ghost min-h-8 px-2 py-1 text-xs"
@@ -223,6 +246,14 @@ export default function Sessions() {
           </table>
         )}
       </div>
+
+      {archivingSession && (
+        <ArchiveSessionModal
+          sessionId={archivingSession.id}
+          sessionName={archivingSession.name}
+          onClose={() => setArchivingSession(null)}
+        />
+      )}
 
       {deletingSession && (
         <DeleteSessionModal

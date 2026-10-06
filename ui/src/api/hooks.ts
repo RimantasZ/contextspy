@@ -11,8 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query'
 import { sessionsApi, requestsApi, statsApi, proxyApi } from './client'
+import type { HotspotParams, OccurrenceScope } from './client'
 
 // ---- Sessions -------------------------------------------------------------
 
@@ -66,6 +67,26 @@ export function useSessionConversations(id: string, enabled: boolean = true) {
   })
 }
 
+const HOTSPOT_PAGE_SIZE = 25
+/** The server accepts offsets up to this value (and 100 rows per page). */
+const HOTSPOT_MAX_OFFSET = 1000
+
+/** Hot spots of a session, 25 rows per page; the previous result stays visible while the parameters change. */
+export function useSessionHotspots(sessionId: string, params: Omit<HotspotParams, 'limit' | 'offset'>) {
+  return useInfiniteQuery({
+    queryKey: ['session', sessionId, 'hotspots', params],
+    queryFn: ({ pageParam }) => sessionsApi.hotspots(sessionId, { ...params, limit: HOTSPOT_PAGE_SIZE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      const next = pages.reduce((count, page) => count + page.rows.length, 0)
+      return last.has_more && next <= HOTSPOT_MAX_OFFSET ? next : undefined
+    },
+    enabled: !!sessionId,
+    staleTime: 30_000,
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[1] === sessionId ? previous : undefined),
+  })
+}
+
 export function useSessionSequence(id: string, enabled: boolean = true) {
   return useQuery({
     queryKey: ['session-sequence', id],
@@ -103,6 +124,19 @@ export function useEndSession() {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['stats'] })
       qc.invalidateQueries({ queryKey: ['session-conversations'] })
+    },
+  })
+}
+
+/** One-way archive of an ended session; refreshes everything that shows its status or payloads. */
+export function useArchiveSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => sessionsApi.archive(id),
+    onSuccess: () => {
+      for (const key of ['sessions', 'stats', 'session-conversations', 'request', 'requests']) {
+        qc.invalidateQueries({ queryKey: [key] })
+      }
     },
   })
 }
@@ -155,6 +189,28 @@ export function useRequestBlocks(id: string, enabled: boolean = true) {
     queryKey: ['request', id, 'blocks'],
     queryFn: () => requestsApi.blocks(id),
     enabled: !!id && enabled,
+  })
+}
+
+/** Where one block's content occurs across its conversation/session; kept while only the scope changes. */
+export function useBlockOccurrences(requestId: string, blockId: number | null, scope: OccurrenceScope) {
+  return useQuery({
+    queryKey: ['request', requestId, 'block', blockId, 'occurrences', scope],
+    queryFn: () => requestsApi.blockOccurrences(requestId, blockId ?? 0, scope),
+    enabled: !!requestId && blockId != null,
+    staleTime: 60_000,
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === requestId && previousQuery?.queryKey[3] === blockId ? previous : undefined,
+  })
+}
+
+/** The occurring requests of one run, fetched when the run is expanded. */
+export function useOccurrenceRequests(requestId: string, blockId: number, scope: OccurrenceScope, run: { from: number; to: number } | null) {
+  return useQuery({
+    queryKey: ['request', requestId, 'block', blockId, 'occurrences', scope, run?.from, run?.to],
+    queryFn: () => requestsApi.occurrenceRequests(requestId, blockId, scope, run?.from ?? 0, run?.to ?? 0),
+    enabled: run != null,
+    staleTime: 60_000,
   })
 }
 

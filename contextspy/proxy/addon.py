@@ -29,6 +29,7 @@ from contextspy.analysis.adapters import get_adapter
 from contextspy.analysis.blocks import AnalyzedRequest
 from contextspy.analysis.capture import decode_ndjson, decode_sse
 from contextspy.analysis.classifier import CategoryBreakdown, classify, per_tool_tokens
+from contextspy.analysis.purpose import classify_request
 from contextspy.analysis.invocations import (
     CanonicalInvocation,
     CanonicalJsonDocument,
@@ -663,8 +664,14 @@ class ContextSpyAddon:
             logger.debug("Skipping non-LLM endpoint: %s %s", provider, endpoint)
             return
 
+        classification = None
         if analyzed is not None:
             breakdown = classify(analyzed)
+            has_response = (
+                canonical.response is not None if canonical is not None
+                else raw_resp_text is not None
+            )
+            classification = classify_request(analyzed, agent=agent, has_response=has_response)
             model = analyzed.model
             usage = analyzed.usage
             provider_input = usage.input_tokens
@@ -741,6 +748,8 @@ class ContextSpyAddon:
         data["stream_hint_source"] = hint_source
         data["stream_hint_digest"] = hint_digest
         data.update(breakdown.to_db_fields())
+        if classification is not None:
+            data.update(classification.to_db_fields())
         envelope = CaptureEnvelope(
             request_id=data["id"],
             provider=provider,

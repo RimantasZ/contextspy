@@ -39,6 +39,7 @@ def init_db(db_path: Path) -> None:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_path = db_path.resolve()
+    is_new_file = not db_path.exists() or db_path.stat().st_size == 0
     reuse_lock = _db_lock_handle is not None and _db_lock_path == resolved_path
     new_lock = None if reuse_lock or str(db_path) == ":memory:" else acquire_database_lock(db_path)
     try:
@@ -67,6 +68,11 @@ def init_db(db_path: Path) -> None:
         if str(db_path) != ":memory:":
             try:
                 with engine.connect() as conn:
+                    if is_new_file:
+                        # Must precede journal_mode=WAL (which writes the file header) and every
+                        # CREATE TABLE. Lets deleted content shrink the file via incremental_vacuum;
+                        # existing databases are converted only by `contextspy db-compact`.
+                        conn.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
                     mode = conn.exec_driver_sql("PRAGMA journal_mode=WAL").scalar_one()
             except OperationalError as exc:
                 raise RuntimeError(
@@ -127,6 +133,15 @@ def _migrate(engine) -> None:
         ("requests", "context_notes", "TEXT"),
         ("requests", "stream_hint_source", "TEXT"),
         ("requests", "stream_hint_digest", "TEXT"),
+        # v9: request purpose, block source/location, session archive marker
+        ("requests", "purpose", "TEXT"),
+        ("requests", "purpose_detail", "TEXT"),
+        ("requests", "classifier_version", "INTEGER"),
+        ("blocks", "source_key", "TEXT"),
+        ("blocks", "json_path", "TEXT"),
+        ("sessions", "archived_at", "DATETIME"),
+        # v10: file a read/edit tool call targets
+        ("blocks", "file_path", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_columns:
@@ -143,6 +158,18 @@ def _migrate(engine) -> None:
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_requests_predecessor_response "
             "ON requests (predecessor_response_id)"
+        ))
+        # Declared in models.py too, but create_all() does not index pre-existing
+        # tables, so existing databases get them here.
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_blocks_source_key ON blocks (source_key)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_blocks_file_path ON blocks (file_path)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_requests_session_purpose "
+            "ON requests (session_id, purpose)"
         ))
         # Kept out of SQLAlchemy metadata so an old database containing legacy
         # duplicate ordinals can still start and run its explicit v5 repair.
@@ -191,8 +218,11 @@ def get_db() -> Generator[OrmSession, None, None]:
 def startup_vacuum(settings=None) -> None:
     """Purge raw bodies and orphaned block contents past their retention window.
 
+    Despite the name this frees pages *inside* the database file; it never shrinks the file itself.
+    ``contextspy db-compact`` does that (see db/compaction.py).
+
     Runs once, at server startup, using the [retention] settings from
-    config.toml (default 7 days for both; 0 = keep forever). There is no
+    config.toml (default 0 = keep forever; an explicit value is honoured). There is no
     background timer — a contextspy process left running for days will not
     re-purge until restarted (see docs/development.md).
     """
@@ -201,6 +231,14 @@ def startup_vacuum(settings=None) -> None:
     if settings is None:
         from contextspy.config import Settings
         settings = Settings.load()
+
+    if settings.retention.raw_body_days > 0 or settings.retention.block_content_days > 0:
+        logger.info(
+            "Time-based purge is enabled in config.toml (raw bodies: %d days, block contents: %d days). "
+            "Sessions can instead be archived explicitly with `contextspy session archive`; set both "
+            "[retention] values to 0 to keep everything until then.",
+            settings.retention.raw_body_days, settings.retention.block_content_days,
+        )
 
     with _engine.begin() as conn:
         raw_body_days = settings.retention.raw_body_days

@@ -61,6 +61,7 @@ def _tool_definition_blocks(
     *,
     message_index: int | None = None,
     attrs: dict | None = None,
+    path: tuple[str | int, ...] | None = None,
 ) -> list[Block]:
     """Expand Codex namespace containers into one block per callable tool.
 
@@ -80,12 +81,13 @@ def _tool_definition_blocks(
         child_attrs = {**base_attrs, "tool_namespace": namespace_path}
         blocks = [
             block
-            for child in nested_tools
+            for child_index, child in enumerate(nested_tools)
             if isinstance(child, dict)
             for block in _tool_definition_blocks(
                 child,
                 message_index=message_index,
                 attrs=child_attrs,
+                path=path + ("tools", child_index) if path is not None else None,
             )
         ]
         if blocks:
@@ -112,6 +114,7 @@ def _tool_definition_blocks(
         message_index=message_index,
         tool_name=_tool_name(tool),
         attrs=base_attrs,
+        json_path=path,
     )]
 
 
@@ -126,22 +129,36 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
         tool_call_map: dict[str, str] = {}
         pending_tool_results: list[Block] = []
 
-        top_level_tools: list = list(req_body.get("tools") or [])
+        # (tool, location in the request document) for every top-level tool definition.
+        top_level_tools: list[tuple[object, tuple[str | int, ...]]] = [
+            (tool, ("tools", index)) for index, tool in enumerate(req_body.get("tools") or [])
+        ]
         additional_tools = req_body.get("additional_tools") or []
         if isinstance(additional_tools, dict):
-            additional_tools = additional_tools.get("tools") or [additional_tools]
+            if additional_tools.get("tools"):
+                additional_tools = additional_tools["tools"]
+                additional_base: tuple[str | int, ...] = ("additional_tools", "tools")
+            else:
+                additional_tools = [additional_tools]
+                additional_base = ()  # the dict itself is the single tool: ("additional_tools",)
+        else:
+            additional_base = ("additional_tools",)
         if isinstance(additional_tools, list):
-            top_level_tools.extend(additional_tools)
-        for tool in top_level_tools:
+            for index, tool in enumerate(additional_tools):
+                top_level_tools.append(
+                    (tool, additional_base + (index,) if additional_base else ("additional_tools",))
+                )
+        for tool, tool_path in top_level_tools:
             if not isinstance(tool, dict):
                 continue
-            blocks.extend(_tool_definition_blocks(tool))
+            blocks.extend(_tool_definition_blocks(tool, path=tool_path))
 
         instructions = req_body.get("instructions", "")
         if instructions:
             blocks.append(Block.make(
                 Direction.INPUT, BlockType.SYSTEM_PROMPT,
                 flatten_content(instructions), message_index=-1,
+                json_path=("instructions",),
             ))
 
         block_type_for_role = {
@@ -152,17 +169,25 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
         }
 
         input_value = req_body.get("input", [])
+        # When ``input`` is a bare string/object it is wrapped into a one-item list below;
+        # the single item then lives at ("input",) rather than ("input", 0).
+        input_wrapped = True
+        input_is_string = isinstance(input_value, str)
         if input_value is None:
             input_value = []
-        elif isinstance(input_value, str):
+        elif input_is_string:
             input_value = [{"role": "user", "content": input_value}]
         elif not isinstance(input_value, list):
             input_value = [input_value]
+        else:
+            input_wrapped = False
 
         for i, item in enumerate(input_value):
+            item_path: tuple[str | int, ...] = ("input",) if input_wrapped else ("input", i)
             if not isinstance(item, dict):
                 blocks.append(Block.make(
                     Direction.INPUT, BlockType.OTHER, _json_text(item), message_index=i,
+                    json_path=item_path,
                 ))
                 continue
             item_type = item.get("type", "")
@@ -179,7 +204,7 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                 b = Block.make(
                     Direction.INPUT, BlockType.TOOL_RESULT, flatten_content(output),
                     message_index=i, tool_call_id=call_id,
-                    attrs=attrs,
+                    attrs=attrs, json_path=item_path,
                 )
                 blocks.append(b)
                 pending_tool_results.append(b)
@@ -192,7 +217,7 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                 blocks.append(Block.make(
                     Direction.INPUT, BlockType.TOOL_CALL, _json_text(args),
                     message_index=i, tool_name=name, tool_call_id=call_id,
-                    attrs={"provider_item_type": item_type},
+                    attrs={"provider_item_type": item_type}, json_path=item_path,
                 ))
             elif item_type == "reasoning":
                 text = _reasoning_summary_text(item)
@@ -202,54 +227,72 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                 }
                 if item.get("encrypted_content"):
                     attrs["opaque"] = True
-                blocks.append(Block.make(Direction.INPUT, BlockType.THINKING, text, message_index=i, attrs=attrs))
+                blocks.append(Block.make(
+                    Direction.INPUT, BlockType.THINKING, text, message_index=i, attrs=attrs,
+                    json_path=item_path,
+                ))
             elif item_type in ("compaction", "compaction_trigger"):
                 blocks.append(Block.make(
                     Direction.INPUT, BlockType.OTHER,
                     json.dumps(item, ensure_ascii=False), message_index=i,
                     attrs={"provider_item_type": item_type, "opaque": True},
+                    json_path=item_path,
                 ))
             elif item_type == "additional_tools":
                 embedded_tools = item.get("tools") or []
-                for tool in embedded_tools if isinstance(embedded_tools, list) else []:
+                for tool_index, tool in enumerate(embedded_tools if isinstance(embedded_tools, list) else []):
                     if isinstance(tool, dict):
                         blocks.extend(_tool_definition_blocks(
                             tool,
                             message_index=i,
                             attrs={"provider_item_type": item_type},
+                            path=item_path + ("tools", tool_index),
                         ))
             elif role in block_type_for_role:
                 block_type = block_type_for_role[role]
                 content_raw = item.get("content", "")
+                # A bare-string ``input`` is the message content itself.
+                content_path = item_path if input_is_string else item_path + ("content",)
                 if isinstance(content_raw, list):
-                    for part in content_raw:
+                    for part_index, part in enumerate(content_raw):
                         if not isinstance(part, dict):
                             continue
+                        part_path = content_path + (part_index,)
                         ptype = part.get("type")
                         if ptype in ("input_text", "output_text", "text") and part.get("text"):
-                            blocks.append(Block.make(Direction.INPUT, block_type, part["text"], message_index=i))
+                            blocks.append(Block.make(
+                                Direction.INPUT, block_type, part["text"], message_index=i,
+                                json_path=part_path,
+                            ))
                         elif ptype == "refusal" and part.get("refusal"):
-                            blocks.append(Block.make(Direction.INPUT, block_type, part["refusal"],
-                                                      message_index=i, attrs={"refusal": True}))
+                            blocks.append(Block.make(
+                                Direction.INPUT, block_type, part["refusal"], message_index=i,
+                                attrs={"refusal": True}, json_path=part_path,
+                            ))
                         else:
                             attrs = {"content_type": ptype}
                             if contains_media_content(part):
                                 attrs.update({"contains_media": True, "token_estimate": "text_only"})
                             blocks.append(Block.make(
                                 Direction.INPUT, BlockType.OTHER, flatten_content(part),
-                                message_index=i, attrs=attrs,
+                                message_index=i, attrs=attrs, json_path=part_path,
                             ))
                 elif isinstance(content_raw, str) and content_raw:
-                    blocks.append(Block.make(Direction.INPUT, block_type, content_raw, message_index=i))
+                    blocks.append(Block.make(
+                        Direction.INPUT, block_type, content_raw, message_index=i,
+                        json_path=content_path,
+                    ))
                 elif content_raw:
                     blocks.append(Block.make(
                         Direction.INPUT, block_type, flatten_content(content_raw), message_index=i,
+                        json_path=content_path,
                     ))
             else:
                 blocks.append(Block.make(
                     Direction.INPUT, BlockType.OTHER,
                     json.dumps(item, ensure_ascii=False), message_index=i,
                     attrs={"provider_item_type": item_type or "unknown"},
+                    json_path=item_path,
                 ))
 
         for b in pending_tool_results:
@@ -263,19 +306,26 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
     def parse_response(self, resp_body: dict) -> tuple[list[Block], Usage]:
         blocks: list[Block] = []
 
-        for item in resp_body.get("output", []):
+        for item_index, item in enumerate(resp_body.get("output", [])):
             if not isinstance(item, dict):
                 continue
+            item_path = ("output", item_index)
             itype = item.get("type")
             if itype in ("message", "agent_message"):
-                for part in item.get("content", []) or []:
+                for part_index, part in enumerate(item.get("content", []) or []):
                     if not isinstance(part, dict):
                         continue
+                    part_path = item_path + ("content", part_index)
                     if part.get("type") == "output_text" and part.get("text"):
-                        blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, part["text"]))
+                        blocks.append(Block.make(
+                            Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, part["text"],
+                            json_path=part_path,
+                        ))
                     elif part.get("type") == "refusal" and part.get("refusal"):
-                        blocks.append(Block.make(Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, part["refusal"],
-                                                  attrs={"refusal": True}))
+                        blocks.append(Block.make(
+                            Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, part["refusal"],
+                            attrs={"refusal": True}, json_path=part_path,
+                        ))
             elif itype in ("function_call", "custom_tool_call"):
                 call_id = item.get("call_id") or item.get("id")
                 name = item.get("name", "")
@@ -283,25 +333,29 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                     Direction.OUTPUT, BlockType.TOOL_CALL,
                     _json_text(item.get("arguments", item.get("input", ""))),
                     tool_name=name, tool_call_id=call_id,
-                    attrs={"provider_item_type": itype},
+                    attrs={"provider_item_type": itype}, json_path=item_path,
                 ))
             elif itype == "reasoning":
                 text = _reasoning_summary_text(item)
                 attrs = {"provider_item_type": itype}
                 if item.get("encrypted_content"):
                     attrs["opaque"] = True
-                blocks.append(Block.make(Direction.OUTPUT, BlockType.THINKING, text, attrs=attrs))
+                blocks.append(Block.make(
+                    Direction.OUTPUT, BlockType.THINKING, text, attrs=attrs, json_path=item_path,
+                ))
             elif itype in ("compaction", "compaction_trigger"):
                 blocks.append(Block.make(
                     Direction.OUTPUT, BlockType.OTHER,
                     json.dumps(item, ensure_ascii=False),
                     attrs={"provider_item_type": itype, "opaque": True},
+                    json_path=item_path,
                 ))
             else:
                 blocks.append(Block.make(
                     Direction.OUTPUT, BlockType.OTHER,
                     json.dumps(item, ensure_ascii=False),
                     attrs={"provider_item_type": itype or "unknown"},
+                    json_path=item_path,
                 ))
 
         usage_raw = resp_body.get("usage", {}) or {}

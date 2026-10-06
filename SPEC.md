@@ -24,8 +24,9 @@ ContextSpy operates in two complementary modes:
 - Classify each context window into meaningful content categories.
 - Count tokens per category using `tiktoken` (fast approximation, good enough for composition analysis).
 - Support named sessions so the user can group requests into logical work units.
-- Purge retained payloads and block text on startup after their configured retention windows,
-  while keeping token stats and structural metadata.
+- Let the user free disk space explicitly: archive an ended session (removes raw payloads and block text, keeps token
+  stats, structure and analysis) and compact the database file. An optional, off-by-default time-based purge on startup
+  remains for older configs.
 - Display statistics and graphs in a browser UI served locally.
 - Bind network services to `127.0.0.1` by default.
 
@@ -256,7 +257,9 @@ operates on those types regardless of which provider or wire format produced the
   for turn-independent blocks like the system prompt), `category` (assigned by the classifier,
   input blocks only), `content_hash` (sha256, auto-computed by `Block.make()`), `token_count`
   (auto-computed via the tokenizer unless a provider-reported count is passed explicitly),
-  `tool_name`, `tool_call_id`, and a free-form `attrs` dict (e.g. `{"is_prefill": true}`).
+  `tool_name`, `tool_call_id`, a free-form `attrs` dict (e.g. `{"is_prefill": true}`), `source_key`
+  (what produced the block, §5.2 *Request purpose and block source*) and `json_path` (typed path into
+  the canonical request/response JSON the block derives from, or `None`).
   A system prompt that starts with a per-request header line (Claude Code's
   `x-anthropic-billing-header: …`, see `split_volatile_header()`) is split by `Block.make()`:
   `content` and `content_hash` describe the stable remainder, so the block keeps one identity across
@@ -332,6 +335,37 @@ are derived from those documents once. `raw_request_body` retains observed trans
 `raw_response_body` remains a compatibility field, and `response_events` optionally stores the
 normalized application event/frame log. Reconstruction and analysis have separate error
 boundaries, so a parser failure does not discard canonical JSON.
+
+#### Request purpose and block source (`analysis/purpose.py`, `sources.py`, `activity.py`)
+
+Derived at capture time, in Python, and persisted (§5.4):
+
+- **Request purpose.** `classify_request(analyzed, agent=..., has_response=...)` returns a
+  `RequestClassification(purpose, purpose_detail, classifier_version)`, or `None` when the analysis
+  produced no blocks. The structural baseline looks at the last *conversational* message (messages made
+  only of `system_prompt` or `thinking` blocks are skipped): tool results ⇒ `tool_continuation`, a
+  non-prefill user message ⇒ `user_turn`, a `compaction_trigger` item ⇒ `compaction`, otherwise
+  `unknown`. `purpose_detail` (JSON object, all keys optional): `trailing_tool_results` (tool names of
+  the trailing run of result messages), `has_user_text`, and `response` = `{kind: tool_calls|mixed|final_text|empty,
+  tool_calls: [names]}` when a response was captured. `housekeeping` is reserved for agent plug-ins
+  registered with `register_purpose_detector`. `classifier_version` records which logic produced the row.
+- **Block source.** `resolve_sources(blocks, agent=...)` returns one `SourceInfo(key, detail)` per block.
+  Keys: `system`, `user`, `assistant`, `reasoning`, `other`, `tool:<name>`, `mcp:<server>/<tool>` (from
+  `mcp__<server>__<tool>`), and `<wrapper>:<program>` from registered tool-call parsers
+  (`register_source_parser`; shipped: JSON-argument `Bash` ⇒ `bash:<program>`, Codex `exec`/`js` JavaScript
+  snippets ⇒ `exec:<program>`, `exec:multi` with `attrs["source"] = {"calls": [...]}`, or `exec:js`).
+  A tool result inherits its call's key. Parsers store program names only; the single argument kept
+  is the file a read/edit tool call targets (next item).
+- **File path.** `SourceInfo.file_path` becomes `blocks.file_path`: the file a read/edit tool call targets, from
+  JSON-object arguments (`file_path`/`path`/...), a closed list of read-only shell programs and `apply_patch`
+  headers; tool results inherit it from their call, definitions have none, and several files go to
+  `attrs["source"]["files"]`. Written only through `analysis/paths.py: normalize_file_path` (the hook for future
+  obfuscation); command text, URLs, patterns and patch bodies are never stored. Kept after archive.
+- **Activity.** `activity_for(source_key)` maps a key to `read|search|edit|vcs|test|command|web|orchestration|mcp|other`
+  (`None` for conversational keys). Derived at read time and not stored.
+- **JSON location.** Adapters set `Block.json_path` as they traverse the canonical document, pointing at
+  the smallest node the content derives from (a content-part object, a plain string, or the enclosing
+  container when parts were joined); `None` when there is no honest location.
 
 #### Content Categories (`analysis/classifier.py`)
 
@@ -447,7 +481,8 @@ CREATE TABLE sessions (
     started_at  DATETIME NOT NULL,
     ended_at    DATETIME,
     is_active   INTEGER NOT NULL DEFAULT 1, -- 1 = active, 0 = ended
-    next_request_seq INTEGER NOT NULL DEFAULT 1
+    next_request_seq INTEGER NOT NULL DEFAULT 1,
+    archived_at DATETIME                    -- set by the explicit archive action; NULL while not archived
 );
 
 CREATE TABLE requests (
@@ -502,9 +537,13 @@ CREATE TABLE requests (
 
     session_seq                     INTEGER,            -- this request's ordinal within its session
 
+    purpose                         TEXT,               -- user_turn | tool_continuation | compaction | housekeeping | unknown; NULL = not classified
+    purpose_detail                  TEXT,               -- JSON object, see §5.2
+    classifier_version              INTEGER,            -- version of the logic that produced purpose/purpose_detail
+
     tokenizer                       TEXT NOT NULL DEFAULT 'tiktoken/o200k_base',
 
-    -- Raw content — purged per [retention] settings
+    -- Raw content — removed by session archive (or the opt-in [retention] purge)
     raw_request_body                TEXT,               -- complete decoded request payload
     canonical_request_body          TEXT,               -- exact JSON analyzed/displayed
     canonical_response_body         TEXT,               -- exact JSON analyzed/displayed
@@ -518,6 +557,7 @@ CREATE INDEX idx_requests_provider ON requests(provider);
 CREATE INDEX idx_requests_provider_response ON requests(provider, provider_response_id);
 CREATE INDEX idx_requests_predecessor_response ON requests(predecessor_response_id);
 CREATE UNIQUE INDEX idx_requests_session_seq_unique ON requests(session_id, session_seq);
+CREATE INDEX idx_requests_session_purpose ON requests(session_id, purpose);
 
 CREATE TABLE tool_stats (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -551,12 +591,17 @@ CREATE TABLE blocks (
     token_count   INTEGER NOT NULL DEFAULT 0,
     tool_name     TEXT,
     tool_call_id  TEXT,
-    attrs         TEXT                -- JSON, e.g. {"is_prefill": true}
+    attrs         TEXT,               -- JSON, e.g. {"is_prefill": true}
+    source_key    TEXT,               -- what produced the block, e.g. 'tool:Read', 'bash:git'; see §5.2
+    json_path     TEXT,               -- JSON array: path into the canonical request/response document, or NULL
+    file_path     TEXT                -- file a read/edit tool call (and its result) targets; see §5.2
 );
 
 CREATE INDEX idx_blocks_request ON blocks(request_id);
 CREATE INDEX idx_blocks_content_hash ON blocks(content_hash);
 CREATE INDEX idx_blocks_type ON blocks(block_type);
+CREATE INDEX idx_blocks_source_key ON blocks(source_key);
+CREATE INDEX idx_blocks_file_path ON blocks(file_path);
 
 -- Tracks the schema/data-migration state (see "Schema Migrations" below)
 CREATE TABLE schema_meta (
@@ -575,12 +620,24 @@ Linking".
 - **During capture:** every supported invocation writes a `Request` row with the aggregated per-category
   token counts, one `BlockRecord` per content part (deduplicated into `block_contents` by
   content hash across the database), and (if tool definitions exist) one `ToolStat` row per tool.
-- **Retention (configurable, see §10):** on server startup only (no background timer),
-  `startup_vacuum()`:
+- **Session archive (explicit, one-way):** an *ended* session can be archived (`POST /api/sessions/{id}/archive`,
+  `contextspy session archive`, the Archive button). `session_archive.archive_session_data` NULLs the five body columns
+  of the session's requests, deletes the session's `block_contents` rows that no block of a request outside the session
+  references (requests without a session count as outside; blocks of other *archived* sessions do not keep content alive),
+  and sets `sessions.archived_at`. Block rows, token counts, categories, source keys, JSON paths, lineage and conversation
+  analysis stay. The cleanup runs in chunks of ≤ 500 hashes, each taking SQLite's write lock before it measures and
+  deletes, so content a concurrent capture starts using is never removed. Archiving is repeatable (it purges stragglers).
+  Afterwards, if the database is in incremental auto-vacuum mode, freed pages are returned with `PRAGMA incremental_vacuum`
+  (time budget 30 s, on the raw DBAPI connection); otherwise the response says to run `contextspy db-compact`. A request that
+  continues a conversation whose predecessor was archived is captured with partial context (the predecessor's stored body is
+  what its context is rebuilt from). Session `status` is `archived`, else `active`, else `ended`; request detail carries
+  `content_state` (`retained`|`archived`|`not_retained`).
+- **Retention (legacy, off by default; configurable, see §10):** on server startup only (no background timer),
+  `startup_vacuum()` (logs a notice when enabled):
   - NULLs raw/canonical request/response bodies and `response_events` together on `Request` rows older than
-    `retention.raw_body_days` (default 7; `0` = keep forever).
+    `retention.raw_body_days` (default 0 = keep forever; any positive value is honoured).
   - Deletes `block_contents` rows whose hash is no longer referenced by any `blocks` row from a
-    request newer than `retention.block_content_days` (default 7; `0` = keep forever) — content
+    request newer than `retention.block_content_days` (default 0 = keep forever) — content
     shared by multiple requests anywhere in the database is only garbage-collected once every
     referencing request has aged out. `blocks` rows themselves (and their token counts/categories) are never
     purged, only the `block_contents` text.
@@ -604,7 +661,7 @@ both of:
    user at `db-upgrade` or `reset-db`) if any data migration is pending — this prevents the app
    from running against a DB with stale/missing derived data.
 
-Currently `SCHEMA_VERSION = 8`; `_migrate_to_v2` backfills `session_seq` (per-session request
+Currently `SCHEMA_VERSION = 10`; `_migrate_to_v2` backfills `session_seq` (per-session request
 ordinal, assigned by `timestamp` order) and reconstructs `blocks`/`block_contents` rows for
 pre-existing requests from their still-present `raw_request_body`/`raw_response_body` (re-running
 the adapter → classify → insert_blocks pipeline). `_migrate_to_v3` copies retained provider JSON
@@ -620,6 +677,16 @@ the uniqueness index. `_migrate_to_v6` backfills compact conversation stream hin
 (see `Block`): the stable text is stored under its own hash, the header moves to
 `attrs["volatile_header"]`, token counts are untouched, and the now-unreferenced per-request
 content copies are deleted. Blocks whose content was purged keep their old hash.
+`_migrate_to_v9` backfills request `purpose`/`purpose_detail`/`classifier_version`, block `source_key`
+(and `attrs["source"]` detail) and block `json_path` for existing rows. Classification runs from the stored
+block rows with the same functions capture uses (tool-call arguments are only available where block content
+was not purged; otherwise the key falls back to `tool:<name>`). `json_path` is copied from a re-parse of a
+retained canonical request/response only when the parse matches the stored blocks exactly per direction;
+otherwise it stays NULL. Requests without block rows are left untouched. Batched, idempotent, with progress
+reporting through `db-upgrade`; the `archived_at` session column is added by `_migrate()` and needs no backfill.
+`_migrate_to_v10` re-runs that classification (source keys and `blocks.file_path`, not JSON paths) for requests whose
+`classifier_version` is below 2; the column and its index are added by `_migrate()`. File paths are only recovered where the
+tool call's text is still stored, so older purged requests keep `file_path` NULL.
 
 ---
 
@@ -634,20 +701,24 @@ content copies are deleted. Blocks whose content was purged keep their old hash.
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/sessions` | Create and start a new session. Body: `{ "name": "string" }`. Returns session object. If another session is active, it is automatically ended first (warning included in response). |
-| `GET` | `/api/sessions` | List all sessions (newest first). |
+| `GET` | `/api/sessions` | List all sessions (newest first). Each session carries `status` (`active`\|`ended`\|`archived`) and `archived_at`. |
 | `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session. 404 if missing. |
 | `GET` | `/api/sessions/{id}/lineage` | Complete session lineage graph. Returns exact/inferred continuation edges, diagnostic root-to-leaf paths, conservative conversation groups and membership, uncertainty diagnostics, timing, and per-edge context-delta summaries. Exact parents captured outside the selected session are external nodes. Each node also carries `conversation_code` (`C<n>` / `AUX`, as on request cards; `null` for external nodes) and `conversation_previous_request_id` / `conversation_next_request_id`, the neighbouring requests in its conversation in session order (`null` for auxiliary and external nodes; neighbours are not proven parent/child links). |
 | `PATCH` | `/api/sessions/{id}` | Rename a session. Body: `{ "name": "string" }`. 422 if blank, 404 if missing. |
-| `POST` | `/api/sessions/{id}/end` | End a session. Retained content is unchanged until the next startup retention pass. 404 if missing. |
+| `POST` | `/api/sessions/{id}/end` | End a session. 404 if missing. |
+| `POST` | `/api/sessions/{id}/archive` | Archive an ended session (one-way; repeatable): removes raw payloads and unreferenced block text, keeps all analysis data. Returns `{ session, freed: { requests, request_body_bytes, content_rows, content_bytes }, space: { auto_vacuum: "incremental"\|"none", reclaimed_bytes, free_bytes_remaining, note }, already_archived }`. 404 if missing, 409 if the session is active or an archive of it is already running. Broadcasts `session_archived` over the WebSocket. |
 | `DELETE` | `/api/sessions/{id}?delete_requests=bool` | Delete session, optionally cascading its request records. 404 if missing. |
 
 #### Requests
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
+| `GET` | `/api/requests` | List requests (no raw bodies). Query params: `session_id`, `provider`, `agent`, `model`, `q` (text search), `status_category` (`success`\|`error`), `purpose` (`user_turn`\|`tool_continuation`\|`compaction`\|`housekeeping`\|`unknown`; `unknown` also matches unclassified requests), `sort_by` (`timestamp`\|`tokens_total_input`\|`tokens_total_output`\|`duration_ms`\|`status_code`\|`session`\|`provider`\|`agent`\|`model`), `sort_dir`, `limit` (default 50, max 500), `offset` (default 0). |
 | `GET` | `/api/requests/{id}` | Full transport-neutral request detail. `request_body`/`response_body` resolve to the stored canonical documents, with outcome, context fidelity/accounting, usage, and compatibility diagnostics when retained. Block data is fetched from the companion `/blocks` endpoint. 404 if missing. |
-| `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, linked_call_id, linked_definition_id, linked_previous_message_id, first_seen_session_seq`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. `first_seen_session_seq` is `null` for session-less or content-less blocks. 404 if request missing. |
+| `GET` | `/api/requests/{id}/blocks` | Structured block breakdown for one request: `{ "session_seq": int\|null, "blocks": [Block, ...] }`. Each `Block`: `id, direction, position, message_index, block_type, category, content, content_purged, token_count, tool_name, tool_call_id, attrs, source_key, activity, json_path, file_path, linked_call_id, linked_definition_id, linked_previous_message_id, first_seen_session_seq`. Request payloads additionally carry `purpose`, `purpose_detail` and `classifier_version`; session payloads carry `archived_at`. `content` is `null` and `content_purged: true` if the backing `block_contents` row has been garbage-collected by retention. `first_seen_session_seq` is `null` for session-less or content-less blocks. 404 if request missing. |
+| `GET` | `/api/requests/{id}/blocks/{block_id}/occurrences?scope=conversation\|session` | Where one input block's content (identified by its content hash within the session) occurs. Returns `scope` (the scope used) and `requested_scope`, `scope_note` (`no_session`\|`auxiliary_request`\|`conversation_unavailable`\|null), `identity` (`kind` `content_hash`\|`none`, `block_type`, `tool_name`, `source_key`, `activity`), `ranges` (maximal runs of consecutive requests *in the scope's order*, with positions, `session_seq` ends, `request_count`, `occurrence_count`), `requests_sample` (≤ 50 entries: first/last/current and run ends, each with that request's own `block_id`) and `totals` (`occurrence_count`, `request_count`, `tokens_per_occurrence` or null, `total_visible_tokens`, first/last seen `session_seq`, `in_latest_request_of_scope`, `scope_request_count`, `fidelity_counts`). Conversation scope uses the lineage analysis's conversation membership (cached ≤ 60 s per session); blocks without a content hash and output blocks return a single occurrence. 404 if the request/block pair does not exist. |
+| `GET` | `/api/sessions/{id}/hotspots?group=block\|source\|file&scope=conversation\|session&conversation=<key>&sort=total_tokens\|occurrences&category=&block_type=&source=&in_context=all\|current\|dropped&limit=25&offset=0` | Hot spots: what a conversation (default: the one the session's latest request is filed under; `conversation` names another by its group key) or the whole session keeps carrying, ranked by **visible tokens** summed over every request that carries it (input blocks only; identity is the content hash). `group=block` rows: `key`, `block_type` (and `block_types` when one content appears under several), `category`, `tool_name`, `source_key`, `activity`, `file_path`, `label`, `preview` (≤ 120 chars, null once content is purged/archived), `content_purged`, `occurrence_count`, `request_count`, `tokens_per_occurrence` (null when occurrences differ), `total_tokens`, `share_pct`, first/last seen `session_seq`, `in_latest_request`, `run_count` (more than one = left the context and came back), `latest` (`request_id`, `block_id`, `session_seq`). `group=source` rows: `source_key`, `activity`, `distinct_blocks`, `occurrence_count`, `request_count`, `total_tokens`, `share_pct`, `largest` (the biggest single block). `group=file` rows: `file_path`, `distinct_versions`, `result_tokens` (tool results that read it) + `call_tokens` (calls that wrote it) = `total_tokens`, counts, `share_pct`, first/last seen, `in_latest_request`, `latest`. Response: `scope`, `requested_scope`, `scope_note` (`conversation_unavailable`\|`auxiliary_request`\|null), `conversations` (`key`, `code`, `request_count`, `selected`), `summary` (`scope_request_count`, `visible_tokens_total`, `occurrences_total` (block instances over the same population, the denominator of an occurrence share), `fidelity_counts`, `unidentifiable` {blocks, tokens} for blocks without a hash, `returned_tokens`, `returned_share_pct`), `rows`, `total_rows`, `has_more`. `limit` 1-100, `offset` 0-1000, `in_context` is block grouping only; 422 for bad parameters, 404 for an unknown session. Needs no stored content, so archived sessions give the same numbers. |
+| `GET` | `/api/requests/{id}/blocks/{block_id}/occurrences/requests?scope=&from_position=&to_position=&limit=` | The occurring requests with positions in the range (same entry shape; `limit` default 100, max 200; `has_more`). |
 | `GET` | `/api/requests/{id}/context-diff?parent_id={id}` | Occurrence-aware parent/child block mapping with persisted, parent-output-promoted, added, removed, replaced, and unavailable groups plus token/category/type summaries. Also returns `new_child_block_ids`: the child's input block IDs not already present in the parent (everything except persisted and promoted blocks, so replaced and unclassifiable blocks count as new), which the request-detail **Show** control uses. |
 
 #### Stats
@@ -1050,9 +1121,10 @@ ContextSpy session end   (or UI button)
         ▼
   UPDATE sessions SET ended_at=now, is_active=0
         │
-        ▼   (retention runs on next application startup)
-  Raw/canonical bodies, event logs, and expired block content are purged
-  according to [retention] settings
+        ▼   (nothing is removed automatically)
+  Raw/canonical bodies, event logs and block content stay until the user runs the
+  "archive session" action for one ended session (an opt-in [retention] window
+  can additionally purge them at startup)
 ```
 
 ### Rules
@@ -1060,7 +1132,7 @@ ContextSpy session end   (or UI button)
 - Only one session is active at a time.
 - Starting a new session automatically ends the active one (with a warning message).
 - Requests captured while no session is active have `session_id = NULL`.
-- Sensitive payload retention applies consistently to session and session-less requests.
+- Sensitive payload removal (archive, and the opt-in purge) applies consistently to session and session-less requests.
 
 ---
 
@@ -1095,20 +1167,30 @@ contextspy/                         # repo root
 │   │   │   ├── openai_responses.py
 │   │   │   └── ollama.py
 │   │   ├── classifier.py           # classify_blocks / classify / per_tool_tokens
+│   │   ├── sources.py              # block source keys + parser registry (Bash, Codex exec/js), shell helpers
+│   │   ├── paths.py                # blocks.file_path: normalize_file_path (single writer) and extractors
+│   │   ├── purpose.py              # request purpose + classify_request, CLASSIFIER_VERSION
+│   │   ├── activity.py             # source key -> activity label (read time)
+│   │   ├── block_occurrences.py    # runs/totals of one block across a scope ("Present in")
+│   │   ├── block_hotspots.py       # pure helpers for the hot-spots ranking
 │   │   └── tokenizer.py            # tiktoken wrapper (with proxy bypass)
 │   ├── db/
 │   │   ├── __init__.py
 │   │   ├── models.py               # SQLAlchemy ORM models (incl. BlockRecord, BlockContent, SchemaMeta)
 │   │   ├── database.py             # Engine + session factory + additive column migration + startup_vacuum
 │   │   ├── migrations.py           # SCHEMA_VERSION + data migrations (contextspy db-upgrade)
+│   │   ├── block_occurrence_service.py # scope_for_session + membership cache + "Present in" queries
+│   │   ├── hotspots_service.py     # hot-spots aggregation (scope temp table, one pass)
+│   │   ├── session_archive.py      # explicit archive of an ended session
+│   │   ├── compaction.py           # contextspy db-compact (offline VACUUM, incremental auto-vacuum)
 │   │   └── crud.py                 # Database read/write helpers (incl. block link resolution)
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── main.py                 # FastAPI app factory
 │   │   ├── websocket.py            # WebSocket manager
 │   │   └── routers/
-│   │       ├── sessions.py
-│   │       ├── requests.py         # incl. GET /requests/{id}/blocks
+│   │       ├── sessions.py         # incl. archive and GET /sessions/{id}/hotspots
+│   │       ├── requests.py         # incl. GET /requests/{id}/blocks and block occurrences
 │   │       ├── stats.py
 │   │       ├── proxy.py
 │   │       └── tokenize.py
@@ -1135,6 +1217,7 @@ contextspy/                         # repo root
 │   │       ├── ToolTreemap.tsx
 │   │       ├── ToolBreakdown.tsx
 │   │       ├── request/             # Workbench, maps, toolbar, inspector, notices
+│   │       ├── hotspots/            # Hot spots view of the session page
 │   │       └── ui/                  # Shared primitives, content viewer, and theme control
 │   ├── package.json
 │   └── vite.config.ts              # outDir → ../contextspy/_web, dev port 5174
@@ -1222,12 +1305,13 @@ bind_addr = "127.0.0.1"
 db_path = "~/.contextspy/contextspy.db"
 
 [retention]
-# Raw request/response bodies and block content text are purged at server
-# startup only (no background timer) once they're older than these many
-# days. 0 = keep forever. Block/category/type metadata is never purged,
-# only the underlying text.
-raw_body_days = 7
-block_content_days = 7
+# Legacy time-based purge: raw request/response bodies and block content text
+# are purged at server startup only (no background timer) once they're older
+# than these many days. 0 = keep forever, which is the default. Block/category/type metadata is never purged, only the underlying
+# text. Prefer `contextspy session archive`; `contextspy db-compact` shrinks
+# the file after data was removed.
+raw_body_days = 0
+block_content_days = 0
 
 [intercepted_hosts]
 # Reserved setting. It is parsed into Settings.extra_hosts but is not yet
@@ -1267,7 +1351,7 @@ When `contextspy start` is called:
    installation attempt; an existing valid CA is reused without reinstalling it.
 4. Create the FastAPI application and start Uvicorn on the configured web bind address/port. Unless
    `--no-browser` is set, schedule the dashboard to open after a short delay.
-5. During the FastAPI lifespan startup, initialise the DB again, run the one-time retention vacuum,
+5. During the FastAPI lifespan startup, initialise the DB again, run the startup vacuum (a no-op unless `[retention]` is set),
    and start mitmproxy `DumpMaster` with `ContextSpyAddon` in a daemon thread.
 6. On shutdown, stop/join the proxy thread and dispose the DB engine.
 
@@ -1280,7 +1364,7 @@ When `contextspy start-local` is called:
 2. Abort with a configuration example if `reverse_targets` is empty.
 3. Skip CA generation/installation, create the local FastAPI application, and start Uvicorn. Unless
    `--no-browser` is set, schedule the dashboard to open after a short delay.
-4. During FastAPI lifespan startup, initialise the DB again, run the one-time retention vacuum, and
+4. During FastAPI lifespan startup, initialise the DB again, run the startup vacuum (a no-op unless `[retention]` is set), and
    start one staggered daemon-thread `DumpMaster` per `[[reverse_targets]]` entry in `reverse:` mode
    with `ContextSpyAddon(provider_override=target.provider)`.
 5. On shutdown, stop/join all reverse-proxy threads and dispose the DB engine.

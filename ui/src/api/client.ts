@@ -34,6 +34,30 @@ export interface Session {
   started_at: string
   ended_at: string | null
   is_active: boolean
+  /** Lifecycle state; `archived` is one-way (raw payloads and block text removed). */
+  status: 'active' | 'ended' | 'archived'
+  archived_at: string | null
+}
+
+export interface ArchiveResult {
+  session: Session
+  /** True when the session was already archived; the purge ran again and only removed stragglers. */
+  already_archived: boolean
+  freed: { requests: number; request_body_bytes: number; content_rows: number; content_bytes: number }
+  space: {
+    auto_vacuum: 'incremental' | 'none'
+    reclaimed_bytes: number
+    free_bytes_remaining: number
+    note: string | null
+  }
+}
+
+/** Request-local refinements of `purpose`; every key is optional and new keys may appear. */
+export interface PurposeDetail {
+  has_user_text?: boolean
+  trailing_tool_results?: string[]
+  response?: { kind: 'tool_calls' | 'mixed' | 'final_text' | 'empty'; tool_calls?: string[] }
+  [key: string]: unknown
 }
 
 export interface Request {
@@ -80,6 +104,14 @@ export interface Request {
   usage_extra: Record<string, unknown> | null
   session_seq: number | null
   tokenizer: string
+  /** Inferred main purpose (user_turn, tool_continuation, compaction, housekeeping, unknown); null = not classified. */
+  purpose: string | null
+  purpose_detail: PurposeDetail | null
+  classifier_version: number | null
+  /** Why stored payloads may be missing; only on the detail response. */
+  content_state?: 'retained' | 'archived' | 'not_retained'
+  /** When the owning session was archived (detail response only). */
+  session_archived_at?: string | null
   context_accounting: {
     visible_input_tokens: number
     provider_input_tokens: number | null
@@ -181,6 +213,9 @@ export interface SessionSummaryEntry {
   /** null while active (no ended_at yet). */
   duration_ms: number | null
   is_active: boolean
+  /** Absent on gap entries (periods without a session). */
+  status?: Session['status']
+  archived_at?: string | null
   request_count: number
   tokens_in: number
   tokens_out: number
@@ -213,12 +248,180 @@ export interface RequestBlock {
   tool_name: string | null
   tool_call_id: string | null
   attrs: Record<string, unknown>
+  /** What produced the block, e.g. `tool:Read`, `mcp:github/create_issue`, `bash:git`; null before classification. */
+  source_key: string | null
+  /** Kind of work the source represents (read, search, edit, vcs, test, command, web, orchestration, mcp, other). */
+  activity: string | null
+  /** Typed path into the canonical request/response JSON this block came from; null when unknown. */
+  json_path: (string | number)[] | null
+  /** The file a read/edit tool call (and its result) targets; null when unknown or not a file tool. */
+  file_path: string | null
   linked_call_id: number | null
   linked_definition_id: number | null
   linked_previous_message_id: number | null
   /** Earliest session_seq (within the same session) this block's content was
    *  first seen at; null with no session, or no content to hash (e.g. structural blocks). */
   first_seen_session_seq: number | null
+}
+
+export type OccurrenceScope = 'conversation' | 'session'
+
+/** A maximal run of consecutive requests (positions in the scope's order) that contain the block. */
+export interface OccurrenceRun {
+  from_position: number
+  to_position: number
+  from_seq: number | null
+  to_seq: number | null
+  request_count: number
+  occurrence_count: number
+}
+
+export interface OccurrenceEntry {
+  request_id: string
+  /** The block's own row id in that request, so the request can be opened with it selected. */
+  block_id: number
+  position: number
+  session_seq: number | null
+  conversation_code: string | null
+  token_count: number
+  context_fidelity: string
+  is_current: boolean
+}
+
+export interface BlockOccurrences {
+  /** The scope actually used; differs from `requested_scope` when `scope_note` is set. */
+  scope: OccurrenceScope | 'request'
+  requested_scope: OccurrenceScope
+  scope_note: 'no_session' | 'auxiliary_request' | 'conversation_unavailable' | null
+  identity: {
+    kind: 'content_hash' | 'none'
+    block_type: string
+    tool_name: string | null
+    source_key: string | null
+    activity: string | null
+  }
+  ranges: OccurrenceRun[]
+  requests_sample: OccurrenceEntry[]
+  totals: {
+    occurrence_count: number
+    request_count: number
+    tokens_per_occurrence: number | null
+    total_visible_tokens: number
+    first_seen_session_seq: number | null
+    last_seen_session_seq: number | null
+    in_latest_request_of_scope: boolean
+    scope_request_count: number
+    fidelity_counts: Record<string, number>
+  }
+}
+
+// ---- Hot spots ------------------------------------------------------------
+
+export type HotspotGroup = 'block' | 'source' | 'file'
+export type HotspotSort = 'total_tokens' | 'occurrences'
+export type HotspotInContext = 'all' | 'current' | 'dropped'
+
+export interface HotspotParams {
+  group?: HotspotGroup
+  scope?: OccurrenceScope
+  conversation?: string | null
+  sort?: HotspotSort
+  category?: string | null
+  block_type?: string | null
+  source?: string | null
+  in_context?: HotspotInContext
+  limit?: number
+  offset?: number
+}
+
+/** A representative occurrence: the latest one, so a click can open its request with the block selected. */
+export interface HotspotOccurrence {
+  request_id: string | null
+  block_id: number
+  session_seq: number | null
+}
+
+interface HotspotRowBase {
+  key: string
+  occurrence_count: number
+  request_count: number
+  total_tokens: number
+  /** Share of the scope's visible tokens, 0-100. */
+  share_pct: number
+}
+
+export interface BlockHotspotRow extends HotspotRowBase {
+  block_type: string | null
+  /** Only when the same content occurs under several block types. */
+  block_types?: string[]
+  category: string | null
+  tool_name: string | null
+  source_key: string | null
+  activity: string | null
+  file_path: string | null
+  label: string | null
+  /** First characters of the content; null once the content is purged or archived. */
+  preview: string | null
+  content_purged: boolean
+  /** Null when the occurrences disagree on size. */
+  tokens_per_occurrence: number | null
+  first_seen_session_seq: number | null
+  last_seen_session_seq: number | null
+  in_latest_request: boolean
+  /** More than one run means the block left the context and came back. */
+  run_count: number
+  latest: HotspotOccurrence
+}
+
+export interface SourceHotspotRow extends HotspotRowBase {
+  source_key: string
+  activity: string | null
+  distinct_blocks: number
+  largest: HotspotOccurrence & { token_count: number; label: string | null }
+}
+
+export interface FileHotspotRow extends HotspotRowBase {
+  file_path: string
+  distinct_versions: number
+  /** Visible tokens of the tool results that read the file. */
+  result_tokens: number
+  /** Visible tokens of the tool calls that wrote or edited it. */
+  call_tokens: number
+  first_seen_session_seq: number | null
+  last_seen_session_seq: number | null
+  in_latest_request: boolean
+  latest: HotspotOccurrence
+}
+
+interface HotspotsResponseBase {
+  scope: OccurrenceScope
+  requested_scope: OccurrenceScope
+  scope_note: 'conversation_unavailable' | 'auxiliary_request' | null
+  sort: HotspotSort
+  conversations: { key: string; code: string | null; request_count: number; selected: boolean }[]
+  summary: {
+    scope_request_count: number
+    visible_tokens_total: number
+    occurrences_total: number
+    fidelity_counts: Record<string, number>
+    /** Blocks without a content hash (hidden or empty); null outside the block grouping. */
+    unidentifiable: { blocks: number; tokens: number } | null
+    returned_tokens: number
+    returned_share_pct: number
+  }
+  total_rows: number
+  has_more: boolean
+}
+
+export type SessionHotspots =
+  | (HotspotsResponseBase & { group: 'block'; rows: BlockHotspotRow[] })
+  | (HotspotsResponseBase & { group: 'source'; rows: SourceHotspotRow[] })
+  | (HotspotsResponseBase & { group: 'file'; rows: FileHotspotRow[] })
+
+export interface OccurrenceRequests {
+  scope: OccurrenceScope | 'request'
+  requests: OccurrenceEntry[]
+  has_more: boolean
 }
 
 interface LineageDeltaBucket {
@@ -389,6 +592,15 @@ export const sessionsApi = {
     }),
   end: (id: string) =>
     apiFetch<{ session: Session }>(`/sessions/${id}/end`, { method: 'POST' }),
+  archive: (id: string) =>
+    apiFetch<ArchiveResult>(`/sessions/${id}/archive`, { method: 'POST' }),
+  hotspots: (id: string, params: HotspotParams) => {
+    const qs = new URLSearchParams()
+    for (const [name, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== '') qs.set(name, String(value))
+    }
+    return apiFetch<SessionHotspots>(`/sessions/${id}/hotspots?${qs}`)
+  },
   rename: (id: string, name: string) =>
     apiFetch<{ session: Session }>(`/sessions/${id}`, {
       method: 'PATCH',
@@ -448,6 +660,12 @@ export const requestsApi = {
       blocks: RequestBlock[]
       token_totals?: Record<'input' | 'output', Record<string, number>>
     }>(`/requests/${id}/blocks`),
+  blockOccurrences: (id: string, blockId: number, scope: OccurrenceScope) =>
+    apiFetch<BlockOccurrences>(`/requests/${id}/blocks/${blockId}/occurrences?scope=${scope}`),
+  occurrenceRequests: (id: string, blockId: number, scope: OccurrenceScope, fromPosition: number, toPosition: number, limit = 100) =>
+    apiFetch<OccurrenceRequests>(
+      `/requests/${id}/blocks/${blockId}/occurrences/requests?scope=${scope}&from_position=${fromPosition}&to_position=${toPosition}&limit=${limit}`,
+    ),
   contextDiff: (id: string, parentId: string) =>
     apiFetch<ContextDiffResponse>(`/requests/${id}/context-diff?parent_id=${encodeURIComponent(parentId)}`),
 }

@@ -215,3 +215,11 @@ describe('session conversation sequences', () => {
     sequence.mockRestore()
   })
 })
+
+describe('hot spots link', () => {
+  it('opens the hot spots view for that conversation', () => {
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SessionConversationSequences data={base} /></MemoryRouter></QueryClientProvider>)
+    const link = screen.getByRole('link', { name: 'Hot spots of primary' })
+    expect(link.getAttribute('href')).toBe('/sessions/s1?view=hotspots&conversation=primary')
+  })
+})

@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, Session, ToolStat
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
 
 logger = logging.getLogger(__name__)
 
@@ -951,6 +951,217 @@ def _migrate_to_v8(db: OrmSession) -> None:
     logger.info("v8: re-keyed system prompts with a volatile header (%d content copies)", len(replaced_hashes))
 
 
+# ---------------------------------------------------------------------------
+# v9: request purpose, block source keys and JSON locations
+# ---------------------------------------------------------------------------
+
+_V9_BATCH_REQUESTS = 100
+_V9_PROGRESS_EVERY = 1000
+
+# ``contextspy db-upgrade`` sets this to print progress; the log always receives it.
+progress_reporter: Callable[[str], None] | None = None
+
+
+def _report(message: str) -> None:
+    logger.info(message)
+    if progress_reporter is not None:
+        progress_reporter(message)
+
+
+def _v9_match_json_paths(stored: list, parsed: list) -> dict[int, str]:
+    """Map block-row id -> json_path JSON for one direction, or {} when matching is ambiguous.
+
+    Unambiguous means the same number of blocks and, position by position, the same block type
+    and content hash. Anything else (an adapter that changed since capture, a purged document that
+    no longer matches) leaves every block of the direction without a path. Never matches by content.
+    """
+    if len(stored) != len(parsed):
+        return {}
+    for row, block in zip(stored, parsed):
+        if str(row.block_type) != str(block.block_type) or row.content_hash != block.content_hash:
+            return {}
+    return {
+        row.id: json.dumps(list(block.json_path), separators=(",", ":"))
+        for row, block in zip(stored, parsed)
+        if row.json_path is None and block.json_path is not None
+    }
+
+
+def _migrate_to_v9(db: OrmSession) -> None:
+    """Backfill request purpose, block ``source_key`` and block ``json_path`` (plans/wi0-data-foundation.md section 8)."""
+    _backfill_classification(db, "v9", json_paths=True)
+
+
+def _migrate_to_v10(db: OrmSession) -> None:
+    """Re-derive source keys and ``blocks.file_path`` for requests classified before ``CLASSIFIER_VERSION`` 2.
+
+    Same phase A as v9 (a database upgraded straight from before v9 has already done it, so this finds
+    nothing to do). File paths come from retained tool-call content only; purged tool calls keep
+    ``file_path`` NULL, so historical coverage is partial by nature (plans/file-paths.md).
+    """
+    _backfill_classification(db, "v10", json_paths=False)
+
+
+def _backfill_classification(db: OrmSession, label: str, *, json_paths: bool) -> None:
+    """Shared batched backfill behind v9 and v10 (``label`` prefixes progress lines and ``db.info`` key).
+
+    A. Requests with ``classifier_version`` below the current one get ``purpose`` /
+       ``purpose_detail`` and every block a ``source_key``, computed from the stored block rows by the
+       same functions capture uses. Tool-call arguments are only available where block content has not
+       been purged; elsewhere the generic ``tool:<name>`` key is stored. Requests without block rows
+       are left untouched.
+       Tool calls and their results also get ``file_path`` (analysis/paths.py).
+    B. (``json_paths`` only) Where a canonical request/response document is still retained, the adapter
+       re-parses it and ``json_path`` is copied onto the stored blocks if (and only if) the parse matches
+       them exactly.
+
+    Keyset batches keep memory bounded; re-running is cheap and writes nothing new. Progress goes to
+    the log and to ``progress_reporter``; a summary lands in ``db.info["<label>_backfill"]``.
+    """
+    from sqlalchemy import and_
+
+    from contextspy.analysis.adapters import get_adapter
+    from contextspy.analysis.blocks import BlockSnapshot
+    from contextspy.analysis.purpose import CLASSIFIER_VERSION, PurposeInputs, derive_purpose
+    from contextspy.analysis.sources import resolve_sources
+    from contextspy.db.models import BlockContent
+
+    total = db.execute(select(func.count()).select_from(Request)).scalar() or 0
+    stats = {
+        "requests": total, "classified": 0, "skipped_no_blocks": 0, "source_keys": 0,
+        "paths_set": 0, "path_mismatch": 0, "path_failed": 0,
+    }
+    _report(
+        f"{label}: backfilling {total:,} requests "
+        + ("(purpose, source keys, file paths, JSON paths)" if json_paths else "(source keys, file paths)")
+    )
+    last_id = ""
+    done = 0
+    while True:
+        requests = db.execute(
+            select(
+                Request.id, Request.agent, Request.endpoint, Request.classifier_version,
+                Request.canonical_request_body.isnot(None).label("has_request_doc"),
+                Request.canonical_response_body.isnot(None).label("has_response_doc"),
+            ).where(Request.id > last_id).order_by(Request.id).limit(_V9_BATCH_REQUESTS)
+        ).all()
+        if not requests:
+            break
+        last_id = requests[-1].id
+
+        rows_by_request: dict[str, list] = {}
+        block_rows = db.execute(
+            select(
+                BlockRecord.id, BlockRecord.request_id, BlockRecord.direction, BlockRecord.position,
+                BlockRecord.message_index, BlockRecord.block_type, BlockRecord.content_hash,
+                BlockRecord.tool_name, BlockRecord.tool_call_id, BlockRecord.attrs,
+                BlockRecord.source_key, BlockRecord.json_path, BlockContent.content,
+            )
+            # Content is only needed for tool calls (their arguments feed the source parsers).
+            .outerjoin(BlockContent, and_(
+                BlockRecord.content_hash == BlockContent.hash, BlockRecord.block_type == "tool_call",
+            ))
+            .where(BlockRecord.request_id.in_([r.id for r in requests]))
+            .order_by(BlockRecord.request_id, BlockRecord.direction, BlockRecord.position)
+        ).all()
+        for row in block_rows:
+            rows_by_request.setdefault(row.request_id, []).append(row)
+
+        source_updates: list[dict] = []
+        path_updates: list[dict] = []
+        for request in requests:
+            rows = rows_by_request.get(request.id, [])
+            if not rows:
+                stats["skipped_no_blocks"] += 1
+                continue
+            inputs = [r for r in rows if r.direction == "input"]
+            outputs = [r for r in rows if r.direction == "output"]
+
+            if request.classifier_version is None or request.classifier_version < CLASSIFIER_VERSION:
+                attrs_by_row = []
+                for row in inputs + outputs:
+                    try:
+                        attrs_by_row.append(json.loads(row.attrs) if row.attrs else {})
+                    except json.JSONDecodeError:
+                        attrs_by_row.append({})
+                snapshots = [
+                    BlockSnapshot(
+                        direction=row.direction, block_type=row.block_type,
+                        message_index=row.message_index, tool_name=row.tool_name,
+                        tool_call_id=row.tool_call_id, attrs=attrs, content=row.content,
+                        content_hash=row.content_hash,
+                    )
+                    for row, attrs in zip(inputs + outputs, attrs_by_row)
+                ]
+                infos = resolve_sources(snapshots, agent=request.agent)
+                for row, attrs, info in zip(inputs + outputs, attrs_by_row, infos):
+                    row_update: dict = {"id": row.id, "source_key": info.key, "file_path": info.file_path}
+                    if info.detail:
+                        row_update["attrs"] = json.dumps({**attrs, "source": info.detail})
+                    source_updates.append(row_update)
+                result = derive_purpose(PurposeInputs(
+                    agent=request.agent,
+                    input_blocks=snapshots[:len(inputs)],
+                    output_blocks=snapshots[len(inputs):],
+                    # Only claim a response when the stored rows prove one; otherwise omit it.
+                    has_response=bool(outputs) or bool(request.has_response_doc),
+                ))
+                db.execute(
+                    update(Request).where(Request.id == request.id).values(
+                        purpose=result.purpose,
+                        purpose_detail=json.dumps(result.detail) if result.detail else None,
+                        classifier_version=CLASSIFIER_VERSION,
+                    )
+                )
+                stats["classified"] += 1
+
+            for direction, stored, has_doc in (
+                ("input", inputs, request.has_request_doc),
+                ("output", outputs, request.has_response_doc),
+            ):
+                if not (json_paths and has_doc and stored and any(r.json_path is None for r in stored)):
+                    continue
+                adapter = get_adapter(request.endpoint)
+                if adapter is None:
+                    continue
+                try:
+                    column = Request.canonical_request_body if direction == "input" else Request.canonical_response_body
+                    document = json.loads(db.execute(select(column).where(Request.id == request.id)).scalar_one())
+                    parsed = (
+                        adapter.parse_request(document)[0] if direction == "input"
+                        else adapter.parse_response(document)[0]
+                    )
+                except Exception:
+                    stats["path_failed"] += 1
+                    logger.debug("%s: could not re-parse %s %s document", label, request.id, direction, exc_info=True)
+                    continue
+                matched = _v9_match_json_paths(stored, parsed)
+                if not matched:
+                    stats["path_mismatch"] += 1
+                path_updates.extend({"id": row_id, "json_path": path} for row_id, path in matched.items())
+
+        if source_updates:
+            db.execute(update(BlockRecord), source_updates)
+            stats["source_keys"] += len(source_updates)
+        if path_updates:
+            db.execute(update(BlockRecord), path_updates)
+            stats["paths_set"] += len(path_updates)
+        db.flush()
+        db.expire_all()  # keep the identity map from growing across batches
+
+        previous = done
+        done += len(requests)
+        if done // _V9_PROGRESS_EVERY != previous // _V9_PROGRESS_EVERY:
+            _report(f"{label}: {done:,}/{total:,} requests processed")
+
+    db.info[f"{label}_backfill"] = stats
+    _report(
+        f"{label}: done. classified {stats['classified']:,} requests, wrote {stats['source_keys']:,} source keys "
+        f"and {stats['paths_set']:,} JSON paths ({stats['path_mismatch']:,} directions did not match "
+        f"their retained document, {stats['path_failed']:,} could not be re-parsed)"
+    )
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
@@ -959,4 +1170,6 @@ _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     6: _migrate_to_v6,
     7: _migrate_to_v7,
     8: _migrate_to_v8,
+    9: _migrate_to_v9,
+    10: _migrate_to_v10,
 }

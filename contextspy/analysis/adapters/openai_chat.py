@@ -42,11 +42,13 @@ class OpenAIChatAdapter(WireFormatAdapter):
         blocks: list[Block] = []
         tool_call_map: dict[str, str] = {}
 
+        tools_key = "tools" if req_body.get("tools") else "functions"
         tools = req_body.get("tools") or req_body.get("functions") or []
-        for tool in tools:
+        for tool_index, tool in enumerate(tools):
             name = tool.get("name") or (tool.get("function") or {}).get("name") or "unknown"
             blocks.append(Block.make(
                 Direction.INPUT, BlockType.TOOL_DEFINITION, json.dumps(tool), tool_name=name,
+                json_path=(tools_key, tool_index),
             ))
 
         raw_messages = req_body.get("messages", [])
@@ -55,12 +57,14 @@ class OpenAIChatAdapter(WireFormatAdapter):
         for i, msg in enumerate(raw_messages):
             role = msg.get("role", "user")
             content = msg.get("content", "")
+            content_path = ("messages", i, "content")
             is_tool_result = role == "tool" or bool(msg.get("tool_call_id"))
 
             if is_tool_result:
                 b = Block.make(
                     Direction.INPUT, BlockType.TOOL_RESULT, flatten_content(content),
                     message_index=i, tool_call_id=msg.get("tool_call_id"),
+                    json_path=content_path,
                 )
                 blocks.append(b)
                 pending_tool_results.append(b)
@@ -69,29 +73,39 @@ class OpenAIChatAdapter(WireFormatAdapter):
             if role == "system":
                 text = flatten_content(content)
                 if text:
-                    blocks.append(Block.make(Direction.INPUT, BlockType.SYSTEM_PROMPT, text, message_index=i))
+                    blocks.append(Block.make(
+                        Direction.INPUT, BlockType.SYSTEM_PROMPT, text, message_index=i,
+                        json_path=content_path,
+                    ))
                 continue
 
             msg_block_type = BlockType.ASSISTANT_MESSAGE if role == "assistant" else BlockType.USER_MESSAGE
 
             if isinstance(content, list):
-                for part in content:
+                for part_index, part in enumerate(content):
                     if not isinstance(part, dict):
                         continue
+                    part_path = content_path + (part_index,)
                     if part.get("type") == "text" and part.get("text"):
-                        blocks.append(Block.make(Direction.INPUT, msg_block_type, part["text"], message_index=i))
+                        blocks.append(Block.make(
+                            Direction.INPUT, msg_block_type, part["text"], message_index=i,
+                            json_path=part_path,
+                        ))
                     elif part.get("type") not in ("text",):
                         attrs = {"content_type": part.get("type")}
                         if contains_media_content(part):
                             attrs.update({"contains_media": True, "token_estimate": "text_only"})
                         blocks.append(Block.make(
                             Direction.INPUT, BlockType.OTHER, flatten_content(part),
-                            message_index=i, attrs=attrs,
+                            message_index=i, attrs=attrs, json_path=part_path,
                         ))
             elif isinstance(content, str) and content:
-                blocks.append(Block.make(Direction.INPUT, msg_block_type, content, message_index=i))
+                blocks.append(Block.make(
+                    Direction.INPUT, msg_block_type, content, message_index=i,
+                    json_path=content_path,
+                ))
 
-            for tc in msg.get("tool_calls") or []:
+            for call_index, tc in enumerate(msg.get("tool_calls") or []):
                 call_id = tc.get("id")
                 fn = tc.get("function") or {}
                 name = fn.get("name") or tc.get("name")
@@ -100,6 +114,7 @@ class OpenAIChatAdapter(WireFormatAdapter):
                 blocks.append(Block.make(
                     Direction.INPUT, BlockType.TOOL_CALL, fn.get("arguments", ""),
                     message_index=i, tool_name=name, tool_call_id=call_id,
+                    json_path=("messages", i, "tool_calls", call_index),
                 ))
 
         for b in pending_tool_results:
@@ -115,25 +130,29 @@ class OpenAIChatAdapter(WireFormatAdapter):
         choices = resp_body.get("choices", [])
         for list_index, choice in enumerate(choices):
             choice_index = int(choice.get("index", list_index))
+            msg_key = "message" if choice.get("message") else "delta"
             msg = choice.get("message") or choice.get("delta") or {}
+            msg_path = ("choices", list_index, msg_key)
+            reasoning_key = "reasoning_content" if msg.get("reasoning_content") else "reasoning"
             reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
             if reasoning:
                 blocks.append(Block.make(
                     Direction.OUTPUT, BlockType.THINKING, reasoning,
-                    message_index=choice_index,
+                    message_index=choice_index, json_path=msg_path + (reasoning_key,),
                 ))
             text = flatten_content(msg.get("content", ""))
             if text:
                 blocks.append(Block.make(
                     Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE, text,
-                    message_index=choice_index,
+                    message_index=choice_index, json_path=msg_path + ("content",),
                 ))
-            for tc in msg.get("tool_calls") or []:
+            for call_index, tc in enumerate(msg.get("tool_calls") or []):
                 fn = tc.get("function") or {}
                 name = fn.get("name") or tc.get("name") or ""
                 blocks.append(Block.make(
                     Direction.OUTPUT, BlockType.TOOL_CALL, fn.get("arguments", ""),
                     message_index=choice_index, tool_name=name, tool_call_id=tc.get("id"),
+                    json_path=msg_path + ("tool_calls", call_index),
                 ))
             function_call = msg.get("function_call") or {}
             if isinstance(function_call, dict) and function_call:
@@ -143,6 +162,7 @@ class OpenAIChatAdapter(WireFormatAdapter):
                     function_call.get("arguments", ""),
                     message_index=choice_index,
                     tool_name=function_call.get("name", ""),
+                    json_path=msg_path + ("function_call",),
                 ))
 
         usage = resp_body.get("usage", {}) or {}

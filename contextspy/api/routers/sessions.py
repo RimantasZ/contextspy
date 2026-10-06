@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from contextspy.api.websocket import ConnectionManager
-from contextspy.db import crud
+from contextspy.db import crud, hotspots_service
 from contextspy.db.database import get_db
 
 router = APIRouter(tags=["sessions"])
@@ -136,6 +136,34 @@ def get_session_conversation_requests(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/sessions/{session_id}/hotspots")
+def get_session_hotspots(
+    session_id: str,
+    group: str = Query(default="block", pattern="^(block|source|file)$"),
+    scope: str = Query(default="conversation", pattern="^(conversation|session)$"),
+    conversation: str | None = Query(default=None, max_length=512),
+    sort: str = Query(default="total_tokens", pattern="^(total_tokens|occurrences)$"),
+    category: str | None = Query(default=None, max_length=64),
+    block_type: str | None = Query(default=None, max_length=64),
+    source: str | None = Query(default=None, max_length=256),
+    in_context: str = Query(default="all", pattern="^(all|current|dropped)$"),
+    limit: int = Query(default=25, ge=1, le=hotspots_service.MAX_LIMIT),
+    offset: int = Query(default=0, ge=0, le=hotspots_service.MAX_OFFSET),
+):
+    """Blocks, sources or files of a conversation (or the whole session) ranked by visible tokens carried."""
+    if in_context != "all" and group != "block":
+        raise HTTPException(status_code=422, detail="in_context applies to the block grouping only")
+    with get_db() as db:
+        result = hotspots_service.get_session_hotspots(
+            db, session_id, group=group, scope=scope, conversation=conversation, sort=sort,
+            category=category, block_type=block_type, source=source, in_context=in_context,
+            limit=limit, offset=offset,
+        )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return result
+
+
 @router.get("/sessions/{session_id}/sequence")
 def get_session_sequence(
     session_id: str, revision: str | None = None,
@@ -179,6 +207,38 @@ def end_session(session_id: str):
             ws.loop,
         )
     return {"session": result}
+
+
+@router.post("/sessions/{session_id}/archive")
+def archive_session(session_id: str):
+    """Remove the session's raw payloads and block text (one-way). Ended sessions only; repeatable."""
+    from contextspy.db import session_archive
+    from contextspy.db.database import get_engine
+
+    try:
+        with get_db() as db:
+            outcome = session_archive.archive_session_data(db, session_id)
+            session = outcome["session"].to_dict()
+    except session_archive.SessionNotFound:
+        raise HTTPException(status_code=404, detail="Session not found")
+    except session_archive.SessionStillActive:
+        raise HTTPException(status_code=409, detail="End the session before archiving it")
+    except session_archive.ArchiveInProgress:
+        raise HTTPException(status_code=409, detail="This session is already being archived")
+
+    space = session_archive.reclaim_space(get_engine())
+    ws = _get_ws()
+    if ws.loop:
+        asyncio.run_coroutine_threadsafe(
+            ws.broadcast({"event": "session_archived", "data": session}),
+            ws.loop,
+        )
+    return {
+        "session": session,
+        "freed": outcome["freed"],
+        "space": space,
+        "already_archived": outcome["already_archived"],
+    }
 
 
 @router.delete("/sessions/{session_id}")
