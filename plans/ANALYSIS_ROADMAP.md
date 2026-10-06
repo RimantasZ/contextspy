@@ -123,7 +123,7 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 | 3a | `contextspy db-compact` (reclaim free pages, enable incremental auto-vacuum) | [`db-compact.md`](db-compact.md) | **implemented and committed** (`f34fa29`); not released; the author's live DB not yet compacted | — |
 | 3b | Session lifecycle & explicit archive | [`session-archive.md`](session-archive.md) | **implemented and committed** (`a2a4b8c`); not released, not checked in a browser; only the `sessions.archived_at` column exists (WI-0), nothing sets it | 3a |
 | 4a | Capture the file a block is about (`blocks.file_path`, schema v10) | [`file-paths.md`](file-paths.md) | **implemented, uncommitted** (2026-10-06); not released; not seen in a browser | WI-0 |
-| 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **reviewed and decided, not started** (4a is done) | 1, 3b, 4a (Files grouping only) |
+| 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **reviewed and decided, re-reviewed after 4a (single-pass aggregate, file rows split read/edit; cache postponed to [`postponed/hot-spots-cache.md`](postponed/hot-spots-cache.md)); not started** (4a is done) | 1, 3b, 4a (Files grouping only) |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
 | 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
 | 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | idea only | 4b |
