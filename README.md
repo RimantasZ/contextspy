@@ -186,6 +186,7 @@ If that name already exists, `-1`, `-2`, and so on is added before `.back`.
   lineage evidence, conversation grouping, and UI icons
 - [REST and WebSocket handling](docs/transport-normalization.md) — invocation boundaries,
   canonical JSON, reconstruction, storage, and token accounting
+- [Hot spots and block analysis](docs/hot-spots.md) — what a conversation keeps carrying, per block, source and file
 - [CLI reference](docs/cli.md) — all commands and options
 - [Development](docs/development.md) — architecture, data storage, contributing
 

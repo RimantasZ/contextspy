@@ -207,7 +207,7 @@ and count: requests marked partial or opaque hide part of their context, and pro
 used. Blocks are the same only if their text is identical, so an edited file is a new block; the **Files** grouping ties the
 versions of one file together using the path the agent used, and a file written with a relative and an absolute path shows
 twice. File rows split tokens into *read* (tool results) and *edited* (the calls that wrote it). Hot spots work on archived
-sessions, without text previews.
+sessions, without text previews. See the [Hot spots guide](hot-spots.md).
 
 ### How long is request data kept?
 
