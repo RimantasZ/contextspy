@@ -8,7 +8,7 @@
   blocks (tool definitions, big tool results, compaction items, ...) that add up to the most **visible tokens** over all
   the requests that contain them, for one conversation or the whole session. Switch between **Blocks**, **Sources**
   (which tool or program costs the most) and **Files** (tokens attributed to each file, split into read and edited), sort
-  by total tokens or by occurrences, filter blocks by type and by *Still in context* / *Dropped*, and click a row to open
+  by total tokens or by occurrences, filter blocks by category (the same ones as the context bar), by type and by *Still in context* / *Dropped*, and click a row to open
   the latest request that carries it with the block selected. Rows marked *reappears* left the context and came back;
   *dropped* means gone from the latest request. Works on archived sessions (no previews there). Each conversation in the
   Conversations view links to its hot spots. Counts are visible tokens only (partial or opaque requests are flagged); same

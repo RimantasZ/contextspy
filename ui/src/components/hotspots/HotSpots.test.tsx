@@ -89,9 +89,10 @@ describe('HotSpots', () => {
     await waitFor(() => expect(screen.getByTestId('location').textContent).toContain('sort=occurrences'))
     await userEvent.click(screen.getByRole('button', { name: 'Dropped' }))
     await userEvent.selectOptions(screen.getByLabelText('Block type'), 'tool_result')
+    await userEvent.selectOptions(screen.getByLabelText('Category'), 'file_contents')
     await waitFor(() => {
       const last = new URL(String(spy.mock.calls[spy.mock.calls.length - 1][0]), 'http://localhost')
-      expect(Object.fromEntries(last.searchParams)).toMatchObject({ sort: 'occurrences', in_context: 'dropped', block_type: 'tool_result', offset: '0' })
+      expect(Object.fromEntries(last.searchParams)).toMatchObject({ sort: 'occurrences', in_context: 'dropped', block_type: 'tool_result', category: 'file_contents', offset: '0' })
     })
   })
 
@@ -112,10 +113,10 @@ describe('HotSpots', () => {
 
   it('reads a conversation and filters from the URL', async () => {
     const spy = mockApi(() => response('block', [blockRow()]))
-    renderView('/sessions/s1?view=hotspots&conversation=c-two&sort=occurrences&in_context=current&source=tool%3ARead')
+    renderView('/sessions/s1?view=hotspots&conversation=c-two&sort=occurrences&in_context=current&source=tool%3ARead&category=tool_results')
     await screen.findByText('tool:Bash definition')
     const url = new URL(String(spy.mock.calls[0][0]), 'http://localhost')
-    expect(Object.fromEntries(url.searchParams)).toMatchObject({ conversation: 'c-two', sort: 'occurrences', in_context: 'current', source: 'tool:Read' })
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ conversation: 'c-two', sort: 'occurrences', in_context: 'current', source: 'tool:Read', category: 'tool_results' })
     expect(screen.getByRole('button', { name: 'Remove the source filter tool:Read' })).toBeTruthy()
   })
 
@@ -152,6 +153,7 @@ describe('HotSpots', () => {
     await screen.findByText('tool:Read')
     expect(screen.getByText(/12 distinct blocks/)).toBeTruthy()
     expect(screen.queryByLabelText('Block type')).toBeNull()  // block-only filters are hidden
+    expect(screen.queryByLabelText('Category')).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Show the blocks of tool:Read' }))
     await waitFor(() => expect(screen.getByTestId('location').textContent).toContain('source=tool%3ARead'))
     expect(screen.getByTestId('location').textContent).not.toContain('group=')

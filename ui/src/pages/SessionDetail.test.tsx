@@ -20,7 +20,7 @@ vi.mock('../api/hooks', () => ({
 vi.mock('../components/SessionConversationSequences', () => ({ SessionConversationSequences: () => <p>Sequence view</p> }))
 vi.mock('../components/hotspots/HotSpots', () => ({
   HotSpots: ({ sessionId }: { sessionId: string }) => <p>Hot spots of {sessionId}</p>,
-  HOTSPOT_URL_PARAMS: ['group', 'scope', 'conversation', 'sort', 'block_type', 'source', 'in_context'],
+  HOTSPOT_URL_PARAMS: ['group', 'scope', 'conversation', 'sort', 'category', 'block_type', 'source', 'in_context'],
 }))
 vi.mock('../components/SessionLineage', () => ({ SessionLineage: () => <p>Diagnostic view</p> }))
 

@@ -7,6 +7,7 @@ import type {
 } from '../../api/client'
 import { BLOCK_VISUALS, FILTERABLE_BLOCK_TYPES, visualForType } from '../../lib/blockVisuals'
 import { SegmentedControl } from '../ui/SegmentedControl'
+import { CATEGORY_LABELS, CATEGORY_ORDER } from '../ContextBar'
 
 const SCOPE_NOTES: Record<string, string> = {
   auxiliary_request: 'The latest request is auxiliary: showing the whole session.',
@@ -17,7 +18,7 @@ const GROUPS: HotspotGroup[] = ['block', 'source', 'file']
 const SORTS: HotspotSort[] = ['total_tokens', 'occurrences']
 const IN_CONTEXT: HotspotInContext[] = ['all', 'current', 'dropped']
 /** URL parameters this view owns (the session view parameters stay untouched). */
-export const HOTSPOT_URL_PARAMS = ['group', 'scope', 'conversation', 'sort', 'block_type', 'source', 'in_context'] as const
+export const HOTSPOT_URL_PARAMS = ['group', 'scope', 'conversation', 'sort', 'category', 'block_type', 'source', 'in_context'] as const
 
 function pick<T extends string>(value: string | null, allowed: readonly T[], fallback: T): T {
   return allowed.includes(value as T) ? (value as T) : fallback
@@ -168,14 +169,15 @@ export function HotSpots({ sessionId }: { sessionId: string }) {
   const sort = pick(searchParams.get('sort'), SORTS, 'total_tokens')
   const conversation = searchParams.get('conversation')
   const scope = searchParams.get('scope') === 'session' && !conversation ? 'session' : 'conversation'
+  const category = group === 'block' ? searchParams.get('category') : null
   const blockType = group === 'block' ? searchParams.get('block_type') : null
   const source = group === 'block' ? searchParams.get('source') : null
   const inContext = group === 'block' ? pick(searchParams.get('in_context'), IN_CONTEXT, 'all') : 'all'
 
   const params = useMemo<Omit<HotspotParams, 'limit' | 'offset'>>(() => ({
     group, sort, scope, conversation: scope === 'conversation' ? conversation : null,
-    block_type: blockType, source, in_context: inContext,
-  }), [group, sort, scope, conversation, blockType, source, inContext])
+    category, block_type: blockType, source, in_context: inContext,
+  }), [group, sort, scope, conversation, category, blockType, source, inContext])
   const query = useSessionHotspots(sessionId, params)
 
   function update(patch: Record<string, string | null>) {
@@ -213,13 +215,21 @@ export function HotSpots({ sessionId }: { sessionId: string }) {
           </label>
           <SegmentedControl label="Group by" value={group}
             options={[{ value: 'block', label: 'Blocks' }, { value: 'source', label: 'Sources' }, { value: 'file', label: 'Files' }]}
-            onChange={(value) => update({ group: value === 'block' ? null : value, block_type: null, source: null, in_context: null })} />
+            onChange={(value) => update({ group: value === 'block' ? null : value, category: null, block_type: null, source: null, in_context: null })} />
           <SegmentedControl label="Sort by" value={sort}
             options={[{ value: 'total_tokens', label: 'Total tokens' }, { value: 'occurrences', label: 'Occurrences' }]}
             onChange={(value) => update({ sort: value === 'total_tokens' ? null : value })} />
         </div>
         {group === 'block' && (
           <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]" title="The same categories as the context bar and donut">
+              Category
+              <select aria-label="Category" className="app-field min-h-8 py-1 text-xs" value={category ?? ''}
+                onChange={(event) => update({ category: event.target.value || null })}>
+                <option value="">All</option>
+                {CATEGORY_ORDER.map((name) => <option key={name} value={name}>{CATEGORY_LABELS[name] ?? name}</option>)}
+              </select>
+            </label>
             <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
               Block type
               <select aria-label="Block type" className="app-field min-h-8 py-1 text-xs" value={blockType ?? ''}
@@ -251,7 +261,7 @@ export function HotSpots({ sessionId }: { sessionId: string }) {
             <ul className="surface mt-3 overflow-hidden rounded-lg border border-[var(--border)]">
               {merged.group === 'block' && merged.rows.map((row) => <BlockRow key={row.key} row={row} onOpen={open} />)}
               {merged.group === 'source' && merged.rows.map((row) => <SourceRow key={row.key} row={row} onOpen={open}
-                onFilter={(value) => update({ group: null, source: value, block_type: null, in_context: null })} />)}
+                onFilter={(value) => update({ group: null, source: value, category: null, block_type: null, in_context: null })} />)}
               {merged.group === 'file' && merged.rows.map((row) => <FileRow key={row.key} row={row} onOpen={open} />)}
             </ul>
           )}
