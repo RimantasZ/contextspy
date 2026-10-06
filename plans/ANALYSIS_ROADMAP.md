@@ -124,7 +124,8 @@ convention from an earlier prototype; see `wi0-data-foundation.md` §17 "Finding
 | 4b | Hot spots (per conversation / per session; by block, source, file) | [`hot-spots.md`](hot-spots.md) | **reviewed and decided, not started** | 1, 3b, 4a (Files grouping only) |
 | 5 | Context tree page | [`unconfirmed_drafts/context-tree.md`](unconfirmed_drafts/context-tree.md) | draft | 1, 2 |
 | 6 | Request compare | [`unconfirmed_drafts/request-compare.md`](unconfirmed_drafts/request-compare.md) | draft | 5 |
-| 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | idea only | 4 |
+| 7 | Optimisation hints ("carried but dead") | [`unconfirmed_drafts/optimisation-hints.md`](unconfirmed_drafts/optimisation-hints.md) | idea only | 4b |
+| 8 | Similarity grouping: changed-and-reloaded blocks, version timelines (**v2**) | [`unconfirmed_drafts/similarity-grouping.md`](unconfirmed_drafts/similarity-grouping.md) | idea only, postponed to v2 | 4a, 4b, 6 |
 
 Plans 1, 2 and 3 are independent and can proceed in parallel. 1 and 2 set contracts others use,
 so they were written first.

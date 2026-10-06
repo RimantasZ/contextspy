@@ -53,6 +53,14 @@ File row: `file_path`, `distinct_versions` (distinct hashes), `occurrence_count`
 - Source grouping: `GROUP BY b.source_key` (rows with `source_key IS NULL` are folded under `unknown`), `COUNT(DISTINCT b.content_hash)` for `distinct_blocks`. File grouping: `GROUP BY b.file_path WHERE file_path IS NOT NULL` over `tool_call` and `tool_result` blocks. Both reuse the same scope table.
 - No result cache. Expected: ≈ 0.1-1 s for a whole large session, ≈ 10 ms for a conversation; revisit only if the first measurements on a real database say otherwise.
 
+### Performance requirements (how the slow-plan finding is addressed)
+The finding is a *design requirement*, not just a note: it is enforced by the query shape, a test, and a manual budget check. **Nothing is implemented yet; the numbers above are from prototype SQL on the author's database.**
+1. **Query shape:** the scope table is always the outer loop (`FROM scope s CROSS JOIN blocks b ON b.request_id = s.id`; in SQLite `CROSS JOIN` fixes the loop order), and the inner loop uses `idx_blocks_request`. No `GROUP BY b.content_hash` over a join the planner is free to reorder. Every hot-spots query (rows, totals, source/file groupings) is written this way.
+2. **Regression test (`tests/test_hotspots.py`):** build a database with enough rows for the planner to care (thousands of blocks across dozens of requests), run `EXPLAIN QUERY PLAN` for each aggregation and assert the driving loop is `SCAN scope`/`SEARCH b USING INDEX idx_blocks_request` and that `idx_blocks_content_hash` is not scanned; also assert the statement count is constant as requests grow. If a future SQLite version changes the plan the test fails instead of the feature silently becoming 15-100× slower.
+3. **Bounded second phase:** descriptive columns, latest occurrence, `run_count` and previews are fetched only for the returned rows (≤ 100), never for all distinct blocks.
+4. **Budget (manual check on a copy of a real database before release, numbers recorded in this plan):** whole 4,000-request session ≤ ~1.5 s, whole 500-request session ≤ ~0.3 s, a 50-request conversation ≤ ~50 ms, for the top-25 page and the summary together. Exceeding the budget means adding the cache (keyed like the membership cache) before shipping.
+5. **Fallback if the CROSS JOIN form ever proves insufficient:** `INDEXED BY idx_blocks_request` on the inner table, or materialising the scoped rows into a second temp table once per request and aggregating from it (variant D in the measurement: 0.02-1.3 s).
+
 ### UI (`ui/src/pages/SessionDetail.tsx`, new `components/hotspots/*`)
 - A third option in the existing **Session view** control: *Summary / Conversations / Hot spots* (`?view=hotspots`); the Conversations view gets a "Hot spots" link per conversation (`?view=hotspots&conversation=<key>`).
 - Controls (one compact toolbar, same visual language as the Request detail toolbar): scope select (conversations by code + "Whole session"), group toggle (*Blocks / Sources / Files*), sort toggle (*Total tokens / Occurrences*), filter chips (category, block type; *In context* for blocks).
@@ -78,7 +86,7 @@ Frontend (Vitest): toolbar state and URL params, group/sort/filter changes refet
 `SPEC.md` (endpoint), `docs/changelog.md`, `docs/faq.md` ("what do hot spots count?"), `docs/development.md` (the CROSS JOIN requirement and why).
 
 ## Not in scope
-Cache reporting (D2), money (D1), optimisation hints (Plan 7, which reads these rows), output-block rankings, unifying relative/absolute file spellings, an automatic overhead/accumulation split.
+Cache reporting (D2), money (D1), optimisation hints (Plan 7, which reads these rows), output-block rankings, unifying relative/absolute file spellings, an automatic overhead/accumulation split, and **similarity grouping** (changed-and-reloaded blocks, near-duplicates, version timelines): grouping here is by **exact content hash** only; the similarity idea is parked for v2 in [unconfirmed_drafts/similarity-grouping.md](unconfirmed_drafts/similarity-grouping.md). The *Files* grouping already ties the versions of one file together.
 
 ## Open questions
 None blocking.
