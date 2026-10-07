@@ -1,6 +1,6 @@
 # Session trend chart (issue #66)
 
-Status: DRAFT, awaiting review. Replaces the "Token usage over time" chart in the
+Status: REVIEWED, ready for implementation. Replaces the "Token usage over time" chart in the
 session Summary view with a metric-selectable trend chart (per request or over time,
 one line per conversation).
 
@@ -19,6 +19,8 @@ one line per conversation).
 - Provider-reported context size: deliberately skipped for now.
 - Later (not v1): block count, output tokens, per-category stacked.
 - URL params: metric and axis persisted (`?metric=`, `?x=request|time`).
+- Review decisions: mark non-complete context points; `started_at ?? timestamp` for time axis; group
+  membership rules below; trend query refreshes via websocket; old `/stats/timeline` is deleted.
 
 ## Problems with the current implementation
 
@@ -38,25 +40,31 @@ Response:
 ```json
 {
   "session_id": "...",
-  "revision": "<lineage revision>",
-  "metrics": [
-    {"id": "context_estimated", "label": "Context size (estimated)", "unit": "tokens", "exact": false},
-    {"id": "cache_hit_pct",     "label": "Cache hit %", "unit": "percent", "exact": true},
-    {"id": "ttft_ms",           "label": "TTFT", "unit": "ms", "exact": true},
-    {"id": "duration_ms",       "label": "Latency", "unit": "ms", "exact": true}
+    "metrics": [
+    {"id": "context_estimated", "label": "Context size (estimated)", "unit": "tokens", "estimated": true, "empty_hint": null},
+    {"id": "cache_hit_pct",     "label": "Cache hit %", "unit": "percent", "estimated": false, "empty_hint": "Provider did not report cache usage"},
+    {"id": "ttft_ms",           "label": "TTFT", "unit": "ms", "estimated": false, "empty_hint": "No streamed responses (TTFT needs streaming)"},
+    {"id": "duration_ms",       "label": "Latency", "unit": "ms", "estimated": false, "empty_hint": "No completed responses"}
   ],
   "series": [
     {"key": "session:..:primary", "label": "Conversation 1", "auxiliary": false, "request_count": 42,
-     "points": [{"request_id": "...", "session_seq": 1, "timestamp": "...", "purpose": "...",
+     "points": [{"request_id": "...", "session_seq": 1, "time": "...", "context_fidelity": "complete", "purpose": "...",
                  "values": {"context_estimated": 1234, "cache_hit_pct": 82.5, "ttft_ms": 640, "duration_ms": 5100}}]}
   ]
 }
 ```
-- `metrics` is a registry in Python (`id`, `label`, `unit`, `exact`, `compute(row)`); a new metric is
+- `metrics` is a registry in Python (`id`, `label`, `unit`, `estimated`, `empty_hint`, `compute(row)`); a new metric is
   one registry entry, no client change besides rendering unit formatting.
-- Metric value is `null` when not computable (no provider usage, `provider_input_tokens` 0/None).
-  Chart leaves a gap (`connectNulls=false`); selecting a metric that is null for every point shows an
-  empty-state hint ("Provider did not report ..."), not a flat line.
+- Metric value is `null` when not computable (e.g. `provider_input_tokens` 0/None for cache %).
+  Chart leaves a gap (`connectNulls=false`); a metric that is null for every enabled point shows the
+  registry's `empty_hint`, not a flat line.
+- `time` = `started_at ?? timestamp` (`timestamp` is completion time; `started_at` is null on
+  historical rows). Load `started_at` and `context_fidelity` in the query too.
+- `context_fidelity` is returned per point: `partial`/`opaque` requests (e.g. stateful Responses
+  calls carrying only a delta) under-report `tokens_total_input`; the chart draws them as hollow dots
+  and the tooltip says "partial context" so false drops are not read as real compaction.
+- Ordering: `(session_seq, time)`; `session_seq` is nullable on legacy rows, in which case Request
+  mode falls back to ordinal position within the sorted session.
 - Cache hit % must be the same as request detail. Today that formula is inline in
   `Request.to_dict` (`db/models.py` ~l.232, `cached_share`). Extract a small shared helper
   (`cached_share_pct(cache_read, provider_input)`) used by both `to_dict` and the trend service so
@@ -65,24 +73,27 @@ Response:
 - `ttft_ms` is null for non-streaming responses; `duration_ms` null if the response was incomplete.
   Both leave gaps. Unit `ms` formats as `640 ms` / `5.1 s` in the UI.
 - Conversation grouping reuses `crud.get_session_lineage_graph` (`graph["conversations"]`,
-  `graph["auxiliary"]`, each with ordered `request_ids`). Requests not in any group go to the
-  auxiliary series. Series order = `_conversation_order(graph)`.
+  `graph["auxiliary"]`, each with ordered `request_ids`). Rules: drop ids not belonging to this
+  session (external lineage parents); a request in several groups is plotted only in the first group
+  in order; a session request in no group goes to the auxiliary series. Series order = `_conversation_order(graph)`.
 - Query: `select(Request).options(load_only(id, session_seq, timestamp, purpose,
-  tokens_total_input, provider_input_tokens, cache_read_tokens, ttft_ms, duration_ms), raiseload=True)`
+  tokens_total_input, provider_input_tokens, cache_read_tokens, ttft_ms, duration_ms,
+  started_at, context_fidelity), raiseload=True)`
   filtered by `session_id` (use `idx_requests_session`). No blocks/bodies loaded.
 - Lineage analysis is cached by revision (`session_lineage_service`); a cold session pays its cost
   once. Check perf against the existing `perf-cold-lineage-analysis-68` draft before shipping.
 - 404 if session is missing. Archived sessions: same behaviour as the other session endpoints.
-- `/stats/timeline` stays (nothing else uses it besides this chart, but removal is a separate cleanup;
-  note `useTimeline` and its test mocks go away from `SessionDetail`).
+- Delete `GET /stats/timeline`, `crud.get_timeline` and its tests; only this chart used them.
+  Frontend: remove `useTimeline`, `statsApi.timeline`, `TimelineBucket`, and test mocks.
 
 ### No schema change
 All fields exist on `Request`. No migration step needed.
 
 ## Frontend
 
-- New `components/SessionTrendChart.tsx` (delete `TimeSeriesChart.tsx` once unused; `knip` will flag it).
-- `api/client.ts`: `TrendResponse`, `sessionsApi.trend(id)`. `api/hooks.ts`: `useSessionTrend(id)`.
+- New `components/SessionTrendChart.tsx`; delete `TimeSeriesChart.tsx` (`knip` would flag it).
+- `api/client.ts`: `TrendResponse`, `sessionsApi.trend(id)`. `api/hooks.ts`: `useSessionTrend(id)` with query key `['stats', 'session-trend', id]`, so the existing websocket
+  invalidation of `stats` refreshes it live (no extra wiring).
 - Header row: metric `<select>` (left, replaces title); X axis toggle `Request # | Time` (right).
 - Series legend with checkbox per conversation, color per series from a fixed palette keyed by
   series index (stable across metric/axis changes). Aux off by default. Cap initially-enabled series
@@ -92,7 +103,13 @@ All fields exist on `Request`. No migration step needed.
   `normalizeServerTimestamp`.
 - Different series share X positions in Request mode, so each series is its own dataset
   (`<Line data=...>`), not a merged table.
-- Tooltip: series label, `#seq`, purpose, formatted value, "estimated" suffix when `exact=false`.
+- Tooltip: per-point hover (`shared={false}`, custom content; per-series datasets break the shared
+  tooltip): series label, `#seq`, purpose, formatted value, "estimated" suffix when `estimated`,
+  "partial context" when fidelity is not `complete`.
+- Request mode: lines for a conversation skip the seq numbers used by other conversations; that is
+  intended (shows interleaving).
+- Scale: no point cap in v1; use `dot` only for non-complete points, `isAnimationActive={false}`.
+  Downsampling is a follow-up if very large sessions are slow.
   Click on a point navigates to `/requests/{id}`.
 - Y formatting by `unit` (`k` suffix for tokens, `%` for percent, ms/s for time). Percent axis fixed 0-100.
 - Metric and axis live in URL search params (`metric`, `x`), invalid values fall back to defaults;
@@ -101,12 +118,12 @@ All fields exist on `Request`. No migration step needed.
   null-gap empty state; update `SessionDetail*.test.tsx` mocks (`useTimeline` -> `useSessionTrend`).
 
 ## Backend tests
-`tests/test_session_trend.py`: estimated context values, cache % parity with `Request.to_dict`, null provider usage/ttft,
+`Request.to_dict` `cached_share_pct` must be unchanged by the helper extraction (existing request tests + a parity test).
+`tests/test_session_trend.py`: estimated context values, cache % parity with `Request.to_dict`, null provider usage/ttft, `started_at` fallback, partial-fidelity flag, external ids dropped, request in two groups plotted once, null `session_seq` ordering, `get_timeline` removal,
 conversation split with auxiliary, ordering by `session_seq`, missing session 404.
 
 ## Docs
-`docs/changelog.md` entry; mention the chart in README/docs if the old chart was described there
-(`docs/examples.md` references it).
+`docs/changelog.md` entry; update `docs/examples.md` (describes the old chart) and README if it mentions it.
 
 ## Rollout / phases
 1. Backend service + endpoint + tests.
