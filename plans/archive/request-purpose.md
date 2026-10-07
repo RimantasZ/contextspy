@@ -1,6 +1,6 @@
 # Plan 2: Request purpose and extensible classification
 
-Status: **specified in [wi0-data-foundation.md](wi0-data-foundation.md) (implement from that file; this document is background). Implemented in WI-0 (baseline only: `user_turn`, `tool_continuation`, `compaction`, `unknown`); `housekeeping`/agent detectors are not implemented. See `wi0-data-foundation.md` §17 for deviations from this document.** **Revised 2026-10-05 per `analysis-architecture.md` (read it first; it wins on conflicts).** Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md) (decisions D1–D10).
+Status: **specified in [wi0-data-foundation.md](wi0-data-foundation.md) (implement from that file; this document is background). Implemented in WI-0 (baseline only: `user_turn`, `tool_continuation`, `compaction`, `unknown`); `housekeeping`/agent detectors are not implemented. See `wi0-data-foundation.md` §17 for deviations from this document.** **Revised 2026-10-05 per `analysis-architecture.md` (read it first; it wins on conflicts).** Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md) (decisions D1–D10).
 
 > Naming: this was "C. Request purpose inference" in the brainstorm and briefly called "classification
 > plan". It is deliberately **not** about `analysis/classifier.py` token *categories*; those stay as they are.

@@ -1,6 +1,6 @@
 # Perf: listing a session's requests is slow on unarchived sessions
 
-Status: **DRAFT / proposal, not decided.** GitHub issue [#69](https://github.com/RimantasZ/contextspy/issues/69) (`perf:`). Found while measuring Plan 4b ([hot-spots.md](../hot-spots.md)); part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Small and independent of [#68](perf-cold-lineage-analysis-68.md).
+Status: **DRAFT / proposal, not decided.** GitHub issue [#69](https://github.com/RimantasZ/contextspy/issues/69) (`perf:`). Found while measuring Plan 4b ([hot-spots.md](../archive/hot-spots.md)); part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Small and independent of [#68](perf-cold-lineage-analysis-68.md).
 
 ## Problem
 `SELECT id, session_seq, timestamp, context_fidelity FROM requests WHERE session_id = ?` (used by `block_occurrence_service.scope_for_session`, so by "Present in" and Hot spots) takes **0.6-0.9 s for a 570-request unarchived session** on a copy of the author's database (sample, 2026-10-06). The planner uses `idx_requests_session_seq_unique (session_id=?)` and then visits every row; `requests` keeps large body columns (`raw_request_body`, `canonical_request_body`, ...) inline, so reading a column that comes after them (`context_fidelity`) makes SQLite walk the row's overflow pages. Archived or purged sessions are fast because the bodies are gone.

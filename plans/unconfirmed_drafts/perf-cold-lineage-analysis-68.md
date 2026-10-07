@@ -1,6 +1,6 @@
 # Perf: cold conversation (lineage) analysis is slow on long sessions
 
-Status: **DRAFT / proposal, not decided.** GitHub issue [#68](https://github.com/RimantasZ/contextspy/issues/68) (`perf:`). Found while measuring Plan 4b ([hot-spots.md](../hot-spots.md)); part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Not blocking any plan, but every conversation-scoped feature inherits it.
+Status: **DRAFT / proposal, not decided.** GitHub issue [#68](https://github.com/RimantasZ/contextspy/issues/68) (`perf:`). Found while measuring Plan 4b ([hot-spots.md](../archive/hot-spots.md)); part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Not blocking any plan, but every conversation-scoped feature inherits it.
 
 ## Problem
 Anything that needs the conversation structure of a session builds the **lineage graph** first: the Conversations view, the block "Present in" panel in conversation scope, Hot spots (conversation selector and default scope), and any future tree/compare page. Measured on a copy of the author's database (samples, one machine, 2026-10-06):

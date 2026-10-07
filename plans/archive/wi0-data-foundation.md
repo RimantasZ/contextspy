@@ -14,7 +14,7 @@ Spec written 2026-10-05. Where the code differs from the text below, §17 (Imple
 Verification at completion: `pytest` 467 passed; `cd ui && npm run check` (types, lint, 142 tests, knip, build) passed.
 Not done: a manual check of the new UI in a running browser, and a run of `contextspy db-upgrade` on the real database.
 
-Parent: [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md) (decisions D1–D16). Rationale and measurements:
+Parent: [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md) (decisions D1–D16). Rationale and measurements:
 [analysis-architecture.md](analysis-architecture.md) (it wins on conflicts). Refines: [request-purpose.md](request-purpose.md).
 
 Audience: implementing agents. Everything here is verified against the code as of 2026-10-05; line numbers
@@ -297,7 +297,7 @@ New: `tests/test_sources.py`, `tests/test_purpose.py`, `tests/test_activity.py`,
 
 ## 12. Docs and housekeeping
 - `SPEC.md`, `docs/development.md` (schema v9, classifier version, how to add a source parser/purpose detector/activity row), `docs/changelog.md`, and `AGENTS.md` architecture list (mention `sources.py`, `purpose.py`, `activity.py`) in the same change.
-- Update `plans/request-purpose.md` status to "specified in WI-0".
+- Update `plans/archive/request-purpose.md` status to "specified in WI-0".
 - Run: `pytest`, `cd ui && npm test`, `make ui`; manual: capture one request per adapter (or replay fixtures) and confirm columns; run `contextspy db-upgrade` on a copy of a real DB and check timing/log output.
 
 ## 13. Suggested slicing (each independently mergeable; keep the suite green)

@@ -1,7 +1,7 @@
 # Plan 3a: `contextspy db-compact` — reclaim free space, enable automatic shrinking
 
 Status: **implemented 2026-10-06, committed in `f34fa29`; not released; the author's live database has NOT been compacted.** See "Implementation status" at the end. First half of the former "Plan 3: session archive"; the second half is
-[session-archive.md](session-archive.md) (Plan 3b), which depends on this. Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
+[session-archive.md](session-archive.md) (Plan 3b), which depends on this. Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md).
 
 ## Why (measured, author's database, 2026-10-05; a sample, not a rule)
 

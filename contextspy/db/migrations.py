@@ -988,7 +988,7 @@ def _v9_match_json_paths(stored: list, parsed: list) -> dict[int, str]:
 
 
 def _migrate_to_v9(db: OrmSession) -> None:
-    """Backfill request purpose, block ``source_key`` and block ``json_path`` (plans/wi0-data-foundation.md section 8)."""
+    """Backfill request purpose, block ``source_key`` and block ``json_path`` (plans/archive/wi0-data-foundation.md section 8)."""
     _backfill_classification(db, "v9", json_paths=True)
 
 
@@ -997,7 +997,7 @@ def _migrate_to_v10(db: OrmSession) -> None:
 
     Same phase A as v9 (a database upgraded straight from before v9 has already done it, so this finds
     nothing to do). File paths come from retained tool-call content only; purged tool calls keep
-    ``file_path`` NULL, so historical coverage is partial by nature (plans/file-paths.md).
+    ``file_path`` NULL, so historical coverage is partial by nature (plans/archive/file-paths.md).
     """
     _backfill_classification(db, "v10", json_paths=False)
 

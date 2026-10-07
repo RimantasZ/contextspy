@@ -1,6 +1,6 @@
 # Plan: Hot spots page layout (profiler-style bars) — DRAFT for review
 
-Status: **implemented, uncommitted, awaiting the author's browser review** (2026-10-06). Decisions below were confirmed: `summary.occurrences_total` added (all block instances of the filtered scope, the same population as the token total), header click toggles the sort, `dropped` badge stays on the collapsed row, 2 px minimum bar. Both label variants are built behind `layout=name|bar`; removing the loser is planned in [postponed/hot-spots-label-layout-removal.md](postponed/hot-spots-label-layout-removal.md); the release ships with both. Follows [hot-spots-layout-handoff.md](hot-spots-layout-handoff.md); the data/API plan is [hot-spots.md](hot-spots.md).
+Status: **implemented, uncommitted, awaiting the author's browser review** (2026-10-06). Decisions below were confirmed: `summary.occurrences_total` added (all block instances of the filtered scope, the same population as the token total), header click toggles the sort, `dropped` badge stays on the collapsed row, 2 px minimum bar. Both label variants are built behind `layout=name|bar`; removing the loser is planned in [../postponed/hot-spots-label-layout-removal.md](../postponed/hot-spots-label-layout-removal.md); the release ships with both. Follows [hot-spots-layout-handoff.md](hot-spots-layout-handoff.md); the data/API plan is [hot-spots.md](hot-spots.md).
 Rules from the hand-off still apply: D9 (same tokens/classes as Request detail), current colours and styling kept, presentation only, the user commits.
 Everything in "Earlier observations" of the hand-off (repeated %, icons, path truncation, mobile) is **deferred** until this change is in; re-check which still apply afterwards.
 
@@ -65,7 +65,7 @@ Only one row open at a time? **No**: independent, local state per row (`Set` of 
 - `ui/src/api/client.ts`: `summary.occurrences_total` (if accepted).
 - Backend (only if accepted): `db/hotspots_service.py`, `tests/test_hotspots.py`, `SPEC.md`.
 - `HotSpots.test.tsx`: update (see below). `SessionDetail.test.tsx` should not change.
-- Docs: `plans/hot-spots.md` (layout section), roadmap status line, handoff file superseded note, `docs/changelog.md`.
+- Docs: `plans/archive/hot-spots.md` (layout section), roadmap status line, handoff file superseded note, `docs/changelog.md`.
 
 ## Tests that change deliberately
 - Row buttons named `Open the latest request carrying <label>` etc. move into the expanded detail: the test first clicks the row (`Show details of <label>` toggle with `aria-expanded`), then the open button. Same names for the open buttons, new name for the toggle.

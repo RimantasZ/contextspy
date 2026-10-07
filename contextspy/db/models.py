@@ -355,7 +355,7 @@ class BlockRecord(Base):
     # compact JSON array (e.g. ["messages",3,"content",1]); NULL when unknown.
     json_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # The file a read/edit tool call (and its result) targets; written only via analysis/paths.py.
-    # Kept after archive. See plans/file-paths.md.
+    # Kept after archive. See plans/archive/file-paths.md.
     file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def to_dict(

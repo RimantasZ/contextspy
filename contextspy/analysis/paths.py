@@ -8,7 +8,7 @@
 by any extractor (structured tool arguments, shell commands, patch headers) goes through it.
 Today it validates and trims. If paths ever become a privacy problem (shared databases, exports),
 obfuscation (basename only, a salted hash, a setting) is a change inside that function plus a
-re-derivation migration, nothing else. See plans/file-paths.md.
+re-derivation migration, nothing else. See plans/archive/file-paths.md.
 
 Only a path that a known read/edit tool targets is read; no other argument (command text, URLs,
 patterns, patch bodies, secrets) is ever returned from this module.

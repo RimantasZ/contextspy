@@ -1,7 +1,7 @@
 # Plan 3b: Session lifecycle and explicit archive
 
 Status: **implemented 2026-10-06, committed in `a2a4b8c`; not released; not checked in a browser; no real database archived.** Reviewed twice before implementation (2026-10-05 and 2026-10-06). See "Implementation status" at the end for what exists and how it differs from this text. Depends on [db-compact.md](db-compact.md) (Plan 3a, implemented).
-[ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md). Decisions D3, D4, D14, D17.
+[../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Decisions D3, D4, D14, D17.
 
 ## Why
 

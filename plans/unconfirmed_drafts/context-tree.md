@@ -1,7 +1,7 @@
 # Draft 5: Context tree page
 
 Status: DRAFT (not approved; kept as a draft on purpose until after the first release of the analysis work, see roadmap D23). Updated 2026-10-06 with "State of the code" below; the open questions at the end are still unanswered. Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md).
-Depends on: [info-panel](../info-panel.md) (implemented), [request-purpose](../request-purpose.md) (baseline implemented; **turn grouping is not**), and the helpers of [file-paths](../file-paths.md) / [hot-spots](../hot-spots.md) (implemented).
+Depends on: [info-panel](../archive/info-panel.md) (implemented), [request-purpose](../archive/request-purpose.md) (baseline implemented; **turn grouping is not**), and the helpers of [file-paths](../archive/file-paths.md) / [hot-spots](../archive/hot-spots.md) (implemented).
 Replaces the deleted `SESSION_ANALYSIS_PLAN.md` (see roadmap D6 for what was kept).
 
 ## Goal

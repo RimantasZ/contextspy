@@ -1,6 +1,6 @@
 # Postponed: remove one Hot spots label layout (and the switch)
 
-Status: **postponed** until users have tried the release. Decision pending: keep `name` (label in its own column) or `bar` (label on the bar). The release ships with both. Background: [../hot-spots-layout.md](../hot-spots-layout.md).
+Status: **postponed** until users have tried the release. Decision pending: keep `name` (label in its own column) or `bar` (label on the bar). The release ships with both. Background: [../archive/hot-spots-layout.md](../archive/hot-spots-layout.md).
 
 ## When to do it
 After feedback from the release. Ask the author which variant won before touching code (the author decides, not the agent).
@@ -23,5 +23,5 @@ After feedback from the release. Ask the author which variant won before touchin
 - Keep `labelFit.ts` as is. Re-check dark-theme contrast of `--text-on-accent` on `--accent`, and very long labels (paths), before finalising.
 
 ## Also
-- Update `plans/hot-spots-layout.md` (status, decision), `plans/ANALYSIS_ROADMAP.md` status line, `docs/changelog.md`, and delete this file or move it to done.
+- Update `plans/archive/hot-spots-layout.md` (status, decision), `plans/ANALYSIS_ROADMAP.md` status line, `docs/changelog.md`, and delete this file or move it to done.
 - Run `cd ui && npm run check` and `make ui`. No backend change.
