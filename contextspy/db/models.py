@@ -28,6 +28,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from contextspy.analysis.accounting import cached_share_pct
 from contextspy.analysis.activity import activity_for
 from contextspy.analysis.tokenizer import TOKENIZER_ID
 
@@ -232,11 +233,7 @@ class Request(Base):
             if provider_input is not None and provider_input > 0
             else None
         )
-        cached_share = (
-            (self.cache_read_tokens or 0) / provider_input * 100
-            if provider_input is not None and provider_input > 0
-            else None
-        )
+        cached_share = cached_share_pct(self.cache_read_tokens, provider_input)
         d["context_accounting"] = {
             "visible_input_tokens": visible_input,
             "provider_input_tokens": provider_input,

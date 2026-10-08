@@ -198,10 +198,39 @@ export interface Stats {
   session_timing: SessionTiming
 }
 
-export interface TimelineBucket {
-  bucket: string
+export interface TrendMetric {
+  id: string
+  label: string
+  unit: 'tokens' | 'percent' | 'ms'
+  /** True when the value is our own token estimate rather than a provider-reported figure. */
+  estimated: boolean
+  /** Shown when no plotted point has a value for this metric. */
+  empty_hint: string | null
+}
+
+export interface TrendPoint {
+  request_id: string
+  session_seq: number | null
+  /** 1-based position in the session; Request-axis fallback when session_seq is null. */
+  ordinal: number
+  time: string
+  context_fidelity: string
+  purpose: string | null
+  values: Record<string, number | null>
+}
+
+export interface TrendSeries {
+  key: string
+  label: string
+  auxiliary: boolean
   request_count: number
-  tokens_total_input: number
+  points: TrendPoint[]
+}
+
+export interface SessionTrend {
+  session_id: string
+  metrics: TrendMetric[]
+  series: TrendSeries[]
 }
 
 export interface SessionSummaryEntry {
@@ -583,6 +612,7 @@ export interface ProxyStatus {
 // ---- Session API ----------------------------------------------------------
 
 export const sessionsApi = {
+  trend: (id: string) => apiFetch<SessionTrend>(`/sessions/${id}/trend`),
   list: () => apiFetch<{ sessions: Session[] }>('/sessions'),
   get: (id: string) => apiFetch<{ session: Session; stats: Stats }>(`/sessions/${id}`),
   create: (name: string) =>
@@ -836,12 +866,6 @@ export const statsApi = {
   overview: () => apiFetch<Stats>('/stats/overview'),
   dashboardLive: () => apiFetch<DashboardLiveData>('/stats/dashboard-live'),
   session: (id: string) => apiFetch<Stats>(`/stats/session/${id}`),
-  timeline: (params: { session_id?: string; bucket?: string }) => {
-    const q = new URLSearchParams()
-    if (params.session_id) q.set('session_id', params.session_id)
-    if (params.bucket) q.set('bucket', params.bucket)
-    return apiFetch<{ timeline: TimelineBucket[] }>(`/stats/timeline?${q}`)
-  },
   tools: (sessionId?: string, requestId?: string) => {
     const q = new URLSearchParams()
     if (sessionId) q.set('session_id', sessionId)

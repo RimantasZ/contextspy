@@ -25,7 +25,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session as OrmSession, load_only
 
 from contextspy.analysis.blocks import BlockType, Direction
-from contextspy.db import session_lineage_service
+from contextspy.db import session_lineage_service, trend_service
 from contextspy.db.models import BlockContent, BlockRecord, Request, Session, ToolStat
 
 if TYPE_CHECKING:
@@ -742,28 +742,10 @@ def get_tool_stats(
     ]
 
 
-def get_timeline(
-    db: OrmSession,
-    session_id: str | None = None,
-    bucket: str = "hour",
-) -> list[dict]:
-    bucket_map = {"minute": "%Y-%m-%dT%H:%M", "hour": "%Y-%m-%dT%H:00", "day": "%Y-%m-%d"}
-    fmt = bucket_map.get(bucket, "%Y-%m-%dT%H")
-
-    q = select(Request)
-    if session_id is not None:
-        q = q.where(Request.session_id == session_id)
-
-    rows = list(db.execute(q).scalars().all())
-    buckets: dict[str, dict] = {}
-    for r in rows:
-        key = r.timestamp.strftime(fmt)
-        if key not in buckets:
-            buckets[key] = {"bucket": key, "request_count": 0, "tokens_total_input": 0}
-        buckets[key]["request_count"] += 1
-        buckets[key]["tokens_total_input"] += r.tokens_total_input
-
-    return sorted(buckets.values(), key=lambda x: x["bucket"])
+def get_session_trend(db: OrmSession, session_id: str) -> dict:
+    """Per-request metric series grouped by conversation for the session trend chart."""
+    graph = get_session_lineage_graph(db, session_id)
+    return trend_service.build_session_trend(db, session_id, graph)
 
 
 # ---------------------------------------------------------------------------

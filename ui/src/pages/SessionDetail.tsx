@@ -14,9 +14,9 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { useSession, useSessionLineage, useSessionConversations, useStatsSession, useTimeline, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
+import { useSession, useSessionLineage, useSessionConversations, useStatsSession, useSessionTrend, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
-import { TimeSeriesChart } from '../components/TimeSeriesChart';
+import { SessionTrendChart, type TrendXMode } from '../components/SessionTrendChart';
 import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
 import { ToolBreakdownSection } from '../components/ToolBreakdown';
@@ -31,7 +31,6 @@ import { SegmentedControl } from '../components/ui/SegmentedControl';
 import { HotSpots, HOTSPOT_URL_PARAMS } from '../components/hotspots/HotSpots';
 import type jsPDF from 'jspdf';
 
-type Bucket = 'minute' | 'hour' | 'day';
 
 function fmtTime(ts: string | null | undefined): string {
   if (!ts) return '—';
@@ -56,7 +55,6 @@ export default function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [bucket, setBucket] = useState<Bucket>('hour');
   const viewParam = searchParams.get('view');
   const view: 'summary' | 'lineage' | 'hotspots' = viewParam === 'lineage' || viewParam === 'hotspots' ? viewParam : 'summary';
   const mode: 'conversations' | 'fragments' = searchParams.get('mode') === 'fragments' ? 'fragments' : 'conversations';
@@ -79,7 +77,14 @@ export default function SessionDetail() {
   const conversations = useSessionConversations(id ?? '', view === 'lineage' && mode === 'conversations');
   const conversationCount = mode === 'fragments' ? lineage.data?.conversation_count : conversations.data?.conversation_count;
   const stats = useStatsSession(id ?? '');
-  const timeline = useTimeline(id, bucket);
+  const trend = useSessionTrend(id);
+  const trendMetric = searchParams.get('metric') ?? '';
+  const trendX: TrendXMode = searchParams.get('x') === 'time' ? 'time' : 'request';
+  function setTrendParam(key: 'metric' | 'x', value: string) {
+    const next = new URLSearchParams(searchParams);
+    next.set(key, value);
+    setSearchParams(next, { replace: true });
+  }
   const requests = useRequests({ session_id: id, sort_by: reqSortKey ?? undefined, sort_dir: reqSortKey ? reqSortDir : undefined, limit: 500 });
   const toolStats = useToolStats(id);
   const endSession = useEndSession();
@@ -534,11 +539,14 @@ export default function SessionDetail() {
           )}
         </div>
         <div className="panel">
-          <TimeSeriesChart
-            data={timeline.data?.timeline ?? []}
-            bucket={bucket}
-            onBucketChange={setBucket}
-            loading={timeline.isLoading}
+          <SessionTrendChart
+            data={trend.data}
+            loading={trend.isLoading}
+            metricId={trendMetric}
+            onMetricChange={(metric) => setTrendParam('metric', metric)}
+            xMode={trendX}
+            onXModeChange={(mode) => setTrendParam('x', mode)}
+            onPointClick={(requestId) => navigate(`/requests/${requestId}`)}
           />
         </div>
       </div>
