@@ -1,6 +1,6 @@
 # What's New
 
-## Unreleased
+## 0.6.0
 
 ### Upgrading from 0.5.4
 
