@@ -198,6 +198,12 @@ export interface Stats {
   session_timing: SessionTiming
 }
 
+export interface TimelineBucket {
+  bucket: string
+  request_count: number
+  tokens_total_input: number
+}
+
 export interface TrendMetric {
   id: string
   label: string
@@ -866,6 +872,12 @@ export const statsApi = {
   overview: () => apiFetch<Stats>('/stats/overview'),
   dashboardLive: () => apiFetch<DashboardLiveData>('/stats/dashboard-live'),
   session: (id: string) => apiFetch<Stats>(`/stats/session/${id}`),
+  timeline: (params: { session_id?: string; bucket?: string }) => {
+    const q = new URLSearchParams()
+    if (params.session_id) q.set('session_id', params.session_id)
+    if (params.bucket) q.set('bucket', params.bucket)
+    return apiFetch<{ timeline: TimelineBucket[] }>(`/stats/timeline?${q}`)
+  },
   tools: (sessionId?: string, requestId?: string) => {
     const q = new URLSearchParams()
     if (sessionId) q.set('session_id', sessionId)

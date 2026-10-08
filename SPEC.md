@@ -729,6 +729,7 @@ tool call's text is still stored, so older purged requests keep `file_path` NULL
 | `GET` | `/api/stats/overview` | Aggregated totals across all recorded requests. |
 | `GET` | `/api/stats/dashboard-live` | One consistent read snapshot of the active session: totals, ten session-wide activity points, up to four conservative conversation groups with five recent cards each, diagnostic fragment/conversation counts, and resolved-parent context changes. The flat `request_flow` and top-level `context_change` are compatibility aliases; the latter follows the most recently active group's resolved parent. |
 | `GET` | `/api/stats/session/{id}` | Aggregated breakdown for a specific session. |
+| `GET` | `/api/stats/timeline` | Time-series data. Query params: `session_id` (optional), `bucket` = `minute` \| `hour` \| `day`. |
 | `GET` | `/api/stats/tools` | Per-tool token breakdown (`tool_name`, `definition_tokens`, `result_tokens`). Query params: `session_id`, `request_id` (both optional; live-aggregated from `tool_stats`, not materialized separately). |
 | `GET` | `/api/stats/sessions-summary` | Newest-first list of session and no-session gap entries, including duration, request/input/output totals, and all eight input-category totals. Used by the Overview and Sessions pages. |
 

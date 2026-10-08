@@ -11,6 +11,7 @@ vi.mock('../api/hooks', () => ({
   useSessionLineage: () => ({ isLoading: false, data: undefined }),
   useSessionConversations: () => ({ isLoading: false, data: undefined }),
   useStatsSession: () => ({ data: undefined }),
+  useTimeline: () => ({ data: undefined, isLoading: false }),
   useSessionTrend: () => ({ data: undefined, isLoading: false }),
   useRequests: () => ({ data: undefined }),
   useToolStats: () => ({ data: undefined }),

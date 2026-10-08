@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as OrmSession
 
-from contextspy.api.routers import sessions as sessions_router, stats as stats_router
+from contextspy.api.routers import sessions as sessions_router
 from contextspy.analysis.accounting import cached_share_pct
 from contextspy.db import crud, database, trend_service
 from contextspy.db.models import Base, Request, Session
@@ -185,15 +185,5 @@ def test_route_returns_trend_and_404(tmp_path):
         response = client.get("/api/sessions/s1/trend")
         assert response.status_code == 200
         assert response.json()["series"][0]["points"][0]["values"]["context_estimated"] == 7
-    finally:
-        database.dispose_engine()
-
-
-def test_timeline_endpoint_is_gone(tmp_path):
-    database.init_db(tmp_path / "gone.db")
-    try:
-        app = FastAPI()
-        app.include_router(stats_router.router, prefix="/api")
-        assert TestClient(app).get("/api/stats/timeline").status_code == 404
     finally:
         database.dispose_engine()

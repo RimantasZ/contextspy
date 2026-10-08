@@ -241,6 +241,14 @@ export function useStatsSession(sessionId: string) {
   })
 }
 
+export function useTimeline(sessionId: string | undefined, bucket: string) {
+  return useQuery({
+    queryKey: ['timeline', sessionId, bucket],
+    queryFn: () => statsApi.timeline({ session_id: sessionId, bucket }),
+    refetchInterval: 10_000,
+  })
+}
+
 /** Keyed under `stats` so the websocket's stats invalidation refreshes it on every new request. */
 export function useSessionTrend(sessionId: string | undefined) {
   return useQuery({

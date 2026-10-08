@@ -14,8 +14,9 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { useSession, useSessionLineage, useSessionConversations, useStatsSession, useSessionTrend, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
+import { useSession, useSessionLineage, useSessionConversations, useStatsSession, useTimeline, useSessionTrend, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
+import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { SessionTrendChart, type TrendXMode } from '../components/SessionTrendChart';
 import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
@@ -51,6 +52,8 @@ function fmtMs(ms: number | null | undefined): string {
   return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
 }
 
+type Bucket = 'minute' | 'hour' | 'day';
+
 export default function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -60,6 +63,7 @@ export default function SessionDetail() {
   const mode: 'conversations' | 'fragments' = searchParams.get('mode') === 'fragments' ? 'fragments' : 'conversations';
   const conversationKey = searchParams.get('conversation');
   const conversationLayout: 'sequence' | 'conversations' = conversationKey || searchParams.get('layout') === 'conversations' ? 'conversations' : 'sequence';
+  const [bucket, setBucket] = useState<Bucket>('hour');
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameTitleRef = useRef<HTMLInputElement>(null);
@@ -77,6 +81,7 @@ export default function SessionDetail() {
   const conversations = useSessionConversations(id ?? '', view === 'lineage' && mode === 'conversations');
   const conversationCount = mode === 'fragments' ? lineage.data?.conversation_count : conversations.data?.conversation_count;
   const stats = useStatsSession(id ?? '');
+  const timeline = useTimeline(id, bucket);
   const trend = useSessionTrend(id);
   const trendMetric = searchParams.get('metric') ?? '';
   const trendX: TrendXMode = searchParams.get('x') === 'time' ? 'time' : 'request';
@@ -531,12 +536,12 @@ export default function SessionDetail() {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="panel">
-          <p className="section-title mb-3">Token composition</p>
-          {st ? (
-            <TokenDonut data={Object.fromEntries(Object.entries(st.by_category).map(([k, v]) => [k, v.tokens]))} />
-          ) : (
-            <div className="flex h-60 items-center justify-center text-sm text-[var(--text-muted)]">No data</div>
-          )}
+          <TimeSeriesChart
+            data={timeline.data?.timeline ?? []}
+            bucket={bucket}
+            onBucketChange={setBucket}
+            loading={timeline.isLoading}
+          />
         </div>
         <div className="panel">
           <SessionTrendChart
@@ -549,6 +554,15 @@ export default function SessionDetail() {
             onPointClick={(requestId) => navigate(`/requests/${requestId}`)}
           />
         </div>
+      </div>
+
+      <div className="panel">
+        <p className="section-title mb-3">Token composition</p>
+        {st ? (
+          <TokenDonut data={Object.fromEntries(Object.entries(st.by_category).map(([k, v]) => [k, v.tokens]))} />
+        ) : (
+          <div className="flex h-60 items-center justify-center text-sm text-[var(--text-muted)]">No data</div>
+        )}
       </div>
 
       {/* Tool breakdown */}
