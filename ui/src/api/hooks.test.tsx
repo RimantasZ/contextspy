@@ -53,14 +53,14 @@ describe('session mutation invalidation', () => {
     expect(keys).toContainEqual(['session-conversations'])
   })
 
-  it('useArchiveSession refreshes sessions, stats, conversations and every request view', async () => {
+  it('useArchiveSession refreshes sessions, session detail, stats, conversations and every request view', async () => {
     const { spy, wrapper } = setup()
     const { result } = renderHook(() => useArchiveSession(), { wrapper })
     result.current.mutate('s1')
-    await waitFor(() => expect(spy).toHaveBeenCalledTimes(5))
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(6))
     expect(sessionsApi.archive).toHaveBeenCalledWith('s1')
     const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey)
-    for (const key of ['sessions', 'stats', 'session-conversations', 'request', 'requests']) expect(keys).toContainEqual([key])
+    for (const key of ['sessions', 'session', 'stats', 'session-conversations', 'request', 'requests']) expect(keys).toContainEqual([key])
   })
 
   it('useRenameSession invalidates the dashboard-live query', async () => {

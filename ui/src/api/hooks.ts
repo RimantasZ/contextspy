@@ -122,6 +122,7 @@ export function useEndSession() {
     mutationFn: (id: string) => sessionsApi.end(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['session'] })
       qc.invalidateQueries({ queryKey: ['stats'] })
       qc.invalidateQueries({ queryKey: ['session-conversations'] })
     },
@@ -134,7 +135,7 @@ export function useArchiveSession() {
   return useMutation({
     mutationFn: (id: string) => sessionsApi.archive(id),
     onSuccess: () => {
-      for (const key of ['sessions', 'stats', 'session-conversations', 'request', 'requests']) {
+      for (const key of ['sessions', 'session', 'stats', 'session-conversations', 'request', 'requests']) {
         qc.invalidateQueries({ queryKey: [key] })
       }
     },
