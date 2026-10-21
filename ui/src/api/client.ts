@@ -207,7 +207,10 @@ export interface TimelineBucket {
 export interface TrendMetric {
   id: string
   label: string
-  unit: 'tokens' | 'percent' | 'ms'
+  unit: 'tokens' | 'percent' | 'ms' | 'count'
+  /** 'composition' metrics are a stacked breakdown into `parts` instead of a single number. */
+  kind: 'scalar' | 'composition'
+  parts: Array<{ id: string; label: string }>
   /** True when the value is our own token estimate rather than a provider-reported figure. */
   estimated: boolean
   /** Shown when no plotted point has a value for this metric. */
@@ -223,6 +226,8 @@ export interface TrendPoint {
   context_fidelity: string
   purpose: string | null
   values: Record<string, number | null>
+  /** Per composition metric id: tokens per part. */
+  parts: Record<string, Record<string, number>>
 }
 
 export interface TrendSeries {

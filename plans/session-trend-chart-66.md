@@ -1,6 +1,6 @@
 # Session trend chart (issue #66)
 
-Status: IMPLEMENTED (see "Open items" for what is still unverified or deferred). A second chart on the session
+Status: IMPLEMENTED, including the phase 3 metrics (see "Open items" for what is still unverified or deferred). A second chart on the session
 Summary view that plots one metric per request, one line per conversation, next to the existing
 *Token usage over time* chart.
 
@@ -24,7 +24,14 @@ Summary view that plots one metric per request, one line per conversation, next 
      `cache_read_tokens / provider_input_tokens * 100`, null when provider input is missing/0
   3. **TTFT** (`ttft_ms`) and 4. **Latency** (`duration_ms`), in ms
 - Provider-reported context size: deliberately skipped for now.
-- Later (not v1): block count, output tokens, per-category stacked.
+- Phase 3 metrics (added after v1): **Output tokens (estimated)** (`tokens_total_output`), **Blocks (input)** (count of
+  input blocks per request, one grouped query, always computed), and two **composition** metrics: **Context
+  composition** (the eight input categories) and **Output composition** (text vs thinking), drawn as stacked areas.
+- Composition design: a metric has `kind` `scalar` or `composition`; a composition metric lists its `parts` (id,
+  label, stacking order) and each point carries `parts[metric_id]` (tokens per part). The chart stacks **one
+  conversation at a time** (selector, default the largest non-auxiliary), with a tokens / % of total toggle, the
+  donut's category colours (`CATEGORY_COLORS`) and a part legend replacing the line legend. Window, panning and
+  click-to-open work as for lines.
 - URL params: only the metric is persisted (`?metric=`).
 - Partial context: a request with `context_fidelity` other than `complete` under-reports its context size. The
   tooltip says "partial context"; there is **no marker on the line** (hollow dots were tried and dropped as too
@@ -110,8 +117,10 @@ All fields exist on `Request`. No migration step needed.
 
 - `tests/test_session_trend.py`: values per request, null provider usage/ttft, cache % parity with
   `Request.to_dict`, `started_at` fallback, fidelity flag, external ids dropped, request in two groups plotted once,
-  auxiliary split, null `session_seq` ordering and ordinal, missing session 404.
-- `SessionTrendChart.test.tsx`: metric list and change, unknown-metric fallback, conversation/auxiliary toggles, legend collapse,
+  auxiliary split, null `session_seq` ordering and ordinal, missing session 404, block counts (input only, this
+  session only), output tokens and composition, context composition parts.
+- `SessionTrendChart.test.tsx`: metric list and change, unknown-metric fallback, conversation/auxiliary toggles, legend collapse, composition mode (conversation selector, scale toggle, parts legend,
+  empty state, click-to-open), block count line,
   empty hint, loading/empty states, window of 100, step buttons, slider, hold position on new data, oldest limit.
 - `SessionDetail*.test.tsx` mock both `useTimeline` and `useSessionTrend`.
 
@@ -135,6 +144,10 @@ one cold process each (`crud.get_session_trend`):
 | 564 requests | 0.06 s | 5.1 s | 0.47 s | 0.01 s | 170 KiB |
 | 4,032 requests | 0.29 s | 55 s | 2.9 s | 0.08 s | 1.2 MiB |
 
+- After the phase 3 metrics (block count query and composition `parts`), the 4,032-request session measured: cold
+  57 s, warm 4.0 s (graph cache hit and revision check 2.6 s, `build_session_trend` alone 0.41 s, was 0.08 s),
+  response 2.8 MiB (was 1.2 MiB; the per-point `parts` dicts are most of the growth). If payload size matters, send
+  `parts` only for the composition metric being viewed.
 - The trend's own work is negligible. All of the cost is the lineage graph the endpoint needs for the conversation
   split: the cold build (`build_lineage_graph`) and, on every call, the revision check that hashes every block row.
   Both are the problems of `plans/unconfirmed_drafts/perf-cold-lineage-analysis-68.md`; the trend inherits any fix.

@@ -19,14 +19,26 @@ function point(seq: number, values: Partial<Record<string, number | null>>, fide
     request_id: `r${seq}`, session_seq: seq, ordinal: seq, time: `2026-09-18T08:0${seq}:00`,
     context_fidelity: fidelity, purpose: 'main',
     values: { context_estimated: 1000 * seq, cache_hit_pct: null, ttft_ms: null, duration_ms: null, ...values },
+    // 3 parts: system 100, tools 200 x seq, history the rest
+    parts: { context_composition: { system_prompt: 100, tool_results: 200 * seq, conversation_history: 700 * seq - 100 } },
   }
 }
 
 const data: SessionTrend = {
   session_id: 's1',
   metrics: [
-    { id: 'context_estimated', label: 'Context size (estimated)', unit: 'tokens', estimated: true, empty_hint: null },
-    { id: 'cache_hit_pct', label: 'Cache hit %', unit: 'percent', estimated: false, empty_hint: 'Provider did not report cache usage' },
+    { id: 'context_estimated', label: 'Context size (estimated)', unit: 'tokens', estimated: true, empty_hint: null, kind: 'scalar', parts: [] },
+    {
+      id: 'context_composition', label: 'Context composition (estimated)', unit: 'tokens', estimated: true, empty_hint: null,
+      kind: 'composition',
+      parts: [
+        { id: 'system_prompt', label: 'System Prompt' },
+        { id: 'tool_results', label: 'Tool Results' },
+        { id: 'conversation_history', label: 'Conversation History' },
+      ],
+    },
+    { id: 'block_count', label: 'Blocks (input)', unit: 'count', estimated: false, empty_hint: 'No block data for these requests', kind: 'scalar', parts: [] },
+    { id: 'cache_hit_pct', label: 'Cache hit %', unit: 'percent', estimated: false, empty_hint: 'Provider did not report cache usage', kind: 'scalar', parts: [] },
   ],
   series: [
     { key: 'c1', label: 'Conversation 1', auxiliary: false, request_count: 2, points: [point(1, {}), point(2, {}, 'partial')] },
@@ -46,7 +58,9 @@ describe('SessionTrendChart', () => {
   it('lists the server-provided metrics and reports a change', () => {
     const { props } = show()
     const select = screen.getByRole('combobox', { name: 'Trend metric' }) as HTMLSelectElement
-    expect(Array.from(select.options).map((o) => o.text)).toEqual(['Context size (estimated)', 'Cache hit %'])
+    expect(Array.from(select.options).map((o) => o.text)).toEqual([
+      'Context size (estimated)', 'Context composition (estimated)', 'Blocks (input)', 'Cache hit %',
+    ])
     fireEvent.change(select, { target: { value: 'cache_hit_pct' } })
     expect(props.onMetricChange).toHaveBeenCalledWith('cache_hit_pct')
   })
@@ -173,5 +187,66 @@ describe('SessionTrendChart', () => {
       expect(screen.getByText('#1–#100 of 120')).toBeTruthy()
       expect((screen.getByRole('button', { name: 'Show earlier requests' }) as HTMLButtonElement).disabled).toBe(true)
     })
+  })
+
+  describe('composition metrics', () => {
+    const twoConversations: SessionTrend = {
+      ...data,
+      series: [
+        { key: 'small', label: 'Conversation 1', auxiliary: false, request_count: 1, points: [point(1, {})] },
+        { key: 'big', label: 'Conversation 2', auxiliary: false, request_count: 3, points: [point(2, {}), point(3, {}), point(4, {})] },
+        { key: 'aux', label: 'Auxiliary requests', auxiliary: true, request_count: 9, points: [point(5, {})] },
+      ],
+    }
+
+    it('stacks one conversation: the largest non-auxiliary by default, switchable', () => {
+      const { container } = show({ data: twoConversations, metricId: 'context_composition' })
+      const select = screen.getByRole('combobox', { name: 'Conversation' }) as HTMLSelectElement
+      expect(select.value).toBe('big')
+      expect(container.querySelectorAll('.recharts-area')).toHaveLength(3)
+      expect(screen.queryByRole('checkbox')).toBeNull()
+      fireEvent.change(select, { target: { value: 'small' } })
+      expect(select.value).toBe('small')
+    })
+
+    it('shows the parts legend and switches between tokens and share', () => {
+      show({ data: twoConversations, metricId: 'context_composition' })
+      expect(screen.getByText('System Prompt')).toBeTruthy()
+      expect(screen.getByText('Conversation History')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Tokens' }).getAttribute('aria-pressed')).toBe('true')
+      fireEvent.click(screen.getByRole('button', { name: '% of total' }))
+      expect(screen.getByRole('button', { name: '% of total' }).getAttribute('aria-pressed')).toBe('true')
+      expect(screen.getByRole('button', { name: 'Tokens' }).getAttribute('aria-pressed')).toBe('false')
+    })
+
+    it('hides the conversation selector for a single series and the line legend never shows', () => {
+      show({ data: { ...data, series: [data.series[0]] }, metricId: 'context_composition' })
+      expect(screen.queryByRole('combobox', { name: 'Conversation' })).toBeNull()
+      expect(screen.getByRole('combobox', { name: 'Trend metric' })).toBeTruthy()
+    })
+
+    it('shows the empty hint when every part is zero', () => {
+      const zero: SessionTrend = {
+        ...data,
+        series: [{ ...data.series[0], points: data.series[0].points.map((p) => ({ ...p, parts: { context_composition: { system_prompt: 0 } } })) }],
+      }
+      show({ data: zero, metricId: 'context_composition' })
+      expect(screen.getByText('No data for this metric')).toBeTruthy()
+    })
+
+    it('opens the request under the pointer when the stacked chart is clicked', () => {
+      const onPointClick = vi.fn()
+      const { container } = show({ data: twoConversations, metricId: 'context_composition', onPointClick })
+      const wrapper = container.querySelector('.recharts-wrapper') as HTMLElement
+      fireEvent.mouseMove(wrapper, { clientX: 590, clientY: 100 })
+      fireEvent.click(wrapper, { clientX: 590, clientY: 100 })
+      expect(onPointClick).toHaveBeenCalledWith('r4')
+    })
+  })
+
+  it('plots the block count as a line', () => {
+    const { container } = show({ metricId: 'block_count', data: { ...data, series: data.series.map((s) => ({ ...s, points: s.points.map((p, i) => ({ ...p, values: { ...p.values, block_count: 10 * (i + 1) } })) })) } })
+    expect(container.querySelectorAll('.recharts-line')).toHaveLength(1)
+    expect(screen.getByRole('checkbox', { name: /Conversation 1/ })).toBeTruthy()
   })
 })
