@@ -93,8 +93,8 @@ All fields exist on `Request`. No migration step needed.
 - `components/SessionTrendChart.tsx`; `TimeSeriesChart.tsx` stays and sits in the left panel.
 - `api/client.ts`: `SessionTrend` types, `sessionsApi.trend(id)`. `api/hooks.ts`: `useSessionTrend(id)` with query
   key `['stats', 'session-trend', id]`, so the websocket's existing invalidation of `stats` refreshes it live.
-- Header row: metric `<select>` (replaces the title). Below the chart: a legend with a checkbox per conversation
-  (shown when there is more than one series), and the pan row (slider, step buttons, `#a-#b of N`, **Latest**) when
+- Header row: metric `<select>` (replaces the title). Above the chart: a legend with a checkbox per conversation
+  (shown when there is more than one series; first 4 plus "Show all (N)" when there are more), and the pan row (slider, step buttons, `#a-#b of N`, **Latest**) when
   the session has more than 100 requests.
 - Colours: `--chart-series-1..6` tokens per theme, keyed by series index (stable across metric changes).
 - Recharts `LineChart`: one `<Line>` per enabled series, each with its own dataset (series share x positions, so no
@@ -111,7 +111,7 @@ All fields exist on `Request`. No migration step needed.
 - `tests/test_session_trend.py`: values per request, null provider usage/ttft, cache % parity with
   `Request.to_dict`, `started_at` fallback, fidelity flag, external ids dropped, request in two groups plotted once,
   auxiliary split, null `session_seq` ordering and ordinal, missing session 404.
-- `SessionTrendChart.test.tsx`: metric list and change, unknown-metric fallback, conversation/auxiliary toggles,
+- `SessionTrendChart.test.tsx`: metric list and change, unknown-metric fallback, conversation/auxiliary toggles, legend collapse,
   empty hint, loading/empty states, window of 100, step buttons, slider, hold position on new data, oldest limit.
 - `SessionDetail*.test.tsx` mock both `useTimeline` and `useSessionTrend`.
 
@@ -151,6 +151,9 @@ one cold process each (`crud.get_session_trend`):
 ## Open items
 - **Cold-load cost** (above): decided to leave it until the lineage perf work (#68) lands; the trend inherits any
   fix. Long sessions show an empty chart for the cold-build time until then.
-- **Legend size:** the 4,032-request session has 50 series (49 conversations plus auxiliary); the legend lists every
-  one as a checkbox. It needs a cap or a collapsed list.
-- Not verified in a browser: hover tooltip, click-to-open, drag-to-pan, dark-theme series colours.
+- **Legend size:** resolved. The legend lists the first 4 series plus a **Show all (N)** / **Show fewer** toggle
+  (`LEGEND_COLLAPSED_COUNT`); a further series that is drawn stays in the collapsed legend so no line is missing from
+  it. The 4,032-request session has 50 series (49 conversations plus auxiliary).
+- Verified in a browser by the author: hover tooltip, drag-to-pan. Click-to-open was broken (Recharts calls an
+  `activeDot` options object's `onClick` with that object, not the point) and is fixed by using a render function;
+  not yet re-checked in a browser. Dark-theme series colours not checked.

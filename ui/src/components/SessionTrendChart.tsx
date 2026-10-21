@@ -25,6 +25,8 @@ import {
 import type { SessionTrend, TrendMetric, TrendPoint, TrendSeries } from '../api/client';
 import { formatDateTimeCompact, formatRequestDuration } from '../lib/format';
 
+/** Legend entries listed before "Show all". */
+const LEGEND_COLLAPSED_COUNT = 4;
 /** Requests shown at once; older ones are reached by panning. */
 const WINDOW_SIZE = 100;
 /** Keyboard/button pan step, in requests. */
@@ -108,6 +110,7 @@ export function SessionTrendChart({
   data, loading, metricId, onMetricChange, onPointClick,
 }: Props) {
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [showAllSeries, setShowAllSeries] = useState(false);
   // First visible request, as an index into `xs`; null follows the latest requests as they arrive.
   const [panStart, setPanStart] = useState<number | null>(null);
   const drag = useRef<{ pointerX: number; startIdx: number; moved: boolean } | null>(null);
@@ -187,18 +190,32 @@ export function SessionTrendChart({
       </div>
 
       {series.length > 1 && (
-        <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
-          {series.map((s, index) => (
-            <label key={s.key} className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-              <input
-                type="checkbox"
-                checked={overrides[s.key] ?? isEnabledByDefault(s, index)}
-                onChange={(e) => setOverrides((prev) => ({ ...prev, [s.key]: e.target.checked }))}
-              />
-              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: seriesColor(index) }} />
-              {s.label} ({s.request_count})
-            </label>
-          ))}
+        <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+          {series.map((s, index) => {
+            const enabled = overrides[s.key] ?? isEnabledByDefault(s, index);
+            // Collapsed: the first few series, plus any further one that is drawn so no line is missing from the legend.
+            if (!showAllSeries && index >= LEGEND_COLLAPSED_COUNT && !enabled) return null;
+            return (
+              <label key={s.key} className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  onChange={(e) => setOverrides((prev) => ({ ...prev, [s.key]: e.target.checked }))}
+                />
+                <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: seriesColor(index) }} />
+                {s.label} ({s.request_count})
+              </label>
+            );
+          })}
+          {series.length > LEGEND_COLLAPSED_COUNT && (
+            <button
+              onClick={() => setShowAllSeries((v) => !v)}
+              aria-expanded={showAllSeries}
+              className="text-xs text-[var(--accent)] hover:underline"
+            >
+              {showAllSeries ? 'Show fewer' : `Show all (${series.length})`}
+            </button>
+          )}
         </div>
       )}
 

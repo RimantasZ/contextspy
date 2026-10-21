@@ -94,6 +94,40 @@ describe('SessionTrendChart', () => {
     expect(screen.getByText('No data yet')).toBeTruthy()
   })
 
+  describe('legend of many conversations', () => {
+    const many: SessionTrend = {
+      ...data,
+      series: Array.from({ length: 7 }, (_, i) => ({
+        key: `c${i + 1}`, label: `Conversation ${i + 1}`, auxiliary: false, request_count: 1, points: [point(i + 1, {})],
+      })),
+    }
+
+    it('lists the first four and offers Show all', () => {
+      show({ data: many })
+      expect(screen.getAllByRole('checkbox')).toHaveLength(4)
+      expect(screen.queryByRole('checkbox', { name: /Conversation 5/ })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Show all (7)' }))
+      expect(screen.getAllByRole('checkbox')).toHaveLength(7)
+      fireEvent.click(screen.getByRole('button', { name: 'Show fewer' }))
+      expect(screen.getAllByRole('checkbox')).toHaveLength(4)
+    })
+
+    it('keeps a drawn line in the legend after collapsing', () => {
+      const { container } = show({ data: many })
+      fireEvent.click(screen.getByRole('button', { name: 'Show all (7)' }))
+      fireEvent.click(screen.getByRole('checkbox', { name: /Conversation 6/ }))
+      fireEvent.click(screen.getByRole('button', { name: 'Show fewer' }))
+      expect(screen.getAllByRole('checkbox')).toHaveLength(5)
+      expect((screen.getByRole('checkbox', { name: /Conversation 6/ }) as HTMLInputElement).checked).toBe(true)
+      expect(container.querySelectorAll('.recharts-line')).toHaveLength(5)
+    })
+
+    it('has no toggle when there are four or fewer', () => {
+      show()
+      expect(screen.queryByRole('button', { name: /Show all/ })).toBeNull()
+    })
+  })
+
   it('has no x-axis toggle and no pan controls for a short session', () => {
     show()
     expect(screen.queryByRole('button', { name: 'Time' })).toBeNull()
