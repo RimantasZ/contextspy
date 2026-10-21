@@ -225,20 +225,8 @@ export function SessionTrendChart({
                 dot={(props: { cx?: number; cy?: number; payload?: Datum; index?: number }) => {
                   const { cx, cy, payload, index } = props;
                   const key = `${s.key}-${index}`;
-                  if (cx == null || cy == null || payload?.y == null) return <g key={key} />;
-                  const partial = payload.point.context_fidelity !== 'complete';
-                  if (!partial && rows.length > 200) return <g key={key} />;
-                  return (
-                    <circle
-                      key={key}
-                      cx={cx}
-                      cy={cy}
-                      r={partial ? 4 : 2}
-                      fill={partial ? 'var(--chart-tooltip)' : color}
-                      stroke={color}
-                      strokeWidth={partial ? 2 : 1}
-                    />
-                  );
+                  if (cx == null || cy == null || payload?.y == null || rows.length > 200) return <g key={key} />;
+                  return <circle key={key} cx={cx} cy={cy} r={2} fill={color} stroke={color} strokeWidth={1} />;
                 }}
                 activeDot={{
                   r: 5,

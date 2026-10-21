@@ -79,14 +79,6 @@ describe('SessionTrendChart', () => {
     expect(screen.getByText('No conversation selected')).toBeTruthy()
   })
 
-  it('draws a hollow dot for a request with partial context', () => {
-    const { container } = show()
-    const hollow = Array.from(container.querySelectorAll('circle')).filter(
-      (c) => c.getAttribute('fill') === 'var(--chart-tooltip)',
-    )
-    expect(hollow).toHaveLength(1)
-  })
-
   it('shows the metric empty hint when no plotted point has a value', () => {
     show({ metricId: 'cache_hit_pct' })
     expect(screen.getByText('Provider did not report cache usage')).toBeTruthy()

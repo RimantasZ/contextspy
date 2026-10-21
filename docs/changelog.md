@@ -16,9 +16,8 @@
 - The session Summary gets a second chart next to *Token usage over time*. It plots a metric **per request**. Pick **Context size
   (estimated)**, **Cache hit %** (same figure as *Cached share* in request detail), **TTFT** or **Latency**, and put
   either **Request #** or **Time** on the x axis.
-- One line per conversation, with a checkbox to show or hide each; the auxiliary group starts hidden. Requests whose
-  context is only partly captured are drawn as hollow dots, since their context size is under-reported. Click a
-  point to open the request.
+- One line per conversation, with a checkbox to show or hide each; the auxiliary group starts hidden. The tooltip flags requests whose
+  context is only partly captured (their context size is under-reported). Click a point to open the request.
 - The metric and axis are kept in the page URL. The data comes from `GET /api/sessions/{id}/trend`.
 
 ### Hot spots

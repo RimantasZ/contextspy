@@ -61,8 +61,7 @@ Response:
 - `time` = `started_at ?? timestamp` (`timestamp` is completion time; `started_at` is null on
   historical rows). Load `started_at` and `context_fidelity` in the query too.
 - `context_fidelity` is returned per point: `partial`/`opaque` requests (e.g. stateful Responses
-  calls carrying only a delta) under-report `tokens_total_input`; the chart draws them as hollow dots
-  and the tooltip says "partial context" so false drops are not read as real compaction.
+  calls carrying only a delta) under-report `tokens_total_input`; the tooltip says "partial context" (no special marker on the line; hollow dots were tried and dropped as too bulky) so false drops are not read as real compaction.
 - Ordering: `(session_seq, time)`; `session_seq` is nullable on legacy rows, in which case Request
   mode falls back to ordinal position within the sorted session.
 - Cache hit % must be the same as request detail. Today that formula is inline in
