@@ -17,7 +17,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useSession, useSessionLineage, useSessionConversations, useStatsSession, useTimeline, useSessionTrend, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
-import { SessionTrendChart, type TrendXMode } from '../components/SessionTrendChart';
+import { SessionTrendChart } from '../components/SessionTrendChart';
 import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
 import { ToolBreakdownSection } from '../components/ToolBreakdown';
@@ -84,10 +84,9 @@ export default function SessionDetail() {
   const timeline = useTimeline(id, bucket);
   const trend = useSessionTrend(id);
   const trendMetric = searchParams.get('metric') ?? '';
-  const trendX: TrendXMode = searchParams.get('x') === 'time' ? 'time' : 'request';
-  function setTrendParam(key: 'metric' | 'x', value: string) {
+  function setTrendMetric(value: string) {
     const next = new URLSearchParams(searchParams);
-    next.set(key, value);
+    next.set('metric', value);
     setSearchParams(next, { replace: true });
   }
   const requests = useRequests({ session_id: id, sort_by: reqSortKey ?? undefined, sort_dir: reqSortKey ? reqSortDir : undefined, limit: 500 });
@@ -548,9 +547,7 @@ export default function SessionDetail() {
             data={trend.data}
             loading={trend.isLoading}
             metricId={trendMetric}
-            onMetricChange={(metric) => setTrendParam('metric', metric)}
-            xMode={trendX}
-            onXModeChange={(mode) => setTrendParam('x', mode)}
+            onMetricChange={setTrendMetric}
             onPointClick={(requestId) => navigate(`/requests/${requestId}`)}
           />
         </div>

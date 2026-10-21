@@ -36,8 +36,7 @@ const data: SessionTrend = {
 
 function show(overrides: Partial<React.ComponentProps<typeof SessionTrendChart>> = {}) {
   const props = {
-    data, metricId: 'context_estimated', onMetricChange: vi.fn(), xMode: 'request' as const,
-    onXModeChange: vi.fn(), ...overrides,
+    data, metricId: 'context_estimated', onMetricChange: vi.fn(), ...overrides,
   }
   const view = render(<SessionTrendChart {...props} />)
   return { ...view, props }
@@ -55,14 +54,6 @@ describe('SessionTrendChart', () => {
   it('falls back to the first metric for an unknown metric id', () => {
     show({ metricId: 'bogus' })
     expect((screen.getByRole('combobox', { name: 'Trend metric' }) as HTMLSelectElement).value).toBe('context_estimated')
-  })
-
-  it('switches the x axis and marks the active mode', () => {
-    const { props } = show()
-    expect(screen.getByRole('button', { name: 'Request #' }).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: 'Time' }).getAttribute('aria-pressed')).toBe('false')
-    fireEvent.click(screen.getByRole('button', { name: 'Time' }))
-    expect(props.onXModeChange).toHaveBeenCalledWith('time')
   })
 
   it('shows conversations on and auxiliary off by default, and toggles them', () => {
@@ -90,5 +81,52 @@ describe('SessionTrendChart', () => {
     unmount()
     show({ data: { ...data, series: [] } })
     expect(screen.getByText('No data yet')).toBeTruthy()
+  })
+
+  it('has no x-axis toggle and no pan controls for a short session', () => {
+    show()
+    expect(screen.queryByRole('button', { name: 'Time' })).toBeNull()
+    expect(screen.queryByRole('slider', { name: 'Pan through requests' })).toBeNull()
+  })
+
+  describe('panning a long session', () => {
+    const longData = (count: number): SessionTrend => ({
+      ...data,
+      series: [{
+        key: 'c1', label: 'Conversation 1', auxiliary: false, request_count: count,
+        points: Array.from({ length: count }, (_, i) => point(i + 1, {})),
+      }],
+    })
+
+    it('shows the latest 100 requests and follows new ones', () => {
+      const { rerender, props } = show({ data: longData(250) })
+      expect(screen.getByText('#151–#250 of 250')).toBeTruthy()
+      rerender(<SessionTrendChart {...props} data={longData(260)} />)
+      expect(screen.getByText('#161–#260 of 260')).toBeTruthy()
+    })
+
+    it('pans back with the step buttons and returns with Latest', () => {
+      show({ data: longData(250) })
+      fireEvent.click(screen.getByRole('button', { name: 'Show earlier requests' }))
+      expect(screen.getByText('#126–#225 of 250')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Latest' }))
+      expect(screen.getByText('#151–#250 of 250')).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull()
+    })
+
+    it('pans with the slider and holds the view when new requests arrive', () => {
+      const { rerender, props } = show({ data: longData(250) })
+      fireEvent.change(screen.getByRole('slider', { name: 'Pan through requests' }), { target: { value: '10' } })
+      expect(screen.getByText('#11–#110 of 250')).toBeTruthy()
+      rerender(<SessionTrendChart {...props} data={longData(260)} />)
+      expect(screen.getByText('#11–#110 of 260')).toBeTruthy()
+    })
+
+    it('stops at the oldest request', () => {
+      show({ data: longData(120) })
+      fireEvent.click(screen.getByRole('button', { name: 'Show earlier requests' }))
+      expect(screen.getByText('#1–#100 of 120')).toBeTruthy()
+      expect((screen.getByRole('button', { name: 'Show earlier requests' }) as HTMLButtonElement).disabled).toBe(true)
+    })
   })
 })

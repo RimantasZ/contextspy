@@ -134,3 +134,15 @@ conversation split with auxiliary, ordering by `session_seq`, missing session 40
 
 None blocking. Resolved: cache % = request detail formula; estimated context only; metric/axis in
 URL; latency and TTFT included in v1.
+
+## Revisions after first implementation
+
+- Hollow dots for partial context dropped (too bulky); the tooltip alone flags it.
+- The old *Token usage over time* chart and `/stats/timeline` were kept; both charts sit side by side on the
+  session Summary, with Token composition below.
+- **Time x axis removed** (messy and uninformative); the chart is by request number only. The `?x=` URL param and
+  the Request #/Time toggle no longer exist; only `?metric=` remains.
+- **Windowed view:** the chart shows the latest 100 requests (`WINDOW_SIZE`) by request number, windowed over the
+  session's distinct request numbers regardless of which lines are on. Pan with a slider, step buttons (25) or pointer
+  drag; "Latest" returns. At the latest end the window follows new requests; once panned back it stays put. Window
+  state is component-local, not in the URL.
