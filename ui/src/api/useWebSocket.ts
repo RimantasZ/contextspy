@@ -45,11 +45,12 @@ export function useWebSocket() {
             qc.invalidateQueries({ queryKey: ['session-conversations'] })
           } else if (msg.event === 'session_archived') {
             // Payloads are gone, so request detail and lists change as well as the session status.
-            for (const key of ['sessions', 'stats', 'session-conversations', 'request', 'requests']) {
+            for (const key of ['sessions', 'session', 'stats', 'session-conversations', 'request', 'requests']) {
               qc.invalidateQueries({ queryKey: [key] })
             }
           } else if (msg.event === 'session_started' || msg.event === 'session_ended') {
             qc.invalidateQueries({ queryKey: ['sessions'] })
+            qc.invalidateQueries({ queryKey: ['session'] })
             qc.invalidateQueries({ queryKey: ['stats'] })
             qc.invalidateQueries({ queryKey: ['stats', 'sessions-summary'] })
             qc.invalidateQueries({ queryKey: ['lineage'] })
