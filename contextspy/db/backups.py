@@ -175,15 +175,20 @@ def list_backups(db_path: Path) -> list[Path]:
         if path.is_file() and any(pattern.fullmatch(path.name) for pattern in patterns)
     ]
 
-    def sort_key(path: Path) -> tuple[str, int, str]:
+    def sort_key(path: Path) -> tuple[str, int, int, str]:
         # Oldest first by the timestamp in the name (the schema version in the name is not
-        # ordered as text: "v10" < "v6"); the older HHMM stamps are padded to HHMMSS.
+        # ordered as text: "v10" < "v6"); the older HHMM stamps are padded to HHMMSS. A padded
+        # stamp only knows the minute, so on an equal stamp it sorts before a stamp with real
+        # seconds: a restore made in second :00 of the minute follows the migration backup that
+        # preceded it, instead of being ordered by the file-name text.
         for pattern in patterns[:2]:
             match = pattern.fullmatch(path.name)
             if match:
                 stamp = match.group("stamp")
-                return stamp + "00" if len(stamp) == 15 else stamp, int(match.group("sequence") or 0), match.group("base")
-        return "", 0, path.name
+                padded = len(stamp) == 15
+                return (stamp + "00" if padded else stamp, 0 if padded else 1,
+                        int(match.group("sequence") or 0), match.group("base"))
+        return "", 0, 0, path.name
 
     return sorted(matches, key=sort_key)
 

@@ -87,6 +87,27 @@ def test_backup_collision_and_failed_copy_never_replace_existing(tmp_path, monke
     assert not list(tmp_path.glob(".contextspy-backup-*.tmp"))
 
 
+def test_list_backups_orders_a_same_minute_restore_after_the_migration_backup(tmp_path):
+    # A migration stamp has only HHMM (padded to :00); a restore in second :00 of that minute has an
+    # equal padded stamp and must still come later, not be ordered by the file-name text ("v10" < "v6").
+    path = tmp_path / "contextspy.db"
+    path.write_bytes(b"x")
+    names = [
+        "contextspy_backup_v10_pre_restore_2026-10-21-195201Z.back",
+        "contextspy_backup_v10_pre_restore_2026-10-21-195200Z.back",
+        "contextspy_backup_v6_to_v10_2026-10-21-1952.back",
+        "contextspy_backup_v6_to_v10_2026-10-21-1951.back",
+    ]
+    for name in names:
+        (tmp_path / name).write_bytes(b"x")
+    assert [file.name for file in backups.list_backups(path)] == [
+        "contextspy_backup_v6_to_v10_2026-10-21-1951.back",
+        "contextspy_backup_v6_to_v10_2026-10-21-1952.back",
+        "contextspy_backup_v10_pre_restore_2026-10-21-195200Z.back",
+        "contextspy_backup_v10_pre_restore_2026-10-21-195201Z.back",
+    ]
+
+
 def test_list_backups_includes_manual_restore_and_migration_only_for_db(tmp_path):
     path = tmp_path / "profile.db"
     names = [

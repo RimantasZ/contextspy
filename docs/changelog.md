@@ -79,6 +79,7 @@
 - Claude Code's per-request `x-anthropic-billing-header` line no longer makes the system prompt look like a new block
   each time (applied to existing data by `db-upgrade`; already-purged blocks cannot be re-keyed).
 - `contextspy status` / restore listed the newest backup wrongly once schema versions reached two digits.
+- A restore made in second :00 of the same minute as a migration backup was listed before it (newest-last ordering).
 - Compact request cards show the lineage icon tooltip on hover and focus.
 
 ## v0.5.3
