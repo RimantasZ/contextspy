@@ -10,6 +10,8 @@ Anything that needs the conversation structure of a session builds the **lineage
 | 4,032 requests | ~65 s | ~5 s | 0.08 s |
 | 570 requests | ~7 s | ~1.5 s | 0.04 s |
 
+The session trend chart (issue #66, `GET /api/sessions/{id}/trend`) now needs the same graph on the session Summary view: cold 5.1 s (564 requests) and 55 s (4,032 requests), warm 0.47 s and 2.9 s, measured 2026-10-21 (see `plans/session-trend-chart-66.md`). The trend's own work is under 0.1 s, so any fix here carries over.
+
 The 60 s membership cache of `db/block_occurrence_service.py` hides it after the first call (and, since 2026-10-06, counts its lifetime from the end of the build), but the first call per session per minute pays the full price, and even a "warm" graph costs seconds because the revision check runs on every call.
 
 ## Where the time goes
