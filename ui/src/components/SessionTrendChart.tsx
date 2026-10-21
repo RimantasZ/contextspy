@@ -263,15 +263,22 @@ export function SessionTrendChart({
                   if (cx == null || cy == null || payload?.y == null || rows.length > 200) return <g key={key} />;
                   return <circle key={key} cx={cx} cy={cy} r={2} fill={color} stroke={color} strokeWidth={1} />;
                 }}
-                activeDot={{
-                  r: 5,
-                  fill: color,
-                  cursor: onPointClick ? 'pointer' : undefined,
-                  // Recharts passes the active dot's props, including the datum, but types them as DotProps.
-                  onClick: (dot: object) => {
-                    const id = (dot as { payload?: Datum }).payload?.point.request_id;
-                    if (id) handlePointClick(id);
-                  },
+                // A render function, not an options object: Recharts calls an options object's onClick
+                // with that object itself, but calls a function with the active point's props (payload).
+                activeDot={(props: { cx?: number; cy?: number; payload?: Datum }) => {
+                  const { cx, cy, payload } = props;
+                  if (cx == null || cy == null || payload?.y == null) return <g />;
+                  return (
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={5}
+                      fill={color}
+                      stroke={color}
+                      cursor={onPointClick ? 'pointer' : undefined}
+                      onClick={() => handlePointClick(payload.point.request_id)}
+                    />
+                  );
                 }}
               />
             ))}

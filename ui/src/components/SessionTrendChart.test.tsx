@@ -70,6 +70,17 @@ describe('SessionTrendChart', () => {
     expect(screen.getByText('No conversation selected')).toBeTruthy()
   })
 
+  it('opens the request under the pointer when its point is clicked', () => {
+    const onPointClick = vi.fn()
+    const { container } = show({ onPointClick })
+    const wrapper = container.querySelector('.recharts-wrapper') as HTMLElement
+    fireEvent.mouseMove(wrapper, { clientX: 590, clientY: 100 })
+    const dots = container.querySelectorAll('.recharts-active-dot circle')
+    expect(dots.length).toBeGreaterThan(0)
+    fireEvent.click(dots[0])
+    expect(onPointClick).toHaveBeenCalledWith('r2')
+  })
+
   it('shows the metric empty hint when no plotted point has a value', () => {
     show({ metricId: 'cache_hit_pct' })
     expect(screen.getByText('Provider did not report cache usage')).toBeTruthy()
