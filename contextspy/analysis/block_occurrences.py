@@ -8,7 +8,7 @@ Pure aggregation over rows the DB layer loads (see ``db/block_occurrence_service
 an ordered list of requests (a whole session, one conversation, or a single request). Presence is
 reported as runs of consecutive positions in that order, so a block that is in every request of a
 conversation is one run even when other conversations' requests are interleaved in session order.
-Token figures are visible-block tokens, never provider totals. See plans/info-panel.md.
+Token figures are visible-block tokens, never provider totals. See plans/archive/info-panel.md.
 """
 from __future__ import annotations
 

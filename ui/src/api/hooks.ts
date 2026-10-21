@@ -250,6 +250,18 @@ export function useTimeline(sessionId: string | undefined, bucket: string) {
   })
 }
 
+/**
+ * Keyed under `stats` so the websocket's stats invalidation refreshes it on every new request. No polling:
+ * each call re-checks the session's lineage revision, which costs seconds on a long session.
+ */
+export function useSessionTrend(sessionId: string | undefined) {
+  return useQuery({
+    queryKey: ['stats', 'session-trend', sessionId],
+    queryFn: () => sessionsApi.trend(sessionId ?? ''),
+    enabled: !!sessionId,
+  })
+}
+
 export function useToolStats(sessionId?: string) {
   return useQuery({
     queryKey: ['stats', 'tools', sessionId],

@@ -12,7 +12,7 @@ the returned rows (at most ``MAX_LIMIT``) cost a second, bounded lookup for thei
 (``FROM hs_scope s CROSS JOIN blocks b ON b.request_id = s.id``): left to itself SQLite scans
 ``idx_blocks_content_hash`` for a ``GROUP BY content_hash`` and is 15-100x slower. A test asserts the plan.
 Block identity is the content hash; input blocks only (output blocks reappear as input in the next request,
-so counting both would double count). See plans/hot-spots.md.
+so counting both would double count). See plans/archive/hot-spots.md.
 """
 from __future__ import annotations
 
@@ -155,7 +155,7 @@ def get_session_hotspots(
     block_type: str | None = None, source: str | None = None, in_context: str = "all",
     limit: int = 25, offset: int = 0,
 ) -> dict | None:
-    """The ranking described in plans/hot-spots.md; None when the session does not exist."""
+    """The ranking described in plans/archive/hot-spots.md; None when the session does not exist."""
     if db.get(Session, session_id) is None:
         return None
     resolved = scope_for_session(

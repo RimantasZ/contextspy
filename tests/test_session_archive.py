@@ -193,6 +193,28 @@ def test_analysis_results_are_the_same_before_and_after(db_path):
         assert crud.get_session_lineage_graph(db, sid)["edges"] == graph_before
 
 
+def test_session_trend_is_the_same_before_and_after(client):
+    sid = _session("old")
+    usage = dict(provider_input_tokens=1000, cache_read_tokens=250, ttft_ms=300, duration_ms=2000)
+    _request("root", sid, texts=("alpha",), session_seq=1, **usage)
+    _request("a", sid, texts=("alpha", "beta"), minutes=1, session_seq=2, predecessor_response_id="root", **usage)
+    _request("b", sid, texts=("alpha", "gamma"), minutes=2, session_seq=3, predecessor_response_id="root", **usage)
+    _request("aa", sid, texts=("alpha", "beta", "delta"), minutes=3, session_seq=4, predecessor_response_id="a", **usage)
+    _request("bb", sid, texts=("alpha", "gamma", "zeta"), minutes=4, session_seq=5, predecessor_response_id="b", **usage)
+    before = client.get(f"/api/sessions/{sid}/trend")
+    assert before.status_code == 200
+    body = before.json()
+    assert len([s for s in body["series"] if not s["auxiliary"]]) == 2
+    values = body["series"][0]["points"][0]["values"]
+    assert values["cache_hit_pct"] == 25.0 and values["ttft_ms"] == 300 and values["duration_ms"] == 2000
+
+    _archive(sid)
+
+    after = client.get(f"/api/sessions/{sid}/trend")
+    assert after.status_code == 200
+    assert after.json() == body
+
+
 # --------------------------------------------------------------------------- race with capture
 
 def test_content_that_a_capture_starts_using_between_chunks_is_not_deleted(db_path, monkeypatch):

@@ -1,6 +1,6 @@
 # Perf: cold conversation (lineage) analysis is slow on long sessions
 
-Status: **DRAFT / proposal, not decided.** GitHub issue [#68](https://github.com/RimantasZ/contextspy/issues/68) (`perf:`). Found while measuring Plan 4b ([hot-spots.md](../hot-spots.md)); part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Not blocking any plan, but every conversation-scoped feature inherits it.
+Status: **DRAFT / proposal, not decided.** GitHub issue [#68](https://github.com/RimantasZ/contextspy/issues/68) (`perf:`). Found while measuring Plan 4b ([hot-spots.md](../archive/hot-spots.md)); part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Not blocking any plan, but every conversation-scoped feature inherits it.
 
 ## Problem
 Anything that needs the conversation structure of a session builds the **lineage graph** first: the Conversations view, the block "Present in" panel in conversation scope, Hot spots (conversation selector and default scope), and any future tree/compare page. Measured on a copy of the author's database (samples, one machine, 2026-10-06):
@@ -9,6 +9,8 @@ Anything that needs the conversation structure of a session builds the **lineage
 |---|---|---|---|
 | 4,032 requests | ~65 s | ~5 s | 0.08 s |
 | 570 requests | ~7 s | ~1.5 s | 0.04 s |
+
+The session trend chart (issue #66, `GET /api/sessions/{id}/trend`) now needs the same graph on the session Summary view: cold 5.1 s (564 requests) and 55 s (4,032 requests), warm 0.47 s and 2.9 s, measured 2026-10-21 (see `plans/session-trend-chart-66.md`). The trend's own work is under 0.1 s, so any fix here carries over.
 
 The 60 s membership cache of `db/block_occurrence_service.py` hides it after the first call (and, since 2026-10-06, counts its lifetime from the end of the build), but the first call per session per minute pays the full price, and even a "warm" graph costs seconds because the revision check runs on every call.
 

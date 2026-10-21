@@ -11,6 +11,16 @@
 - Two defaults changed: payloads are **no longer deleted after 7 days** (see *Retention and archive*), and new
   databases use incremental auto-vacuum.
 
+### Session trend chart
+
+- The session Summary gets a second chart next to *Token usage over time*. It plots a metric **per request**. Pick **Context size
+  (estimated)**, **Cache hit %** (same figure as *Cached share* in request detail), **TTFT** or **Latency**, plotted by
+  request number. The chart shows the latest 100 requests; pan back with the slider, the arrow buttons or by dragging,
+  and use **Latest** to return (it follows new requests while you stay at the end).
+- One line per conversation, with a checkbox to show or hide each; the auxiliary group starts hidden. The tooltip flags requests whose
+  context is only partly captured (their context size is under-reported). Click a point to open the request.
+- The selected metric is kept in the page URL. The data comes from `GET /api/sessions/{id}/trend`.
+
 ### Hot spots
 
 - **New session view: Hot spots.** Ranks what the context window keeps carrying: the blocks (tool definitions, big

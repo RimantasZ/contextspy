@@ -5,7 +5,7 @@
 """What produced a block: a compact, provider-neutral ``source_key``.
 
 Keys are persisted at capture time (``blocks.source_key``) because tool-call arguments are
-purged by archive/retention. See plans/wi0-data-foundation.md section 4.
+purged by archive/retention. See plans/archive/wi0-data-foundation.md section 4.
 
 Grammar: bare keys ``system``, ``user``, ``assistant``, ``reasoning``, ``other``; otherwise
 ``<namespace>:<name>``:
@@ -17,7 +17,7 @@ Grammar: bare keys ``system``, ``user``, ``assistant``, ``reasoning``, ``other``
 
 Parsers record program names. The only argument ever read is the file a known read/edit tool
 targets, stored separately in ``blocks.file_path`` (``analysis/paths.py`` is the single choke point);
-command text, URLs, patterns and patch bodies are never stored. See plans/file-paths.md.
+command text, URLs, patterns and patch bodies are never stored. See plans/archive/file-paths.md.
 """
 from __future__ import annotations
 

@@ -28,6 +28,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from contextspy.analysis.accounting import cached_share_pct
 from contextspy.analysis.activity import activity_for
 from contextspy.analysis.tokenizer import TOKENIZER_ID
 
@@ -232,11 +233,7 @@ class Request(Base):
             if provider_input is not None and provider_input > 0
             else None
         )
-        cached_share = (
-            (self.cache_read_tokens or 0) / provider_input * 100
-            if provider_input is not None and provider_input > 0
-            else None
-        )
+        cached_share = cached_share_pct(self.cache_read_tokens, provider_input)
         d["context_accounting"] = {
             "visible_input_tokens": visible_input,
             "provider_input_tokens": provider_input,
@@ -355,7 +352,7 @@ class BlockRecord(Base):
     # compact JSON array (e.g. ["messages",3,"content",1]); NULL when unknown.
     json_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # The file a read/edit tool call (and its result) targets; written only via analysis/paths.py.
-    # Kept after archive. See plans/file-paths.md.
+    # Kept after archive. See plans/archive/file-paths.md.
     file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def to_dict(

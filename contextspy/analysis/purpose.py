@@ -7,7 +7,7 @@
 The baseline is structural and works for every provider: it looks at the last input message
 (trailing user text vs trailing tool results) and at what the response contained. Agent-specific
 detectors (compaction, housekeeping side calls, ...) can be registered; none ships yet because
-they need captures from each agent. See plans/wi0-data-foundation.md section 5.
+they need captures from each agent. See plans/archive/wi0-data-foundation.md section 5.
 """
 from __future__ import annotations
 

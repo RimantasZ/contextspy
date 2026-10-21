@@ -1,6 +1,6 @@
 # Idea 8 (v2): Similarity grouping — track blocks that changed and were reloaded
 
-Status: **IDEA, postponed to v2 (user, 2026-10-06).** Not refined. Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Extends [../hot-spots.md](../hot-spots.md) (Plan 4b, **implemented**), which groups blocks by **exact** content hash only.
+Status: **IDEA, postponed to v2 (user, 2026-10-06).** Not refined. Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Extends [../archive/hot-spots.md](../archive/hot-spots.md) (Plan 4b, **implemented**), which groups blocks by **exact** content hash only.
 
 ## Why
 Exact identity (`content_hash`) hides a pattern that matters for optimisation: a file is read, edited, and read again; or a tool definition / system prompt changes by a few characters; or a large tool result is regenerated with small differences. Each variant is a separate row in hot spots, so the user cannot see "this one thing was reloaded 7 times in slightly different forms and paid for each time". The user wants to **see cases where a file was changed and reloaded**, compared with today's behaviour (exact matches only).

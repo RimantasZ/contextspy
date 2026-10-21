@@ -7,7 +7,7 @@
 Hot spots rank the blocks of a scope (a conversation or a whole session) by the visible tokens they
 add up to over all the requests that carry them. Nothing here needs block content: labels come from
 stored structure (type, tool, source key, file path, provider item type), so everything works after a
-session was archived. See plans/hot-spots.md.
+session was archived. See plans/archive/hot-spots.md.
 """
 from __future__ import annotations
 

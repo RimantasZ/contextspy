@@ -6,7 +6,7 @@
 
 Derived at read time from the persisted ``source_key`` (nothing is stored), so the tables below
 can be refined without a migration. Vocabulary: read, search, edit, vcs, test, command, web,
-orchestration, mcp, other. See plans/wi0-data-foundation.md section 10.
+orchestration, mcp, other. See plans/archive/wi0-data-foundation.md section 10.
 """
 from __future__ import annotations
 

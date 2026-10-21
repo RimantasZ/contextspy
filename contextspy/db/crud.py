@@ -25,7 +25,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session as OrmSession, load_only
 
 from contextspy.analysis.blocks import BlockType, Direction
-from contextspy.db import session_lineage_service
+from contextspy.db import session_lineage_service, trend_service
 from contextspy.db.models import BlockContent, BlockRecord, Request, Session, ToolStat
 
 if TYPE_CHECKING:
@@ -764,6 +764,12 @@ def get_timeline(
         buckets[key]["tokens_total_input"] += r.tokens_total_input
 
     return sorted(buckets.values(), key=lambda x: x["bucket"])
+
+
+def get_session_trend(db: OrmSession, session_id: str) -> dict:
+    """Per-request metric series grouped by conversation for the session trend chart."""
+    graph = get_session_lineage_graph(db, session_id)
+    return trend_service.build_session_trend(db, session_id, graph)
 
 
 # ---------------------------------------------------------------------------

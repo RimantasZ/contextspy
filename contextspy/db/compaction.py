@@ -7,7 +7,7 @@
 SQLite never returns freed pages to the filesystem on its own: deleting block contents or
 nulling request bodies (retention, session archive) only grows the file's free list. ``VACUUM`` rebuilds
 the file without it, and switching the database to *incremental* auto-vacuum lets later deletions shrink
-the file online (``PRAGMA incremental_vacuum``). See plans/db-compact.md.
+the file online (``PRAGMA incremental_vacuum``). See plans/archive/db-compact.md.
 
 Everything here uses the stdlib ``sqlite3`` module directly and runs with the maintenance lock held, so
 the server cannot be running. ``VACUUM`` is atomic: an interruption leaves the original file intact.

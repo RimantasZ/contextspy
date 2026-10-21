@@ -204,6 +204,41 @@ export interface TimelineBucket {
   tokens_total_input: number
 }
 
+export interface TrendMetric {
+  id: string
+  label: string
+  unit: 'tokens' | 'percent' | 'ms'
+  /** True when the value is our own token estimate rather than a provider-reported figure. */
+  estimated: boolean
+  /** Shown when no plotted point has a value for this metric. */
+  empty_hint: string | null
+}
+
+export interface TrendPoint {
+  request_id: string
+  session_seq: number | null
+  /** 1-based position in the session; Request-axis fallback when session_seq is null. */
+  ordinal: number
+  time: string
+  context_fidelity: string
+  purpose: string | null
+  values: Record<string, number | null>
+}
+
+export interface TrendSeries {
+  key: string
+  label: string
+  auxiliary: boolean
+  request_count: number
+  points: TrendPoint[]
+}
+
+export interface SessionTrend {
+  session_id: string
+  metrics: TrendMetric[]
+  series: TrendSeries[]
+}
+
 export interface SessionSummaryEntry {
   type: 'session' | 'gap'
   session_id: string | null
@@ -583,6 +618,7 @@ export interface ProxyStatus {
 // ---- Session API ----------------------------------------------------------
 
 export const sessionsApi = {
+  trend: (id: string) => apiFetch<SessionTrend>(`/sessions/${id}/trend`),
   list: () => apiFetch<{ sessions: Session[] }>('/sessions'),
   get: (id: string) => apiFetch<{ session: Session; stats: Stats }>(`/sessions/${id}`),
   create: (name: string) =>

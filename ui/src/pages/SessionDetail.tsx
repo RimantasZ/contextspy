@@ -14,9 +14,10 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { useSession, useSessionLineage, useSessionConversations, useStatsSession, useTimeline, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
+import { useSession, useSessionLineage, useSessionConversations, useStatsSession, useTimeline, useSessionTrend, useRequests, useEndSession, useToolStats, useRenameSession } from '../api/hooks';
 import { TokenDonut } from '../components/TokenDonut';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
+import { SessionTrendChart } from '../components/SessionTrendChart';
 import { RequestTable } from '../components/RequestTable';
 import type { SortKey } from '../components/RequestTable';
 import { ToolBreakdownSection } from '../components/ToolBreakdown';
@@ -31,7 +32,6 @@ import { SegmentedControl } from '../components/ui/SegmentedControl';
 import { HotSpots, HOTSPOT_URL_PARAMS } from '../components/hotspots/HotSpots';
 import type jsPDF from 'jspdf';
 
-type Bucket = 'minute' | 'hour' | 'day';
 
 function fmtTime(ts: string | null | undefined): string {
   if (!ts) return '—';
@@ -52,16 +52,18 @@ function fmtMs(ms: number | null | undefined): string {
   return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
 }
 
+type Bucket = 'minute' | 'hour' | 'day';
+
 export default function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [bucket, setBucket] = useState<Bucket>('hour');
   const viewParam = searchParams.get('view');
   const view: 'summary' | 'lineage' | 'hotspots' = viewParam === 'lineage' || viewParam === 'hotspots' ? viewParam : 'summary';
   const mode: 'conversations' | 'fragments' = searchParams.get('mode') === 'fragments' ? 'fragments' : 'conversations';
   const conversationKey = searchParams.get('conversation');
   const conversationLayout: 'sequence' | 'conversations' = conversationKey || searchParams.get('layout') === 'conversations' ? 'conversations' : 'sequence';
+  const [bucket, setBucket] = useState<Bucket>('hour');
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameTitleRef = useRef<HTMLInputElement>(null);
@@ -80,6 +82,13 @@ export default function SessionDetail() {
   const conversationCount = mode === 'fragments' ? lineage.data?.conversation_count : conversations.data?.conversation_count;
   const stats = useStatsSession(id ?? '');
   const timeline = useTimeline(id, bucket);
+  const trend = useSessionTrend(id);
+  const trendMetric = searchParams.get('metric') ?? '';
+  function setTrendMetric(value: string) {
+    const next = new URLSearchParams(searchParams);
+    next.set('metric', value);
+    setSearchParams(next, { replace: true });
+  }
   const requests = useRequests({ session_id: id, sort_by: reqSortKey ?? undefined, sort_dir: reqSortKey ? reqSortDir : undefined, limit: 500 });
   const toolStats = useToolStats(id);
   const endSession = useEndSession();
@@ -526,14 +535,6 @@ export default function SessionDetail() {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="panel">
-          <p className="section-title mb-3">Token composition</p>
-          {st ? (
-            <TokenDonut data={Object.fromEntries(Object.entries(st.by_category).map(([k, v]) => [k, v.tokens]))} />
-          ) : (
-            <div className="flex h-60 items-center justify-center text-sm text-[var(--text-muted)]">No data</div>
-          )}
-        </div>
-        <div className="panel">
           <TimeSeriesChart
             data={timeline.data?.timeline ?? []}
             bucket={bucket}
@@ -541,6 +542,24 @@ export default function SessionDetail() {
             loading={timeline.isLoading}
           />
         </div>
+        <div className="panel">
+          <SessionTrendChart
+            data={trend.data}
+            loading={trend.isLoading}
+            metricId={trendMetric}
+            onMetricChange={setTrendMetric}
+            onPointClick={(requestId) => navigate(`/requests/${requestId}`)}
+          />
+        </div>
+      </div>
+
+      <div className="panel">
+        <p className="section-title mb-3">Token composition</p>
+        {st ? (
+          <TokenDonut data={Object.fromEntries(Object.entries(st.by_category).map(([k, v]) => [k, v.tokens]))} />
+        ) : (
+          <div className="flex h-60 items-center justify-center text-sm text-[var(--text-muted)]">No data</div>
+        )}
       </div>
 
       {/* Tool breakdown */}

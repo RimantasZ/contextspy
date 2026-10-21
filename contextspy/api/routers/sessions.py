@@ -92,6 +92,16 @@ def get_session_lineage(session_id: str):
         }
 
 
+@router.get("/sessions/{session_id}/trend")
+def get_session_trend(session_id: str):
+    """Per-request metric values (context size, cache hit, TTFT, latency) per conversation."""
+    with get_db() as db:
+        if not crud.get_session(db, session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        with db.begin_nested():
+            return crud.get_session_trend(db, session_id)
+
+
 @router.get("/sessions/{session_id}/lineage/revision")
 def get_session_lineage_revision(session_id: str):
     """Small polling response so diagnostics reloads only when evidence changes."""

@@ -1,7 +1,7 @@
 # Idea 7: Optimisation hints ("carried but dead")
 
 Status: IDEA only; not refined with the user; kept as an idea until after the first release (roadmap D23). Updated 2026-10-06 with "State of the code" below. Part of [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md).
-Depends on: [hot-spots](../hot-spots.md) (**implemented**; its rows are the input).
+Depends on: [hot-spots](../archive/hot-spots.md) (**implemented**; its rows are the input).
 
 ## Idea
 

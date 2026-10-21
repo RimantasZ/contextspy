@@ -1,6 +1,6 @@
 # Analysis features: architecture review and data-model decisions
 
-Status: architect review, 2026-10-05; **its decisions are implemented** (WI-0, Plans 1, 3, 4; see "What changed after implementation" at the end). Companion to [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md). The measurements below are 2026-10-05 samples.
+Status: architect review, 2026-10-05; **its decisions are implemented** (WI-0, Plans 1, 3, 4; see "What changed after implementation" at the end). Companion to [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). The measurements below are 2026-10-05 samples.
 Items marked **[PROPOSED]** await user confirmation; items marked **[DECIDED]** follow from roadmap decisions D1–D14
 or are forced by measured data. Section 5 lists the schema changes as one batched migration.
 User answers of 2026-10-05 (fidelity, tool source, json_path order, retention) are folded in below.

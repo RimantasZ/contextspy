@@ -7,7 +7,7 @@
 Archiving removes what is large and re-derivable only from the original traffic (the five request/response
 body columns and the ``block_contents`` text no other session needs) and keeps everything the analysis views
 use: block rows (hash, type, category, tokens, source key, JSON path), lineage and conversation data.
-See plans/session-archive.md.
+See plans/archive/session-archive.md.
 
 Concurrency: SQLite serialises writers, and ContextSpy's capture path keeps writing while an archive runs. Every
 write here is therefore a short transaction. The content cleanup is the delicate part: it must never delete content

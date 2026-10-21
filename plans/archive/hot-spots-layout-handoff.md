@@ -2,7 +2,7 @@
 
 # Hand-off: Hot spots page layout work (written 2026-10-06, before a context compaction)
 
-Read this first when picking up the **layout/styling of the Hot spots page**. It is working notes, not a plan; the plan and its implementation record are [hot-spots.md](hot-spots.md), the overall state is [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md) ("Maintenance notes", "Release readiness").
+Read this first when picking up the **layout/styling of the Hot spots page**. It is working notes, not a plan; the plan and its implementation record are [hot-spots.md](hot-spots.md), the overall state is [../ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md) ("Maintenance notes", "Release readiness").
 
 ## What you are doing and the ground rules
 - The author will give **styling remarks** for the Hot spots page; the page is functionally complete and committed (`e6c4396`, category filter `4cb4c84`) but **the author's first look at it in a browser produced the remarks**, so treat the current look as a first draft. Ask for / wait for the remarks; do not invent a redesign.

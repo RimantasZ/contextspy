@@ -1,6 +1,6 @@
 # Postponed: cache for the hot-spots aggregate
 
-Status: **postponed 2026-10-06** (user decision); tracked in https://github.com/RimantasZ/contextspy/issues/67. Split out of [../hot-spots.md](../hot-spots.md) (Plan 4b) during its second review. Not required for 4b; add when paging or sort changes feel slow on large sessions.
+Status: **postponed 2026-10-06** (user decision); tracked in https://github.com/RimantasZ/contextspy/issues/67. Split out of [../archive/hot-spots.md](../archive/hot-spots.md) (Plan 4b) during its second review. Not required for 4b; add when paging or sort changes feel slow on large sessions.
 
 ## Why it exists
 Measured on a copy of the author's database (sample, 2026-10-06): grouping a 4,032-request session (782k input blocks, 8,532 distinct hashes) takes about 1.2 s, a 570-request session about 0.5 s. Without a cache every request to the endpoint (first page, "Show more", sort toggle, in-context filter) repeats that pass.
