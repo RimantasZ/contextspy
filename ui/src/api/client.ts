@@ -433,12 +433,22 @@ export interface FileHotspotRow extends HotspotRowBase {
   latest: HotspotOccurrence
 }
 
+export interface HotspotInputTotals {
+  request_count: number
+  /** Sum of the input tokens of every request. */
+  input_tokens_total: number
+  /** Input tokens of the last request: the current context size. */
+  latest_input_tokens: number
+}
+
 interface HotspotsResponseBase {
   scope: OccurrenceScope
   requested_scope: OccurrenceScope
   scope_note: 'conversation_unavailable' | 'auxiliary_request' | null
   sort: HotspotSort
   conversations: { key: string; code: string | null; request_count: number; selected: boolean }[]
+  /** Input tokens of the whole session and of the selected conversation (null when the scope is the whole session); unaffected by the filters. */
+  input_totals: { session: HotspotInputTotals; conversation: HotspotInputTotals | null }
   summary: {
     scope_request_count: number
     visible_tokens_total: number

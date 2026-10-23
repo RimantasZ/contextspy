@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useSessionHotspots } from '../../api/hooks'
 import type {
   BlockHotspotRow, FileHotspotRow, HotspotGroup, HotspotInContext, HotspotOccurrence, HotspotParams, HotspotSort,
-  SessionHotspots, SourceHotspotRow,
+  HotspotInputTotals, SessionHotspots, SourceHotspotRow,
 } from '../../api/client'
 import { BLOCK_VISUALS, FILTERABLE_BLOCK_TYPES, visualForType } from '../../lib/blockVisuals'
 import { SegmentedControl } from '../ui/SegmentedControl'
@@ -256,6 +256,39 @@ function TableHeader({ group, sort, layout, onSort }: { group: HotspotGroup; sor
   )
 }
 
+function Tile({ name, value, hint }: { name: string; value: string; hint: string }) {
+  return (
+    <div title={hint} className="min-w-0 flex-1 basis-32 rounded-md border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{name}</div>
+      <div className="text-base font-semibold tabular-nums text-[var(--text)]">{value}</div>
+    </div>
+  )
+}
+
+function TotalsGroup({ title, totals }: { title: string; totals: HotspotInputTotals }) {
+  return (
+    <div role="group" aria-label={`${title} totals`} className="min-w-0 flex-1 basis-72 space-y-1">
+      <h3 className="text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)]">{title}</h3>
+      <div className="flex gap-2">
+        <Tile name="Input tokens" value={totals.input_tokens_total.toLocaleString()}
+          hint="Input tokens summed over every request; a block that stays in the context counts once per request" />
+        <Tile name="Latest context" value={totals.latest_input_tokens.toLocaleString()} hint="Input tokens of the last request: the current context size" />
+        <Tile name="Requests" value={totals.request_count.toLocaleString()} hint="Requests in this scope" />
+      </div>
+    </div>
+  )
+}
+
+function InputTotals({ data }: { data: SessionHotspots }) {
+  const { session, conversation } = data.input_totals
+  return (
+    <div className="flex flex-wrap gap-4">
+      {conversation && <TotalsGroup title={`Conversation ${data.conversations.find((c) => c.selected)?.code ?? ''}`.trim()} totals={conversation} />}
+      <TotalsGroup title="Whole session" totals={session} />
+    </div>
+  )
+}
+
 function Summary({ data }: { data: SessionHotspots }) {
   const { summary } = data
   const fidelity = Object.entries(summary.fidelity_counts).filter(([kind, count]) => kind !== 'complete' && count > 0)
@@ -326,6 +359,7 @@ export function HotSpots({ sessionId }: { sessionId: string }) {
 
   return (
     <section aria-label="Hot spots" className="min-w-0 space-y-4">
+      {merged && <InputTotals data={merged} />}
       <div className="panel space-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">

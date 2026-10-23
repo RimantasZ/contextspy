@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.analysis.activity import activity_for
@@ -27,7 +27,7 @@ from contextspy.analysis.block_hotspots import (
     POSITION_SHIFT, block_label, count_runs, preview_text, share_pct, unpack_latest,
 )
 from contextspy.db.block_occurrence_service import SessionScope, scope_for_session
-from contextspy.db.models import Session
+from contextspy.db.models import Request, Session
 
 GROUPS = ("block", "source", "file")
 SORTS = ("total_tokens", "occurrences")
@@ -149,6 +149,21 @@ def _occurrence(scope: SessionScope, described: dict[int, dict], position: int, 
     }
 
 
+def _input_totals(db: OrmSession, scope: SessionScope) -> dict:
+    """Request count, summed input tokens and the last request's input tokens of a scope (independent of the filters)."""
+    ids = [request.request_id for request in scope.requests]
+    tokens: dict[str, int] = {}
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        for row in db.execute(select(Request.id, Request.tokens_total_input).where(Request.id.in_(chunk))):
+            tokens[row.id] = row.tokens_total_input or 0
+    return {
+        "request_count": len(ids),
+        "input_tokens_total": sum(tokens.values()),
+        "latest_input_tokens": tokens.get(ids[-1], 0) if ids else 0,
+    }
+
+
 def get_session_hotspots(
     db: OrmSession, session_id: str, *, group: str = "block", scope: str = "conversation",
     conversation: str | None = None, sort: str = "total_tokens", category: str | None = None,
@@ -255,6 +270,7 @@ def get_session_hotspots(
             })
 
     returned_tokens = sum(row["total_tokens"] for row in rows)
+    session_scope = resolved if resolved.scope == "session" else scope_for_session(db, session_id, "session")
     return {
         "scope": resolved.scope,
         "requested_scope": scope,
@@ -262,6 +278,10 @@ def get_session_hotspots(
         "group": group,
         "sort": sort,
         "conversations": resolved.conversations,
+        "input_totals": {
+            "session": _input_totals(db, session_scope),
+            "conversation": _input_totals(db, resolved) if resolved.scope == "conversation" else None,
+        },
         "summary": {
             "scope_request_count": len(resolved.requests),
             "visible_tokens_total": total,

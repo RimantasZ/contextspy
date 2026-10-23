@@ -23,6 +23,10 @@ function response(group: 'block' | 'source' | 'file', rows: unknown[], overrides
       { key: 'c-one', code: 'C1', request_count: 54, selected: true },
       { key: 'c-two', code: 'C2', request_count: 7, selected: false },
     ],
+    input_totals: {
+      session: { request_count: 61, input_tokens_total: 7000000, latest_input_tokens: 90000 },
+      conversation: { request_count: 54, input_tokens_total: 5500000, latest_input_tokens: 80000 },
+    },
     summary: {
       scope_request_count: 54, visible_tokens_total: 5390318, occurrences_total: 1000, fidelity_counts: { complete: 40, partial: 4, opaque: 10 },
       unidentifiable: group === 'block' ? { blocks: 133, tokens: 432 } : null, returned_tokens: 648000, returned_share_pct: 12.1,
@@ -74,6 +78,17 @@ describe('HotSpots', () => {
     expect(screen.getByText(/4 partial, 10 opaque/)).toBeTruthy()
     expect(screen.getByText(/133 unidentifiable blocks, 432 tokens/)).toBeTruthy()
     expect(screen.getByRole('option', { name: 'C1 · 54 requests' })).toBeTruthy()
+  })
+
+  it('shows the input token totals of the conversation and of the whole session', async () => {
+    mockApi(() => response('block', [blockRow()]))
+    renderView()
+    const conversation = await screen.findByRole('group', { name: 'Conversation C1 totals' })
+    expect(within(conversation).getByText('5,500,000')).toBeTruthy()
+    expect(within(conversation).getByText('80,000')).toBeTruthy()
+    const session = screen.getByRole('group', { name: 'Whole session totals' })
+    expect(within(session).getByText('7,000,000')).toBeTruthy()
+    expect(within(session).getByText('61')).toBeTruthy()
   })
 
   it('keeps the secondary facts in a row that expands on click', async () => {

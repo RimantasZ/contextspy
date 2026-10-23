@@ -131,8 +131,8 @@ chart.
 ## Rollout / phases
 1. Backend service + endpoint + tests. Done.
 2. Chart component, hook, SessionDetail layout, UI tests, `make ui`. Done.
-3. Follow-ups, not started: block count (one grouped `BlockRecord` query, reuse `_block_counts`), output tokens,
-   stacked categories, dashboard placement, downsampling for very large sessions.
+3. Follow-ups: block count, output tokens and stacked categories (context and output) are done. Not started:
+   dashboard placement, downsampling for very large sessions.
 
 ## Verification (2026-10-21)
 
@@ -167,6 +167,7 @@ one cold process each (`crud.get_session_trend`):
 - **Legend size:** resolved. The legend lists the first 4 series plus a **Show all (N)** / **Show fewer** toggle
   (`LEGEND_COLLAPSED_COUNT`); a further series that is drawn stays in the collapsed legend so no line is missing from
   it. The 4,032-request session has 50 series (49 conversations plus auxiliary).
-- Verified in a browser by the author: hover tooltip, drag-to-pan. Click-to-open was broken (Recharts calls an
+- Browser checks so far (by the author): hover tooltip, drag-to-pan. Not yet checked: the stacked composition views.
+  Details: Click-to-open was broken (Recharts calls an
   `activeDot` options object's `onClick` with that object, not the point) and is fixed by using a render function;
   not yet re-checked in a browser. Dark-theme series colours not checked.

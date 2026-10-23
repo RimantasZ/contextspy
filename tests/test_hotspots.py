@@ -197,6 +197,10 @@ def test_explicit_conversation_session_scope_and_unknown_conversation(db):
 
     whole = service.get_session_hotspots(db, "s1", scope="session")
     assert whole["scope"] == "session" and whole["summary"]["scope_request_count"] == 5
+    assert whole["input_totals"]["conversation"] is None
+    assert whole["input_totals"]["session"]["request_count"] == 5
+    assert c1["input_totals"]["session"] == whole["input_totals"]["session"]
+    assert c1["input_totals"]["conversation"]["request_count"] == c1["summary"]["scope_request_count"]
     assert {row["key"]: row["total_tokens"] for row in whole["rows"]} == {"H": 30, "G": 40, "S": 15, "R": 14}
     assert len(whole["conversations"]) == 2 and not any(c["selected"] for c in whole["conversations"])
 
