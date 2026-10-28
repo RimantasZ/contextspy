@@ -77,19 +77,25 @@ def _document_frequencies(requests: Iterable[RequestSnapshot]) -> tuple[Counter,
 
 def _candidate_ids_by_shared_context(
     requests: list[RequestSnapshot],
-) -> tuple[dict[str, int], dict[tuple, list[str]]]:
-    """Index meaningful transcript/output fingerprints for bounded retrieval."""
+) -> tuple[dict[str, int], dict[tuple, list[str]], dict[str, int]]:
+    """Index meaningful transcript/output fingerprints for bounded retrieval.
+
+    Also returns how many distinct fingerprints each request has, so candidates can be
+    ranked by how much of *their own* context a child contains.
+    """
     order = {request.id: index for index, request in enumerate(requests)}
     postings: dict[tuple, list[str]] = defaultdict(list)
+    key_counts: dict[str, int] = {}
     for request in requests:
         keys = {
             semantic_key(block)
             for block in request.blocks
             if not block.is_configuration and semantic_key(block) is not None
         }
+        key_counts[request.id] = len(keys)
         for key in keys:
             postings[key].append(request.id)
-    return order, postings
+    return order, postings, key_counts
 
 
 def _block_weight(block: ContextBlock, frequencies: Counter, document_count: int) -> float:
@@ -110,6 +116,9 @@ class ScoringWeights:
     blocks: Mapping[int, float]  # object identity avoids assuming block IDs are globally unique
     input_totals: Mapping[str, float]
     output_totals: Mapping[str, float]
+    # Per request: summed block weight by semantic key, for the score upper bound.
+    input_by_key: Mapping[str, Mapping[tuple, float]]
+    output_by_key: Mapping[str, Mapping[tuple, float]]
 
 
 def _scoring_weights(
@@ -118,18 +127,61 @@ def _scoring_weights(
     blocks: dict[int, float] = {}
     input_totals: dict[str, float] = {}
     output_totals: dict[str, float] = {}
+    input_by_key: dict[str, dict[tuple, float]] = {}
+    output_by_key: dict[str, dict[tuple, float]] = {}
     for request in requests:
         input_total = output_total = 0.0
+        by_input: dict[tuple, float] = defaultdict(float)
+        by_output: dict[tuple, float] = defaultdict(float)
         for block in request.blocks:
             weight = _block_weight(block, frequencies, document_count)
             blocks[id(block)] = weight
             if block.direction == Direction.INPUT:
                 input_total += weight
+                if weight:
+                    by_input[semantic_key(block)] += weight
             elif block.direction == Direction.OUTPUT:
                 output_total += weight
+                if weight:
+                    by_output[semantic_key(block)] += weight
         input_totals[request.id] = input_total
         output_totals[request.id] = output_total
-    return ScoringWeights(blocks, input_totals, output_totals)
+        input_by_key[request.id] = by_input
+        output_by_key[request.id] = by_output
+    return ScoringWeights(blocks, input_totals, output_totals, input_by_key, output_by_key)
+
+
+def _score_upper_bound(
+    parent: RequestSnapshot, child: RequestSnapshot,
+    child_input_keys: frozenset, weights: ScoringWeights,
+) -> float:
+    """An upper bound on ``_score_candidate(...).score`` that needs no context diff.
+
+    A parent block can only be retained or promoted if its key occurs among the child's
+    input blocks, so summing the weight of such blocks bounds ``retained_weight`` and
+    ``promoted_weight`` (multiplicity and ordering are ignored, which only loosens the
+    bound). The later adjustments in ``_score_candidate`` (weak-signal cap, fidelity
+    factor, cross-agent cap) only lower the score, so they are left out.
+    """
+    retained = sum(
+        weight for key, weight in weights.input_by_key[parent.id].items()
+        if key in child_input_keys
+    )
+    promoted = sum(
+        weight for key, weight in weights.output_by_key[parent.id].items()
+        if key in child_input_keys
+    )
+    parent_input_weight = weights.input_totals[parent.id]
+    parent_output_weight = weights.output_totals[parent.id]
+    child_input_weight = weights.input_totals[child.id]
+    retention = retained / parent_input_weight if parent_input_weight else 0.0
+    child_coverage = (
+        (retained + promoted) / child_input_weight if child_input_weight else 0.0
+    )
+    if parent_output_weight:
+        promotion = promoted / parent_output_weight
+        return 0.35 * retention + 0.45 * child_coverage + 0.20 * promotion
+    return 0.45 * retention + 0.55 * child_coverage
 
 
 def _score_candidate(
@@ -137,7 +189,8 @@ def _score_candidate(
     child: RequestSnapshot,
     weights: ScoringWeights,
 ) -> CandidateScore:
-    delta = diff_contexts(parent.blocks, child.blocks)
+    # Scoring reads only the mappings; the full delta is computed for the chosen parent.
+    delta = diff_contexts(parent.blocks, child.blocks, detail=False)
     parent_by_id = {block.id: block for block in parent.blocks}
     child_by_id = {block.id: block for block in child.blocks}
 
@@ -353,7 +406,7 @@ def build_lineage_graph(
     frequencies, document_count = _document_frequencies(internal)
     scoring_weights = _scoring_weights(all_requests, frequencies, document_count)
     internal_by_id = {request.id: request for request in internal}
-    order_by_id, context_postings = _candidate_ids_by_shared_context(internal)
+    order_by_id, context_postings, context_key_counts = _candidate_ids_by_shared_context(internal)
     edges: list[LineageEdge] = []
     parents: dict[str, str] = {}
     parent_states: dict[str, str] = {}
@@ -414,15 +467,33 @@ def build_lineage_graph(
             )
         candidate_requests = [
             internal_by_id[request_id]
+            # Containment first: a true parent (or the request a user rewound to) has
+            # almost all of its own context inside the child, whereas every later turn of
+            # the same conversation has extra blocks the child lacks. Ranking by raw
+            # overlap would let those later turns tie with it and, on a long
+            # conversation, push it out of the candidate cap.
             for request_id, _ in sorted(
                 overlaps.items(),
-                key=lambda item: (-item[1], -order_by_id[item[0]], item[0]),
+                key=lambda item: (
+                    -item[1] / max(context_key_counts[item[0]], 1),
+                    -item[1], -order_by_id[item[0]], item[0],
+                ),
             )[:MAX_INFERENCE_CANDIDATES]
         ]
 
+        child_input_keys = frozenset(
+            key for block in _input_blocks(child)
+            if (key := semantic_key(block)) is not None
+        )
         candidates: list[CandidateScore] = []
         for candidate in candidate_requests:
             if not candidate.blocks or not child.blocks:
+                continue
+            # Exact shortcut: skip the diff for candidates that cannot reach the threshold
+            # (the epsilon covers float summation order).
+            if _score_upper_bound(
+                candidate, child, child_input_keys, scoring_weights,
+            ) < AMBIGUOUS_THRESHOLD - 1e-9:
                 continue
             score = _score_candidate(candidate, child, scoring_weights)
             if score.score >= AMBIGUOUS_THRESHOLD:
@@ -456,7 +527,7 @@ def build_lineage_graph(
                           "raw_candidate_margin": round(
                               best.score - max((candidate.score for candidate in candidates[1:]),
                                                default=0.0), 4)},
-                delta=best.delta,
+                delta=diff_contexts(best.request.blocks, child.blocks),
             ))
             parents[child.id] = best.request.id
             parent_states[child.id] = "inferred"
@@ -560,7 +631,7 @@ def build_lineage_graph(
             confidence=round(chosen.score, 4),
             evidence_source="context_diff",
             evidence=evidence,
-            delta=chosen.delta,
+            delta=diff_contexts(chosen.request.blocks, child.blocks),
         ))
         ambiguous = [item for item in ambiguous if item["request_id"] != child.id]
 

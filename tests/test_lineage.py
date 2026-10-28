@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 
 from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.analysis.context_diff import ContextBlock, diff_contexts, new_child_block_ids
+from contextspy.analysis import lineage as lineage_module
+from contextspy.analysis.context_diff import semantic_key
 from contextspy.analysis.lineage import LineageEdge, RequestSnapshot, _conversation_projection, build_lineage_graph, context_diff_for_requests
 
 
@@ -868,3 +870,90 @@ def test_capture_sequence_allocation_is_unique_under_concurrent_writes(tmp_path,
         sequences = list(executor.map(insert_request, range(16)))
 
     assert sorted(sequences) == list(range(1, 17))
+
+
+def _long_conversation(turns: int):
+    """One conversation without provider ids: request k carries turns 0..k and answers k."""
+    counter = iter(range(1, 100000))
+    system = "You are a careful assistant."
+
+    def request(k: int, sequence: int, history_turns: int, closing_user: str):
+        rid = f"turn-{k}" if k is not None else None
+        blocks = [_block(rid, next(counter), Direction.INPUT, BlockType.SYSTEM_PROMPT, system,
+                         position=0, category="system_prompt")]
+        position = 1
+        for t in range(history_turns):
+            blocks.append(_block(rid, next(counter), Direction.INPUT, BlockType.USER_MESSAGE,
+                                 f"question number {t} about topic {t}", position=position))
+            blocks.append(_block(rid, next(counter), Direction.INPUT, BlockType.ASSISTANT_MESSAGE,
+                                 f"answer number {t} explaining topic {t}", position=position + 1))
+            position += 2
+        blocks.append(_block(rid, next(counter), Direction.INPUT, BlockType.USER_MESSAGE,
+                             closing_user, position=position))
+        return rid, blocks, position
+
+    requests = []
+    for k in range(turns):
+        rid, blocks, position = request(k, k + 1, k, f"question number {k} about topic {k}")
+        blocks.append(_block(rid, next(counter), Direction.OUTPUT, BlockType.ASSISTANT_MESSAGE,
+                             f"answer number {k} explaining topic {k}", position=0))
+        requests.append(_snapshot(rid, k + 1, blocks))
+    return requests, request, counter
+
+
+def _parent_of(graph, child_id):
+    edges = [edge for edge in graph["edges"] if edge["target_request_id"] == child_id]
+    return edges[0]["source_request_id"] if edges else None
+
+
+def test_rewind_to_an_early_turn_of_a_long_conversation_finds_that_turn():
+    # Every later turn contains the same prefix, so ranking candidates by how many of the
+    # child's blocks they hold ties them with the true parent; only the share of the
+    # candidate's own context found in the child tells them apart.
+    requests, request, counter = _long_conversation(80)
+    rid = "rewound"
+    _, blocks, position = request(None, 81, 4, "a different follow up question")
+    blocks = [replace(block, request_id=rid) for block in blocks]
+    requests.append(_snapshot(rid, 81, blocks))
+    graph = build_lineage_graph(requests)
+    assert _parent_of(graph, "rewound") == "turn-3"
+    assert _parent_of(graph, "turn-40") == "turn-39"
+
+
+def test_fork_of_an_early_turn_joins_no_later_turn():
+    requests, request, counter = _long_conversation(80)
+    rid = "forked"
+    _, blocks, _ = request(None, 82, 10, "forked question one")
+    requests.append(_snapshot(rid, 81, [replace(block, request_id=rid) for block in blocks]))
+    graph = build_lineage_graph(requests)
+    assert _parent_of(graph, "forked") == "turn-9"
+    # The long conversation itself is untouched by the fork.
+    assert all(_parent_of(graph, f"turn-{k}") == f"turn-{k-1}" for k in range(1, 80))
+
+
+def test_lean_diff_returns_the_same_mappings_as_the_full_diff():
+    requests, _, _ = _long_conversation(12)
+    for parent, child in zip(requests, requests[1:]):
+        full = diff_contexts(parent.blocks, child.blocks)
+        lean = diff_contexts(parent.blocks, child.blocks, detail=False)
+        assert (lean.persisted, lean.promoted, lean.replaced) == (full.persisted, full.promoted, full.replaced)
+        assert lean.added == lean.removed == [] and lean.summary == {}
+
+
+def test_score_upper_bound_never_underestimates_the_real_score():
+    requests, request, _ = _long_conversation(25)
+    _, rewound_blocks, _ = request(None, 26, 5, "something else entirely")
+    requests.append(_snapshot("rewound", 26, [replace(b, request_id="rewound") for b in rewound_blocks]))
+    frequencies, count = lineage_module._document_frequencies(requests)
+    weights = lineage_module._scoring_weights(requests, frequencies, count)
+    for child in requests:
+        keys = frozenset(
+            key for block in child.blocks
+            if block.direction == Direction.INPUT and (key := semantic_key(block)) is not None
+        )
+        for parent in requests:
+            if parent is child:
+                continue
+            real = lineage_module._score_candidate(parent, child, weights).score
+            bound = lineage_module._score_upper_bound(parent, child, keys, weights)
+            assert bound + 1e-9 >= real, (parent.id, child.id, bound, real)

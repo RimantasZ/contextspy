@@ -182,8 +182,14 @@ def _counts(
 
 def diff_contexts(
     parent_blocks: Iterable[ContextBlock], child_blocks: Iterable[ContextBlock],
+    *, detail: bool = True,
 ) -> ContextDelta:
-    """Compare a parent input/output snapshot with a child's input context."""
+    """Compare a parent input/output snapshot with a child's input context.
+
+    ``detail=False`` returns only the ``persisted``, ``promoted`` and ``replaced`` mappings
+    (what candidate scoring reads) and leaves ``added``, ``removed``, the unavailable lists
+    and ``summary`` empty.
+    """
     parent_all = list(parent_blocks)
     child_all = list(child_blocks)
     parent_input = _ordered(parent_all, Direction.INPUT)
@@ -231,6 +237,8 @@ def diff_contexts(
     promoted = _lcs_mappings(parent_output, unmatched_child)
     delta.promoted.extend(promoted)
     consumed_child.update(item.child_block_id for item in promoted)
+    if not detail:
+        return delta
 
     delta.removed = [
         block.id
