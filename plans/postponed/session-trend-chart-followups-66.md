@@ -46,7 +46,7 @@ Measured 2026-10-21 on a scratch copy (metadata only, two sessions, one machine)
 | 4,032 requests | 0.29 s | 57 s | 4.0 s | 0.41 s | 2.8 MiB |
 
 The trend's own work is small; the cost is the cold `build_lineage_graph` and the per-call revision check that hashes
-every block row ([../unconfirmed_drafts/perf-cold-lineage-analysis-68.md](../unconfirmed_drafts/perf-cold-lineage-analysis-68.md)).
+every block row ([../perf-cold-lineage-analysis-68.md](../perf-cold-lineage-analysis-68.md)).
 Any fix there carries over. **Decision (2026-10-21): leave it until #68 is solved.** Until then a long session's
 Summary chart is empty for the cold-build time.
 

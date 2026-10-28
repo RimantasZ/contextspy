@@ -1,0 +1,79 @@
+# Perf: cold conversation (lineage) analysis is slow on long sessions
+
+Status: **CONFIRMED plan (2026-10-29), not started.** Moved from `unconfirmed_drafts/`; work order in open question 4 accepted. Reviewed against the code on 2026-10-28 (see "State of the code"). GitHub issue [#68](https://github.com/RimantasZ/contextspy/issues/68) (`perf:`). Found while measuring Plan 4b ([hot-spots.md](archive/hot-spots.md)); part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md). Not blocking any plan, but every conversation-scoped feature inherits it.
+
+## Problem
+Anything that needs the conversation structure of a session builds the **lineage graph** first: the Conversations view, the block "Present in" panel in conversation scope, Hot spots (conversation selector and default scope), and any future tree/compare page. Measured on a copy of the author's database (samples, one machine, 2026-10-06):
+
+| Session | Cold (graph not built in the process) | Warm graph, membership rebuilt | Membership cached |
+|---|---|---|---|
+| 4,032 requests | ~65 s | ~5 s | 0.08 s |
+| 570 requests | ~7 s | ~1.5 s | 0.04 s |
+
+The session trend chart (issue #66, `GET /api/sessions/{id}/trend`) now needs the same graph on the session Summary view: cold 5.1 s (564 requests) and 55 s (4,032 requests), warm 0.47 s and 2.9 s, measured 2026-10-21 (see `plans/archive/session-trend-chart-66.md`). The trend's own work is under 0.1 s, so any fix here carries over.
+
+The 60 s membership cache of `db/block_occurrence_service.py` hides it after the first call (and, since 2026-10-06, counts its lifetime from the end of the build), but the first call per session per minute pays the full price, and even a "warm" graph costs seconds because the revision check runs on every call.
+
+## Where the time goes
+cProfile of a cold build of the 570-request session (27 s under the profiler, ~7 s without; the *shares* matter):
+- **~67% `analysis/lineage.py: build_lineage_graph`**: `_score_candidate` calls `analysis/context_diff.py: diff_contexts` ~6,500 times (14 s of 27 s), of which the LCS matching (`_lcs_mappings`) is ~5 s.
+- **~19% `db/session_lineage_service.py: evidence_revision`**: hashes the evidence columns of every request **and every block row** of the session on each call, cache hit or not (5 s profiled; 1.5 s warm on 570 requests, 3.7-6.7 s on 4,032).
+- **~14% loading** request snapshots and block rows (`crud.get_session_lineage_snapshots`, `_lineage_snapshots_for_requests`).
+
+## State of the code (verified 2026-10-28)
+The timings in "Problem" are from 2026-10-06/21; they were re-taken on 2026-10-29 (next section) and still hold. What the code does today, which changes what is left to gain:
+
+- **Callers of the graph** (all go through `crud._session_lineage_graph` -> `session_lineage_service.graph_for_session`): `get_session_lineage_graph` (the `/lineage` endpoint, `block_occurrence_service._membership`, the session trend), `get_session_sequence`, `get_session_request_context`, the conversation group endpoints (`crud.py` ~1463, ~1503) and the dashboard summary (~1557). Each call runs `evidence_revision` before looking at the cache.
+- **Cache:** `CACHE_ENTRY_LIMIT = 4`, `CACHE_BYTES_LIMIT = 12 MB` (size = `json.dumps(graph)`, itself computed on every build). A graph above the limit is served but **not retained**, so for a very large session every call would be cold. Measured 2026-10-29: the 4,032-request graph is 10.4 MB, so it fits, narrowly.
+- **Revision string is public:** `GET /api/sessions/{id}/lineage/revision` and the `revision` parameters of the sequence/conversation endpoints compare it. Any new fingerprint must still change when the data changes, and `ANALYSIS_VERSION` (`lineage-v5-compaction-affinity`) stays in it. The hash also reads `BlockRecord.attrs` for every block, which is likely a large share of the 19%.
+- **Already done, so not ideas any more:**
+  - Candidate set per request is already bounded (`MAX_INFERENCE_CANDIDATES = 64`, ranked by shared context keys via postings).
+  - Requests with `predecessor_response_id` are already excluded from the heuristic loop; they cost one `diff_contexts` each, only to fill the edge `delta`.
+  - `_lcs_mappings` already has an identical-order fast path (positional mapping instead of `SequenceMatcher`). Only the "child extends parent" case (parent keys are a prefix of child keys) is not covered.
+  - The retrospective pass re-scores only ambiguous/inferred children with 2-8 plausible candidates, up to 3 descendants each.
+- ~6,500 `diff_contexts` calls for 570 requests (about 11 per request, including exact-predecessor edges and the retrospective pass) are mostly for distinct pairs, so per-pair memoisation would have few hits. **Whether the 64-candidate cap bites on the big session is unknown** (see 2.3).
+
+## Re-measured 2026-10-29 (copy of the author's database, schema 8 data, samples, one machine)
+Script: backup-API copy in the scratchpad, plain SQLAlchemy session, caches cleared before each run; same code as today (`main`).
+
+| Step | 564 requests (125k blocks) | 4,032 requests (791k blocks) |
+|---|---|---|
+| `evidence_revision` | 1.09 s | 3.41 s |
+| `get_session_lineage_snapshots` (load) | 1.87 s | 8.99 s |
+| `build_lineage_graph` (scoring) | 3.11 s | 47.50 s |
+| **cold `graph_for_session` (total)** | **6.0 s** | **59.1 s** |
+| warm `graph_for_session` (cache hit = revision check only) | 0.94 s | 3.95 s |
+| serialized graph | 1.4 MB | **10.4 MB** (cache limit 12.6 MB) |
+
+Findings: the earlier numbers still hold (6-7 s / 55-65 s cold). Scoring is ~80% of the big session's cold time and grows much faster than linearly (3.1 s -> 47.5 s for 7x the requests), so the scoring change (idea 2) matters most for large sessions, while the revision check is what every *warm* call pays (4 s). The 4,032-request graph is 10.4 MB, within 2 MB of `CACHE_BYTES_LIMIT`: a somewhat larger session would stop being cached and become cold on every call, so raising the limit or storing a leaner graph belongs in this plan. Not yet re-profiled below function level, and the schema-10 data was not used (the copy is schema 8; lineage reads only columns that did not change).
+
+## Constraints
+- Lineage and conversation membership are **derived at read time and never persisted** (`session_lineage_service.py` header; roadmap "Repository policies"). Caching in process memory is fine; persisted columns encoding membership are not.
+- Conversation membership must stay identical to the dashboard's definition (D5); any speed-up must keep `tests/test_lineage*.py` results unchanged.
+- Capture must not slow down.
+
+## Ideas to evaluate (ordered by expected gain / risk, revised 2026-10-29)
+1. **Cheaper revision check** (~19%, and paid on every call). Replace "hash every block row including `attrs`" with a bounded fingerprint: request evidence columns as today, plus per-request block count, `SUM(token_count)` and a cheap hash aggregate (e.g. `SUM`/`GROUP_CONCAT` of `content_hash` per request) from one `GROUP BY request_id` query that never touches `attrs`. Must still catch the in-place edits, deletes and reassignments the header comment promises; add a test for each. Block columns outside the lineage input (`attrs`, `source_key`, `file_path`, `json_path`) are not evidence for the graph (the snapshot loader does not read them either), excluded by decision (open question 2, answered yes on 2026-10-29). Target: warm lookups under ~0.5 s on the big session; if a per-request `GROUP BY` over ~791k block rows is still too slow, fall back to a per-session marker (block count, max block id) plus the request-level token totals, and record the trade-off here.
+2. **Better and cheaper candidate selection and scoring** (~67%; written up 2026-10-29 after review).
+   - **2.0 Problem with the current selection (code reading, not yet measured).** `build_lineage_graph` ranks all earlier requests by the *count* of the child's non-configuration block keys they contain (ties: newest first) and scores the top `MAX_INFERENCE_CANDIDATES = 64`. Order is ignored here (it only matters later, in the LCS inside `diff_contexts`). This breaks for **forks and rewinds**: if the child continues from an old request P (user rewinds, or forks an earlier point of a long conversation), every later request in P's conversation contains the same shared prefix and ties with P on the count; the newest-first tie-break then keeps the later ones, and with more than ~64 later requests the true parent never reaches the scorer (child attached to the wrong request, or ambiguous). The tie problem is specific to forks and rewinds *within* a long conversation. A request that continues a different conversation or comes from another client does not tie with a whole chain, but it competes for the same 64 slots.
+   - **2.1 Rank by containment, not count.** The true parent's blocks are almost all inside the child; a later request of the same conversation has extra blocks the child lacks. Rank by "fraction of the candidate's own keys found in the child", then by overlap count, then recency. The postings and per-request key counts already exist, so this is nearly free. Covers rewind, fork and cross-conversation parents with one rule (no special "check other conversations first" step) and probably allows a lower cap.
+   - **2.2 Prefix-aware retrieval.** APIs rely on prefix caching, so a continuation normally shares a long leading run of the block sequence with its parent (parent input, then promoted parent output, then new blocks); a rewind or fork shares the prefix up to the divergence point. Index each request's input sequence (semantic keys, configuration blocks excluded as in `diff_contexts`) in a trie; walking a child down the trie gives the deepest shared prefix and the requests ending near it as candidates, instead of pairwise comparison with up to 64 requests. Use the prefix as a ranking/filtering signal **in front of** the existing scorer, keep `diff_contexts` as the final judge, so inferred edges stay identical. It must tolerate what the scorer tolerates today: promoted outputs in a different form, blocks dropped or injected mid-context, compaction (breaks the prefix on purpose), and providers whose caches are less strict. `cache_read_tokens` could add evidence for prefix length but is left out (D2).
+   - **2.3 Instrument before changing.** On the 4,032-request session: how many children hit the 64 cap, the rank of the chosen parent, and how many children would choose a different parent under 2.1/2.2. Add lineage tests for a fork and a rewind with more than 64 later turns (rewind to turn 3 of a long conversation; fork a second conversation from an early request), expected to fail or degrade today and pass after 2.1/2.2.
+   - **2.4 Remaining scoring levers**, since the candidate bound and exact-predecessor skip exist: (a) extend the `_lcs_mappings` fast path to the prefix case (parent keys are a prefix of child keys; the common growing-conversation shape; only worth doing if 2.2 does not already make most diffs trivial); (b) make `_score_candidate` avoid building `parent_by_id`/`child_by_id` and full `ContextDelta` objects for candidates that cannot reach `AMBIGUOUS_THRESHOLD` (an upper bound from shared weight over `child_input_weight`, computable from the postings overlap); (c) lower the cap (2.1 may allow it) or stop scoring once a candidate is clearly dominant, only if lineage test results and a before/after comparison of the whole graph on the sample sessions stay identical. Per-pair memoisation is dropped (few hits, see above).
+3. **Warm ahead of use.** Build the graph in the background when a session page is opened or debounced after capture, so the first interactive call hits the cache. Needs the cache limits reconsidered (a graph over 12 MB is not retained), and must never run on the proxy thread.
+4. **Incremental update** when a request is appended (parent search only for the new request). Largest change and the retrospective pass rewrites earlier decisions; only if 1-3 are not enough.
+5. **Faster snapshot loading** (~15% of cold: 1.9 s / 9.0 s measured; no other idea touches it, and the cold target cannot be met without it). `_lineage_snapshots_for_requests` builds an ORM `BlockRecord` per row (791k on the big session) and then a `ContextBlock` from each. Select plain column tuples (Core, no ORM identity map) and build `ContextBlock` directly; consider sharing one pass with the revision query so block rows are read once per cold build. Output must be identical.
+6. **Cache size headroom.** The 4,032-request graph is 10.4 MB against `CACHE_BYTES_LIMIT` 12.6 MB; a larger session is served but not retained, i.e. cold on every call. Options: raise the limit (memory trade-off), store a leaner graph (e.g. drop per-edge `delta.summary` detail that callers can recompute), and stop running `json.dumps(graph)` on every build just to measure its size (a cheaper estimate is enough). Decide after 1-2, since a faster build lowers the pressure to cache at all.
+7. **Reduced graph for membership-only callers.** Probably not worth it: `groups`/`filed_under`/`codes` come from the same edges, which need the scoring. Keep only if re-profiling shows `delta` assembly or the `json.dumps` size probe is significant.
+
+## How to measure (before and after)
+On a scratch copy made with SQLite's online backup API (never the live DB): clear `session_lineage_service._cache` and `block_occurrence_service.clear_membership_cache()`, then time `scope_for_session(db, sid, "conversation", with_conversations=True)` cold, warm-graph and cached, for a ~570-request and a ~4,000-request session; profile with cProfile and flush stdout before `os._exit`. Record the numbers in this file.
+
+## Acceptance (proposal)
+Proposed targets (open question 1 will confirm them after steps 1-2): cold membership for a 4,000-request session under ~10 s (needs idea 5 as well as idea 2, since loading alone is 9 s today) without changing any lineage test result; warm lookups under ~0.5 s; the existing lineage and occurrence tests pass unchanged; new tests for the cheaper revision check (detects an edited, deleted and reassigned request/block row); new fork and rewind lineage tests (more than 64 later turns); a before/after comparison on the sample sessions showing the same parent for every request except those the new ranking demonstrably fixes (each listed and explained).
+
+## Open questions
+1. **Deferred (user, 2026-10-29): review after steps 1 and 2 are implemented.** Acceptable first-load time for a 4,000-request session? Is background warming (idea 3) acceptable on the user's machine (CPU while capturing)? Idea 3 is only considered if the measured result of steps 1-2 is still too slow.
+2. **Answered (user, 2026-10-29): yes.** The revision check may ignore edits to block columns the graph does not read (`attrs`, `source_key`, `file_path`, `json_path`). It must still detect edits to the request evidence columns and to the block columns the loader reads, plus deletes and reassignments.
+3. **Deferred (user, 2026-10-29): review after steps 1 and 2.** Does the Conversations view have a separate cost beyond the graph (the sequence/conversation projections after `_session_lineage_graph`)? Measure then; do not assume one fix covers both.
+4. Work order (confirmed 2026-10-29; the re-measurement is done, see above): idea 1 (small, safe), then idea 2 in the order 2.3 (instrument and add fork/rewind tests), 2.1, 2.2, 2.4; then review questions 1 and 3 and decide on ideas 3, 5 and 6 (idea 5, loading, is likely needed for the cold target regardless).
