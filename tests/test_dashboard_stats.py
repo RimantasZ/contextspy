@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.api.routers import stats as stats_router, sessions as sessions_router
@@ -540,6 +540,95 @@ def test_lineage_revision_tracks_relevant_edits_without_unrelated_invalidations(
     external.context_fidelity = "partial"
     db.flush()
     assert crud.get_session_lineage_revision(db, "s1") != with_parent
+
+
+@pytest.mark.parametrize("column,value", [
+    ("direction", "output"), ("position", 7), ("message_index", 3),
+    ("block_type", "assistant_text"), ("category", "tool_results"),
+    ("content_hash", "edited"), ("token_count", 99),
+    ("tool_name", "Bash"), ("tool_call_id", "call-1"),
+])
+def test_lineage_revision_detects_edits_to_every_block_column_the_graph_reads(db, column, value):
+    _session(db)
+    _req(db, "r1")
+    _blocks(db, "r1", "user_message", 2, content_hash="visible")
+    before = crud.get_session_lineage_revision(db, "s1")
+    block = db.scalars(select(BlockRecord).order_by(BlockRecord.id)).first()
+    setattr(block, column, value)
+    db.flush()
+    assert crud.get_session_lineage_revision(db, "s1") != before
+
+
+def test_lineage_revision_ignores_block_columns_the_graph_does_not_read(db):
+    _session(db)
+    _req(db, "r1")
+    _blocks(db, "r1", "user_message", 2, content_hash="visible", attrs="{}")
+    before = crud.get_session_lineage_revision(db, "s1")
+    block = db.scalars(select(BlockRecord).order_by(BlockRecord.id)).first()
+    block.attrs = '{"edited": true}'
+    block.source_key = "tool:Bash"
+    block.json_path = "$.input[0]"
+    block.file_path = "src/a.py"
+    db.flush()
+    assert crud.get_session_lineage_revision(db, "s1") == before
+
+
+def test_lineage_revision_detects_deleted_and_reassigned_blocks(db):
+    _session(db)
+    _req(db, "r1", seq=1)
+    _req(db, "r2", seq=2)
+    _blocks(db, "r1", "user_message", 2, content_hash="a")
+    _blocks(db, "r2", "user_message", 1, content_hash="b")
+    original = crud.get_session_lineage_revision(db, "s1")
+    first, second = db.scalars(
+        select(BlockRecord).where(BlockRecord.request_id == "r1").order_by(BlockRecord.id)
+    ).all()
+
+    second.request_id = "r2"  # reassigned: same totals, different owner
+    db.flush()
+    reassigned = crud.get_session_lineage_revision(db, "s1")
+    assert reassigned != original
+
+    db.delete(first)
+    db.flush()
+    assert crud.get_session_lineage_revision(db, "s1") not in (original, reassigned)
+
+
+def test_lineage_revision_distinguishes_values_that_share_separators(db):
+    _session(db)
+    _req(db, "r1")
+    _blocks(db, "r1", "tool_call", 1, content_hash="h")
+    block = db.scalars(select(BlockRecord)).one()
+    block.tool_name, block.tool_call_id = "a:b", "c"
+    db.flush()
+    first = crud.get_session_lineage_revision(db, "s1")
+    block.tool_name, block.tool_call_id = "a", "b:c"
+    db.flush()
+    assert crud.get_session_lineage_revision(db, "s1") != first
+    block.tool_name, block.tool_call_id = None, ""
+    db.flush()
+    empty = crud.get_session_lineage_revision(db, "s1")
+    block.tool_name, block.tool_call_id = "", None
+    db.flush()
+    assert crud.get_session_lineage_revision(db, "s1") != empty  # NULL differs from empty text
+
+
+def test_lineage_revision_does_not_read_block_attrs(db):
+    _session(db)
+    _req(db, "r1")
+    _blocks(db, "r1", "user_message", 1, content_hash="visible", attrs="large attrs")
+    statements = []
+    def record(_connection, _cursor, statement, _parameters, _context, _many):
+        if "FROM blocks" in statement:
+            statements.append(statement)
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        crud.get_session_lineage_revision(db, "s1")
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert len(statements) == 1
+    assert "attrs" not in statements[0]
 
 
 def test_lineage_snapshots_do_not_load_unused_block_attrs(db):

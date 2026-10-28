@@ -12,7 +12,7 @@ from collections import OrderedDict
 from threading import Lock
 from typing import Callable
 
-from sqlalchemy import or_, select
+from sqlalchemy import String, cast, func, literal_column, or_, select
 from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.analysis.lineage import ANALYSIS_VERSION, build_lineage_graph
@@ -26,11 +26,55 @@ _cache_bytes = 0
 _cache_lock = Lock()
 
 
+_FIELD = literal_column("char(31)")  # unit separator: cannot appear in the joined values by accident
+_HASH_PREFIX = 16
+_NULL = literal_column("char(30)")  # distinguishes NULL from the empty string
+
+
+def _block_fingerprints(db: OrmSession, scope):
+    """One row per request in ``scope`` (a condition on ``Request``): block count and
+    every block column the graph reads.
+
+    The text is joined inside SQLite, so a long session costs one short row per request
+    instead of one Python tuple per block. ``attrs`` and the capture-time annotation
+    columns (``source_key``, ``json_path``, ``file_path``) are deliberately not read: the
+    lineage snapshots do not load them either.
+    """
+    def text(column):
+        return func.coalesce(cast(column, String), _NULL)
+
+    columns = (
+        BlockRecord.id, BlockRecord.direction, BlockRecord.position,
+        BlockRecord.message_index, BlockRecord.block_type, BlockRecord.category,
+        # A prefix of the digest is as good as the whole of it at detecting an edit and
+        # keeps the per-block text (and so the transfer) about half as long.
+        func.substr(BlockRecord.content_hash, 1, _HASH_PREFIX),
+        BlockRecord.token_count, BlockRecord.tool_name, BlockRecord.tool_call_id,
+    )
+    block_text = text(columns[0])
+    for column in columns[1:]:
+        block_text = block_text + _FIELD + text(column)
+    # The inner ORDER BY fixes the order in which group_concat sees the rows, and lets
+    # SQLite stream them from idx_blocks_request instead of sorting.
+    ordered = (
+        select(BlockRecord.request_id.label("request_id"), block_text.label("text"))
+        .select_from(BlockRecord.__table__.join(Request.__table__, Request.id == BlockRecord.request_id))
+        .where(scope)
+        .order_by(BlockRecord.request_id, BlockRecord.id)
+        .subquery()
+    )
+    return db.execute(
+        select(ordered.c.request_id, func.count(), func.group_concat(ordered.c.text, "\n"))
+        .group_by(ordered.c.request_id).order_by(ordered.c.request_id)
+    )
+
+
 def evidence_revision(db: OrmSession, session_id: str, session_count: int) -> str:
     """Hash relevant persisted metadata, not raw bodies or unrelated sessions.
 
     This catches in-place edits, deletes, reassignments, and external exact-parent
-    changes. The check is proportional to evidence size, even on a cache hit.
+    changes. The check is proportional to evidence size, even on a cache hit, so block rows
+    are fingerprinted per request inside SQLite (see ``_block_fingerprints``).
     """
     evidence_columns = (
         Request.id, Request.session_id, Request.session_seq, Request.timestamp,
@@ -48,35 +92,46 @@ def evidence_revision(db: OrmSession, session_id: str, session_count: int) -> st
             digest.update(repr(tuple(row)).encode())
             digest.update(b"\n")
 
+    def add_fingerprints(rows) -> None:
+        # Large strings: feed them to the hash as they are instead of through repr().
+        for request_id, count, text in rows:
+            digest.update(f"{request_id}\x1f{count}\x1f".encode())
+            digest.update(text.encode())
+            digest.update(b"\n")
+
     internal_rows = db.execute(
         select(*evidence_columns).where(Request.session_id == session_id)
         .order_by(Request.id)
     ).all()
     add_rows(internal_rows)
-    internal_ids = {row.id for row in internal_rows}
-    predecessor_ids = {
-        row.predecessor_response_id for row in internal_rows
-        if row.predecessor_response_id
+    add_fingerprints(_block_fingerprints(db, Request.session_id == session_id))
+
+    # External parents: only predecessors that no request of this session answers can have
+    # one (the same rule as crud.get_session_lineage_snapshots). The loader matches by
+    # (provider, response id), so the lookup is per provider; it still scans the requests
+    # table on databases whose idx_requests_provider_response is on another column.
+    answered = {
+        (row.provider, row.provider_response_id)
+        for row in internal_rows if row.provider_response_id
     }
-    external_rows = db.execute(
-        select(*evidence_columns)
-        .where(Request.provider_response_id.in_(predecessor_ids),
-               or_(Request.session_id != session_id, Request.session_id.is_(None)))
-        .order_by(Request.id)
-    ).all() if predecessor_ids else []
+    predecessors_by_provider: dict[str, set[str]] = {}
+    for row in internal_rows:
+        if row.predecessor_response_id and (row.provider, row.predecessor_response_id) not in answered:
+            predecessors_by_provider.setdefault(row.provider, set()).add(
+                row.predecessor_response_id)
+    external_rows = sorted((
+        row
+        for provider, response_ids in predecessors_by_provider.items()
+        for row in db.execute(
+            select(*evidence_columns)
+            .where(Request.provider == provider,
+                   Request.provider_response_id.in_(response_ids),
+                   or_(Request.session_id != session_id, Request.session_id.is_(None)))
+        ).all()
+    ), key=lambda row: row.id)
     add_rows(external_rows)
-    request_ids = internal_ids | {row.id for row in external_rows}
-    if request_ids:
-        add_rows(db.execute(
-            select(
-                BlockRecord.id, BlockRecord.request_id, BlockRecord.direction,
-                BlockRecord.position, BlockRecord.message_index,
-                BlockRecord.block_type, BlockRecord.category,
-                BlockRecord.content_hash, BlockRecord.token_count,
-                BlockRecord.tool_name, BlockRecord.tool_call_id, BlockRecord.attrs,
-            ).where(BlockRecord.request_id.in_(request_ids))
-            .order_by(BlockRecord.request_id, BlockRecord.id)
-        ))
+    if external_rows:  # few rows: an IN list is fine here, but slower than the join for a session
+        add_fingerprints(_block_fingerprints(db, Request.id.in_([row.id for row in external_rows])))
     return f"{ANALYSIS_VERSION}:{session_count}:{digest.hexdigest()[:20]}"
 
 

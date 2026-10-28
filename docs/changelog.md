@@ -81,6 +81,9 @@
 - `contextspy status` / restore listed the newest backup wrongly once schema versions reached two digits.
 - A restore made in second :00 of the same minute as a migration backup was listed before it (newest-last ordering).
 - Compact request cards show the lineage icon tooltip on hover and focus.
+- The check that decides whether the cached conversation analysis is still current (run on every conversation or
+  trend request) is about a third faster on very long sessions (3.4 s to 2.3 s on a 4,000-request session). It no longer
+  reads block `attrs`, so editing `attrs`, `source_key`, `json_path` or `file_path` alone no longer refreshes the analysis.
 
 ## v0.5.3
 
