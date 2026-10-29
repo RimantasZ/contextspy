@@ -1,6 +1,6 @@
 # Perf: warm lineage calls and polls pay the full revision check
 
-Status: **DRAFT plan, awaiting go-ahead (2026-10-29).** GitHub issue [#86](https://github.com/RimantasZ/contextspy/issues/86) (`perf:`). Follow-up of [#68](https://github.com/RimantasZ/contextspy/issues/68) ([archive/perf-cold-lineage-analysis-68.md](archive/perf-cold-lineage-analysis-68.md)), which made the cold build 3.4x faster but left the warm path unchanged. Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
+Status: **IMPLEMENTED 2026-10-29 (uncommitted), see "Implementation notes".** GitHub issue [#86](https://github.com/RimantasZ/contextspy/issues/86) (`perf:`). Follow-up of [#68](https://github.com/RimantasZ/contextspy/issues/68) ([archive/perf-cold-lineage-analysis-68.md](archive/perf-cold-lineage-analysis-68.md)), which made the cold build 3.4x faster but left the warm path unchanged. Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
 
 ## Problem
 `session_lineage_service.graph_for_session` computes `evidence_revision` (a fingerprint of every request and block row the graph reads) **before** it looks at the graph cache, on every call. Measured 2026-10-29 on a copy of the author's database (samples, one machine):
@@ -62,3 +62,18 @@ Steady-state warm calls and polls under ~0.1 s on the 4,032-request session; fir
 - **Multi-process deployments** are not covered except through the TTL; ContextSpy runs one server process per database today.
 - **Memory:** the memo is a few bytes per session.
 - **Cold build (17.3 s for 4,032 requests) is unchanged** by this plan; idea 3 (background warming) of #68 stays closed unless first-load time is judged too long.
+
+## Implementation notes (2026-10-29)
+Code: `session_lineage_service.revision_for_session` (memo), `invalidate()`, `watch_engine()`; `crud._session_lineage_revision` and `graph_for_session` use the memo; `database.init_db` attaches the events to the engine it creates. Tests: `tests/test_lineage_revision_memo.py` (28 tests); the existing 726 are unchanged and pass (754 in total).
+
+Differences from the design above:
+- **`invalidate()` takes no session.** It drops every memo (the external-parent argument made per-session invalidation unsafe anyway). A generation counter replaces the per-session bookkeeping.
+- **Three triggers, not one:** the statement that writes `requests`/`blocks` (so the writing transaction reads its own write), the commit, and the rollback of a connection that wrote (a reader may have memoised pending data meanwhile).
+- **The memo also stores the request count** and is dropped when it differs, so an append from another process is seen at once, not after the TTL; only in-place edits from other processes wait for the TTL (60 s).
+- **The engine event classifies statements with a regex** (`INSERT [OR x] INTO / UPDATE / DELETE FROM / REPLACE INTO` on `requests` or `blocks`, quoted or not); tested on both writers and non-writers (`tool_stats`, `block_contents`, `sessions`, selects). A statement that merely reads `requests` inside a write to another table (archive's `block_contents` cleanup) does not invalidate.
+- **Watching:** attached when `init_db` creates the engine, and lazily on first read through any other engine (tests, scripts) as a fallback.
+- The memo is bounded to 256 sessions.
+
+Tests cover: one fingerprint for repeated calls; reads and read-only commits/rollbacks do not invalidate; a committed UPDATE/DELETE of requests or blocks, a session reassignment, `delete_session` and `delete_session_with_requests`; a write seen by its own uncommitted transaction; a rolled-back write; a commit after a reader memoised pending data; an external parent arriving from another session; archive leaves the revision equal; a write during the computation is not remembered; out-of-process in-place edit (TTL) and append (count); memo bound; statement classification; a real `persist_capture`. Mutations that each make a test fail: removing the commit/rollback invalidation, the statement-time invalidation, the generation check, the count comparison.
+
+Measured (copy of the author's database, one machine, same method as #68), warm calls on the 4,032-request session: conversations 2.32 s -> 0.006 s, `lineage/revision` 2.3 s -> under 1 ms, request page 2.36 s -> 0.003 s, group by key 2.38 s -> 0.003 s, graph 2.37 s -> under 1 ms; first call after a committed write 2.37 s (one recompute), then 0.006 s. 564-request session: warm 0.80 s -> 0.010 s, after a write 0.86 s. Cold unchanged (17.1 s and 2.8 s). Capture path: one cached regex lookup per executed statement (not benchmarked separately).

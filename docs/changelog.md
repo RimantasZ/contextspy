@@ -85,6 +85,9 @@
   instead of 59 s for a 4,000-request session, 2.8 s instead of 6 s for a 560-request one): requests are prepared once
   instead of for every comparison, a request that simply extends an earlier one is scored without comparing block by
   block, and blocks are loaded without building database objects.
+- Opening or refreshing a long session no longer repeats the revision check on every request: the conversation views,
+  the dashboard and their 5-second refreshes answer in milliseconds instead of about 2.3 s (4,000-request session)
+  until something is written to the database. A change made by another process is noticed within a minute.
 - When a request continues from an early point of a long conversation (a rewind, or a fork from an old turn),
   candidate parents are now ranked by how much of their own context the request contains, so the right parent is no
   longer crowded out by the later turns. In rare cases a request that used to show no parent now shows as ambiguous.

@@ -93,6 +93,8 @@ def init_db(db_path: Path) -> None:
             release_database_lock(new_lock)
         raise
 
+    from contextspy.db.session_lineage_service import watch_engine
+    watch_engine(engine)  # lineage revisions are remembered; writes through this engine forget them
     previous_engine = _engine
     previous_lock = _db_lock_handle
     _engine = engine

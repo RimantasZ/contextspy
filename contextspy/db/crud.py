@@ -940,7 +940,7 @@ def _display_requests():
 
 def _session_lineage_revision(db: OrmSession, session_id: str, session_count: int) -> str:
     """Compatibility entry point for the dedicated lineage read service."""
-    return session_lineage_service.evidence_revision(db, session_id, session_count)
+    return session_lineage_service.revision_for_session(db, session_id, session_count)
 
 
 def _session_lineage_graph(db: OrmSession, session_id: str, session_count: int) -> tuple[dict, str]:
