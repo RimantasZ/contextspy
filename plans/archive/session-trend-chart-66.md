@@ -150,7 +150,7 @@ one cold process each (`crud.get_session_trend`):
   `parts` only for the composition metric being viewed.
 - The trend's own work is negligible. All of the cost is the lineage graph the endpoint needs for the conversation
   split: the cold build (`build_lineage_graph`) and, on every call, the revision check that hashes every block row.
-  Both are the problems of `plans/perf-cold-lineage-analysis-68.md`; the trend inherits any fix.
+  Both are the problems of `plans/archive/perf-cold-lineage-analysis-68.md`; the trend inherits any fix.
 - Consequence: the Summary view, which never needed the lineage before, now pays it on first load, so a long
   session's Summary chart stays empty for the cold-build time (5 s / 55 s here).
 - Done: the hook no longer polls every 10 s (each poll cost the full warm price, 2.9 s on the long session, even for

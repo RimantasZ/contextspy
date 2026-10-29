@@ -1,6 +1,6 @@
 # Perf: cold conversation (lineage) analysis is slow on long sessions
 
-Status: **CONFIRMED plan (2026-10-29); idea 1 implemented and committed 2026-10-29 (`c4b3f54`), idea 2 in progress.** Moved from `unconfirmed_drafts/`; work order in open question 4 accepted. Reviewed against the code on 2026-10-28 (see "State of the code"). GitHub issue [#68](https://github.com/RimantasZ/contextspy/issues/68) (`perf:`). Found while measuring Plan 4b ([hot-spots.md](archive/hot-spots.md)); part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md). Not blocking any plan, but every conversation-scoped feature inherits it.
+Status: **IMPLEMENTED (2026-10-29); archived.** Ideas 1, 2 and 5 are done and committed (`c4b3f54`, `b469b0a`, `da8848f`, `e3bf3fc`). Cold analysis of the 4,032-request sample session went from 59.1 s to 17.3 s; the 10 s cold target was not reached. What remains is the **warm path** (every call and every 5 s poll pays the 2.3 s revision check, Q3 below), which moved to [perf-warm-lineage-revision-invalidation-86.md](../perf-warm-lineage-revision-invalidation-86.md). Ideas 3, 4, 6 and 7 are not pursued (see "Final outcome"). GitHub issue [#68](https://github.com/RimantasZ/contextspy/issues/68) (`perf:`). Found while measuring Plan 4b ([hot-spots.md](hot-spots.md)); part of [ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md). Not blocking any plan, but every conversation-scoped feature inherits it.
 
 ## Problem
 Anything that needs the conversation structure of a session builds the **lineage graph** first: the Conversations view, the block "Present in" panel in conversation scope, Hot spots (conversation selector and default scope), and any future tree/compare page. Measured on a copy of the author's database (samples, one machine, 2026-10-06):
@@ -46,6 +46,25 @@ Script: backup-API copy in the scratchpad, plain SQLAlchemy session, caches clea
 | serialized graph | 1.4 MB | **10.4 MB** (cache limit 12.6 MB) |
 
 Findings: the earlier numbers still hold (6-7 s / 55-65 s cold). Scoring is ~80% of the big session's cold time and grows much faster than linearly (3.1 s -> 47.5 s for 7x the requests), so the scoring change (idea 2) matters most for large sessions, while the revision check is what every *warm* call pays (4 s). The 4,032-request graph is 10.4 MB, within 2 MB of `CACHE_BYTES_LIMIT`: a somewhat larger session would stop being cached and become cold on every call, so raising the limit or storing a leaner graph belongs in this plan. Not yet re-profiled below function level, and the schema-10 data was not used (the copy is schema 8; lineage reads only columns that did not change).
+
+## Final outcome (2026-10-29)
+Measured on a copy of the author's database (samples, one machine, run-to-run noise about 20%), same method as "Re-measured":
+
+| Step | 564 requests, before | now | 4,032 requests, before | now |
+|---|---|---|---|---|
+| `evidence_revision` | 1.09 s | 0.8 s | 3.41 s | 2.3 s |
+| snapshot loading | 1.87 s | ~0.9 s | 8.99 s | 3.5 s |
+| `build_lineage_graph` | 3.11 s | 1.0 s | 47.50 s | 10.4 s |
+| **cold `graph_for_session`** | **6.0 s** | **2.8 s** | **59.1 s** | **17.3 s** |
+| warm `graph_for_session` | 0.94 s | 0.8 s | 3.95 s | 2.3 s |
+
+- **Done:** idea 1 (exact, cheaper revision fingerprint), idea 2 (containment ranking with fork/rewind tests, prepared contexts, lean diff, exact prefix scoring, key cache), idea 5 (plain-column snapshot loading). Every step is covered by equivalence tests against the previous algorithm (`tests/test_context_diff_equivalence.py`) and the graph is identical to the pre-change graph on both sample sessions except for the documented containment-ranking differences (3 requests `root` -> `ambiguous`, `candidate_margin` on 21 edges).
+- **Acceptance:** cold under ~10 s for 4,000 requests: **not met** (17.3 s). Warm under ~0.5 s: **not met** (2.3 s), moved to the follow-up plan. Lineage tests unchanged: met. Cheaper revision check tests, fork/rewind tests, before/after comparison: met.
+- **Q3 answered (2026-10-29): the Conversations view has no cost of its own.** Warm calls on the 4,032-request session: conversations (4 groups) 2.32 s, graph only 2.37 s, one conversation's request page 2.36 s, one group by key 2.38 s, all groups 2.32 s; cold conversations 17.16 s against cold graph 17.3 s. Projection adds under 0.05 s; the warm cost is entirely `evidence_revision`, paid on every call.
+- **Why warm matters more than cold now:** the frontend polls `/conversations` (`useSessionConversations`), `session-sequence` and `dashboard-live` every 5 s **without** a revision (`ui/src/api/hooks.ts`), and each poll runs the full check. On a 4,000-request session that is several seconds of server CPU per 5 s cycle while the view is open. The follow-up plan removes that cost.
+- **Q1 (acceptable cold time) not answered as a number.** 17 s once per process per session revision was left as is. **Idea 3 (background warming) is not pursued** for now: the follow-up plan removes the repeated cost; reopen only if the first-load time is judged too long.
+- **Not pursued:** idea 3 (see Q1), idea 4 (incremental update; not needed), idea 6 (cache headroom: the 4,032-request graph is 10.4 MB against the 12.6 MB limit; revisit if a larger session is reported), idea 7 (dropped). The `idx_requests_provider_response` finding is issue [#85](https://github.com/RimantasZ/contextspy/issues/85).
+- **Left in the code, none needed for correctness:** `_scoring_weights` setup, the non-prefix scoring path.
 
 ## Constraints
 - Lineage and conversation membership are **derived at read time and never persisted** (`session_lineage_service.py` header; roadmap "Repository policies"). Caching in process memory is fine; persisted columns encoding membership are not.
@@ -93,7 +112,7 @@ On a scratch copy made with SQLite's online backup API (never the live DB): clea
 Proposed targets (open question 1 will confirm them after steps 1-2): cold membership for a 4,000-request session under ~10 s (needs idea 5 as well as idea 2, since loading alone is 9 s today) without changing any lineage test result; warm lookups under ~0.5 s; the existing lineage and occurrence tests pass unchanged; new tests for the cheaper revision check (detects an edited, deleted and reassigned request/block row); new fork and rewind lineage tests (more than 64 later turns); a before/after comparison on the sample sessions showing the same parent for every request except those the new ranking demonstrably fixes (each listed and explained).
 
 ## Open questions
-1. **Deferred (user, 2026-10-29): review after steps 1 and 2 are implemented.** Acceptable first-load time for a 4,000-request session? Is background warming (idea 3) acceptable on the user's machine (CPU while capturing)? Idea 3 is only considered if the measured result of steps 1-2 is still too slow.
+1. **Reviewed 2026-10-29 (see Final outcome).** Acceptable first-load time for a 4,000-request session? Is background warming (idea 3) acceptable on the user's machine (CPU while capturing)? Idea 3 is only considered if the measured result of steps 1-2 is still too slow.
 2. **Answered (user, 2026-10-29): yes.** The revision check may ignore edits to block columns the graph does not read (`attrs`, `source_key`, `file_path`, `json_path`). It must still detect edits to the request evidence columns and to the block columns the loader reads, plus deletes and reassignments.
-3. **Deferred (user, 2026-10-29): review after steps 1 and 2.** Does the Conversations view have a separate cost beyond the graph (the sequence/conversation projections after `_session_lineage_graph`)? Measure then; do not assume one fix covers both.
+3. **Answered 2026-10-29: no separate cost (see Final outcome).** Does the Conversations view have a separate cost beyond the graph (the sequence/conversation projections after `_session_lineage_graph`)? Measure then; do not assume one fix covers both.
 4. Work order (confirmed 2026-10-29; the re-measurement is done, see above): idea 1 (small, safe), then idea 2 in the order 2.3 (instrument and add fork/rewind tests), 2.1, 2.2, 2.4; then review questions 1 and 3 and decide on ideas 3, 5 and 6 (idea 5, loading, is likely needed for the cold target regardless).
