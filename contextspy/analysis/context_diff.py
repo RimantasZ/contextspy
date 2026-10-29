@@ -232,32 +232,51 @@ def diff_contexts(
     )
 
 
-def diff_prepared(
-    parent: PreparedContext, child: PreparedContext, *, detail: bool = True,
-) -> ContextDelta:
-    """``diff_contexts`` for contexts that were prepared once and compared many times."""
-    parent_input, child_input = parent.input, child.input
-    parent_config, child_config = parent.config_slots, child.config_slots
+def configuration_delta(
+    parent: PreparedContext, child: PreparedContext,
+) -> tuple[list[tuple[ContextBlock, ContextBlock]], list[BlockReplacement], set[int], set[int]]:
+    """Compare system prompts and tool definitions slot by slot.
 
-    delta = ContextDelta()
+    Returns the unchanged pairs, the replaced ones, and the ids of every block of the two
+    sides that took part (they are not transcript).
+    """
+    persisted: list[tuple[ContextBlock, ContextBlock]] = []
+    replaced: list[BlockReplacement] = []
     consumed_parent: set[int] = set()
     consumed_child: set[int] = set()
-
+    parent_config, child_config = parent.config_slots, child.config_slots
     for slot in sorted(parent_config.keys() & child_config.keys()):
         parent_block = parent_config[slot]
         child_block = child_config[slot]
         parent_key = semantic_key(parent_block)
         child_key = semantic_key(child_block)
         if parent_key is not None and parent_key == child_key:
-            delta.persisted.append(BlockMapping(parent_block.id, child_block.id))
+            persisted.append((parent_block, child_block))
         elif parent_key is not None and child_key is not None:
-            delta.replaced.append(BlockReplacement(
+            replaced.append(BlockReplacement(
                 parent_block.id, child_block.id, slot=f"{slot[0]}:{slot[1]}",
             ))
         # When either fingerprint is unavailable the pair remains explicitly
         # unavailable rather than also being claimed as a replacement.
         consumed_parent.add(parent_block.id)
         consumed_child.add(child_block.id)
+    return persisted, replaced, consumed_parent, consumed_child
+
+
+def diff_prepared(
+    parent: PreparedContext, child: PreparedContext, *, detail: bool = True,
+) -> ContextDelta:
+    """``diff_contexts`` for contexts that were prepared once and compared many times."""
+    parent_input, child_input = parent.input, child.input
+
+    config_persisted, config_replaced, consumed_parent, consumed_child = configuration_delta(
+        parent, child,
+    )
+    delta = ContextDelta()
+    delta.persisted.extend(
+        BlockMapping(left.id, right.id) for left, right in config_persisted
+    )
+    delta.replaced.extend(config_replaced)
 
     persisted = _lcs_mappings(
         parent.transcript_keys, parent.transcript_ids,

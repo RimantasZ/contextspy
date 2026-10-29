@@ -13,9 +13,10 @@ from typing import Any, Iterable, Mapping
 from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.analysis.conversation_projection import _conversation_projection
 from contextspy.analysis.context_diff import (
-    ContextBlock, ContextDelta, PreparedContext, diff_contexts, diff_prepared, new_child_block_ids,
-    prepare_context, semantic_key,
+    ContextBlock, ContextDelta, PreparedContext, configuration_delta, diff_contexts, diff_prepared,
+    new_child_block_ids, prepare_context, semantic_key,
 )
+from contextspy.analysis.context_diff import _lcs_mappings
 from contextspy.analysis.lineage_types import (
     LineageEdge, RequestSnapshot, input_blocks as _input_blocks,
     output_blocks as _output_blocks, request_order as _request_order,
@@ -36,7 +37,6 @@ FRONTIER_ANCESTOR_PENALTY = 0.20
 class CandidateScore:
     request: RequestSnapshot
     score: float
-    delta: ContextDelta
     reason_codes: list[str]
     retained_weight: float
     promoted_weight: float
@@ -123,6 +123,11 @@ class ScoringWeights:
     # Per request: blocks ordered, config slots and fingerprints computed once, so each
     # candidate comparison starts from them instead of redoing that work for every pair.
     contexts: Mapping[str, PreparedContext]
+    # Per request: running weight of its fingerprinted transcript blocks (entry i = the
+    # first i of them) and whether any of them is a tool call/result. They let a parent whose
+    # transcript is a prefix of the child's be scored without listing its blocks.
+    transcript_cumulative: Mapping[str, list[float]]
+    transcript_has_tool: Mapping[str, bool]
 
 
 def _scoring_weights(
@@ -134,6 +139,8 @@ def _scoring_weights(
     input_by_key: dict[str, dict[tuple, float]] = {}
     output_by_key: dict[str, dict[tuple, float]] = {}
     contexts: dict[str, PreparedContext] = {}
+    transcript_cumulative: dict[str, list[float]] = {}
+    transcript_has_tool: dict[str, bool] = {}
     for request in requests:
         contexts[request.id] = prepare_context(request.blocks)
         input_total = output_total = 0.0
@@ -154,9 +161,29 @@ def _scoring_weights(
         output_totals[request.id] = output_total
         input_by_key[request.id] = by_input
         output_by_key[request.id] = by_output
+        context = contexts[request.id]
+        transcript = [context.by_id[block_id] for block_id in context.transcript_ids]
+        transcript_cumulative[request.id] = _running_sums(blocks[id(block)] for block in transcript)
+        transcript_has_tool[request.id] = any(block.tool_call_id for block in transcript)
     return ScoringWeights(
         blocks, input_totals, output_totals, input_by_key, output_by_key, contexts,
+        transcript_cumulative, transcript_has_tool,
     )
+
+
+def _running_sums(values: Iterable[float]) -> list[float]:
+    """Entry i is the compensated sum of the first i values, like ``sum()`` over them."""
+    total = compensation = 0.0
+    sums = [0.0]
+    for value in values:
+        step = total + value
+        if abs(total) >= abs(value):
+            compensation += (total - step) + value
+        else:
+            compensation += (value - step) + total
+        total = step
+        sums.append(total + compensation)
+    return sums
 
 
 def _score_upper_bound(
@@ -192,26 +219,88 @@ def _score_upper_bound(
     return 0.45 * retention + 0.55 * child_coverage
 
 
+@dataclass(frozen=True)
+class _MatchFacts:
+    """What candidate scoring needs to know about how a parent sits inside a child."""
+    retained_weight: float
+    promoted: list[tuple[ContextBlock, ContextBlock]]  # (parent block, child block)
+    strong_persisted: bool      # a non-configuration block of the parent persists
+    persisted_has_tool: bool    # a persisted parent block is a tool call or result
+    replaced: bool              # a system prompt / tool definition was replaced
+
+
+def _general_match_facts(
+    parent: RequestSnapshot, child: RequestSnapshot, weights: ScoringWeights,
+) -> _MatchFacts:
+    parent_context = weights.contexts[parent.id]
+    child_context = weights.contexts[child.id]
+    delta = diff_prepared(parent_context, child_context, detail=False)
+    parent_by_id = parent_context.by_id
+    persisted = [parent_by_id[item.parent_block_id] for item in delta.persisted]
+    return _MatchFacts(
+        retained_weight=sum(weights.blocks[id(block)] for block in persisted),
+        promoted=[
+            (parent_by_id[item.parent_block_id], child_context.by_id[item.child_block_id])
+            for item in delta.promoted
+        ],
+        strong_persisted=any(not block.is_configuration for block in persisted),
+        persisted_has_tool=any(block.tool_call_id for block in persisted),
+        replaced=bool(delta.replaced),
+    )
+
+
+def _prefix_match_facts(
+    parent: RequestSnapshot, child: RequestSnapshot, weights: ScoringWeights,
+) -> _MatchFacts:
+    """``_general_match_facts`` for a parent whose transcript is a prefix of the child's.
+
+    Then the ordered alignment maps every transcript block of the parent to the start of
+    the child's, so what persisted follows from the length of the parent's transcript and
+    the cumulative weights prepared once per request, without listing blocks. Only the
+    parent's output is still aligned, against the child's remaining transcript.
+    """
+    parent_context = weights.contexts[parent.id]
+    child_context = weights.contexts[child.id]
+    size = len(parent_context.transcript_keys)
+    config_persisted, config_replaced, _, _ = configuration_delta(parent_context, child_context)
+    retained = weights.transcript_cumulative[parent.id][size]
+    if config_persisted:
+        retained = sum(
+            [weights.blocks[id(block)] for block, _ in config_persisted]
+        ) + retained
+    promoted = _lcs_mappings(
+        parent_context.output_keys, parent_context.output_ids,
+        child_context.transcript_keys[size:], child_context.transcript_ids[size:],
+    )
+    return _MatchFacts(
+        retained_weight=retained,
+        promoted=[
+            (parent_context.by_id[item.parent_block_id], child_context.by_id[item.child_block_id])
+            for item in promoted
+        ],
+        strong_persisted=size > 0,  # configuration blocks never count as strong
+        persisted_has_tool=weights.transcript_has_tool[parent.id]
+        or any(block.tool_call_id for block, _ in config_persisted),
+        replaced=bool(config_replaced),
+    )
+
+
 def _score_candidate(
     parent: RequestSnapshot,
     child: RequestSnapshot,
     weights: ScoringWeights,
 ) -> CandidateScore:
-    # Scoring reads only the mappings; the full delta is computed for the chosen parent.
+    # Scoring reads only how blocks map; the full delta is computed for the chosen parent.
     parent_context = weights.contexts[parent.id]
     child_context = weights.contexts[child.id]
-    delta = diff_prepared(parent_context, child_context, detail=False)
-    parent_by_id = parent_context.by_id
-    child_by_id = child_context.by_id
+    size = len(parent_context.transcript_keys)
+    if child_context.transcript_keys[:size] == parent_context.transcript_keys:
+        facts = _prefix_match_facts(parent, child, weights)
+    else:
+        facts = _general_match_facts(parent, child, weights)
 
-    retained_weight = sum(
-        weights.blocks[id(parent_by_id[item.parent_block_id])]
-        for item in delta.persisted
-    )
-    promoted_weight = sum(
-        weights.blocks[id(parent_by_id[item.parent_block_id])]
-        for item in delta.promoted
-    )
+    retained_weight = facts.retained_weight
+    promoted_weight = sum(weights.blocks[id(block)] for block, _ in facts.promoted)
     parent_input_weight = weights.input_totals[parent.id]
     parent_output_weight = weights.output_totals[parent.id]
     child_input_weight = weights.input_totals[child.id]
@@ -224,31 +313,24 @@ def _score_candidate(
     promotion = (
         promoted_weight / parent_output_weight if parent_output_weight else 0.0
     )
-    promoted_blocks = [child_by_id[item.child_block_id] for item in delta.promoted]
     frontier_position = max(
         ((block.message_index if block.message_index is not None else block.position,
-          block.position) for block in promoted_blocks if block.is_meaningful),
+          block.position) for _, block in facts.promoted if block.is_meaningful),
         default=None,
     )
     promoted_keys = frozenset(
-        key for item in delta.promoted
-        if (key := semantic_key(parent_by_id[item.parent_block_id])) is not None
+        key for block, _ in facts.promoted
+        if (key := semantic_key(block)) is not None
     )
     if parent_output_weight:
         score = 0.35 * retention + 0.45 * child_coverage + 0.20 * promotion
     else:
         score = 0.45 * retention + 0.55 * child_coverage
 
-    strong_persisted = any(
-        not parent_by_id[item.parent_block_id].is_configuration
-        for item in delta.persisted
+    matching_tool_ids = facts.persisted_has_tool or any(
+        block.tool_call_id for block, _ in facts.promoted
     )
-    matching_tool_ids = {
-        parent_by_id[item.parent_block_id].tool_call_id
-        for item in delta.persisted + delta.promoted
-        if parent_by_id[item.parent_block_id].tool_call_id
-    }
-    strong_signal = strong_persisted or promoted_weight > 0 or bool(matching_tool_ids)
+    strong_signal = facts.strong_persisted or promoted_weight > 0 or matching_tool_ids
     if not strong_signal:
         score = min(score, 0.30)
     if child.context_fidelity in ("partial", "opaque"):
@@ -267,7 +349,7 @@ def _score_candidate(
         reasons.append("parent_output_promoted")
     if matching_tool_ids:
         reasons.append("tool_call_ids_match")
-    if delta.replaced:
+    if facts.replaced:
         reasons.append("configuration_replaced")
     if child.context_fidelity in ("partial", "opaque"):
         reasons.append(f"child_context_{child.context_fidelity}")
@@ -279,7 +361,6 @@ def _score_candidate(
     return CandidateScore(
         request=parent,
         score=max(0.0, min(score, 1.0)),
-        delta=delta,
         reason_codes=reasons,
         retained_weight=retained_weight,
         promoted_weight=promoted_weight,
@@ -301,8 +382,21 @@ def _is_ancestor(older_id: str, newer_id: str, parents: Mapping[str, str]) -> bo
     return False
 
 
+def _request_keys(request: RequestSnapshot, cache: dict[str, frozenset] | None) -> frozenset:
+    """Every fingerprint in the request, remembered per graph build when a cache is given."""
+    if cache is not None and request.id in cache:
+        return cache[request.id]
+    keys = frozenset(
+        key for block in request.blocks if (key := semantic_key(block)) is not None
+    )
+    if cache is not None:
+        cache[request.id] = keys
+    return keys
+
+
 def _frontier_dominates(
     newer: CandidateScore, older: CandidateScore, parents: Mapping[str, str],
+    key_cache: dict[str, frozenset] | None = None,
 ) -> bool:
     """A later accepted ancestor turn, not merely its shared prefix, wins."""
     if (newer.frontier_position is None or older.frontier_position is None
@@ -314,26 +408,23 @@ def _frontier_dominates(
         return False
     if not _is_ancestor(older.request.id, newer.request.id, parents):
         return False
-    older_keys = {
-        key for block in older.request.blocks
-        if (key := semantic_key(block)) is not None
-    }
-    return bool(newer.promoted_keys - older_keys)
+    return bool(newer.promoted_keys - _request_keys(older.request, key_cache))
 
 
 def _rank_candidates(
     candidates: list[CandidateScore], parents: Mapping[str, str],
+    key_cache: dict[str, frozenset] | None = None,
 ) -> list[CandidateScore]:
     """Discount only ancestor rivals whose older output is visibly superseded."""
     for candidate in candidates:
         candidate.decision_score = candidate.score
     frontier_candidates = [item for item in candidates if item.frontier_position is not None]
     for older in frontier_candidates:
-        if any(_frontier_dominates(newer, older, parents) for newer in frontier_candidates):
+        if any(_frontier_dominates(newer, older, parents, key_cache) for newer in frontier_candidates):
             older.decision_score = max(0.0, older.score - FRONTIER_ANCESTOR_PENALTY)
             older.reason_codes.append("ancestor_output_older")
     for newer in frontier_candidates:
-        if any(_frontier_dominates(newer, older, parents) for older in frontier_candidates):
+        if any(_frontier_dominates(newer, older, parents, key_cache) for older in frontier_candidates):
             newer.reason_codes.append("latest_turn_promoted")
     return sorted(candidates, key=lambda item: (
         -(item.decision_score if item.decision_score is not None else item.score),
@@ -423,6 +514,7 @@ def build_lineage_graph(
     unresolved: list[dict[str, Any]] = []
     ambiguous: list[dict[str, Any]] = []
     scored_by_child: dict[str, list[CandidateScore]] = {}
+    key_cache: dict[str, frozenset] = {}
 
     # Provider references are fixed before heuristic decisions. They may point
     # outside the session; a missing explicit reference is never guessed around.
@@ -507,7 +599,7 @@ def build_lineage_graph(
             score = _score_candidate(candidate, child, scoring_weights)
             if score.score >= AMBIGUOUS_THRESHOLD:
                 candidates.append(score)
-        candidates = _rank_candidates(candidates, parents)
+        candidates = _rank_candidates(candidates, parents, key_cache)
         scored_by_child[child.id] = candidates
 
         if not candidates:
@@ -606,10 +698,10 @@ def build_lineage_graph(
                 and all(
                     item.request.id == rival.request.id or
                     (
-                        _frontier_dominates(item, rival, parents)
+                        _frontier_dominates(item, rival, parents, key_cache)
                         and _frontier_dominates(
                             future_scores[item.request.id],
-                            future_scores[rival.request.id], parents,
+                            future_scores[rival.request.id], parents, key_cache,
                         )
                     ) for rival in plausible
                 )

@@ -5,11 +5,15 @@ from __future__ import annotations
 import random
 from difflib import SequenceMatcher
 
+from datetime import datetime, timedelta, timezone
+
+from contextspy.analysis import lineage as lineage_module
 from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.analysis.context_diff import (
     BlockMapping, BlockReplacement, ContextBlock, ContextDelta, _configuration_slots, _lcs_mappings,
     _ordered, diff_contexts, diff_prepared, prepare_context, semantic_key,
 )
+from contextspy.analysis.lineage import INFERENCE_THRESHOLD, RequestSnapshot
 
 # --- original implementation (before blocks were prepared once per request) ---------------
 def _reference_lcs(
@@ -276,3 +280,151 @@ def test_sequence_matching_shortcuts_equal_sequence_matcher():
             [_Keyed(k, i) for k, i in zip(parent, parent_ids)],
             [_Keyed(k, i) for k, i in zip(child, child_ids)],
         ), (parent, child)
+
+
+
+# --- candidate scoring ---------------------------------------------------------------------
+# The scoring function as it was before prefix parents were scored from cumulative weights.
+def reference_score_candidate(
+    parent: RequestSnapshot,
+    child: RequestSnapshot,
+    weights: lineage_module.ScoringWeights,
+) -> CandidateScore:
+    # Scoring reads only the mappings; the full delta is computed for the chosen parent.
+    parent_context = weights.contexts[parent.id]
+    child_context = weights.contexts[child.id]
+    delta = diff_contexts(parent.blocks, child.blocks, detail=False)
+    parent_by_id = parent_context.by_id
+    child_by_id = child_context.by_id
+
+    retained_weight = sum(
+        weights.blocks[id(parent_by_id[item.parent_block_id])]
+        for item in delta.persisted
+    )
+    promoted_weight = sum(
+        weights.blocks[id(parent_by_id[item.parent_block_id])]
+        for item in delta.promoted
+    )
+    parent_input_weight = weights.input_totals[parent.id]
+    parent_output_weight = weights.output_totals[parent.id]
+    child_input_weight = weights.input_totals[child.id]
+
+    retention = retained_weight / parent_input_weight if parent_input_weight else 0.0
+    child_coverage = (
+        (retained_weight + promoted_weight) / child_input_weight
+        if child_input_weight else 0.0
+    )
+    promotion = (
+        promoted_weight / parent_output_weight if parent_output_weight else 0.0
+    )
+    promoted_blocks = [child_by_id[item.child_block_id] for item in delta.promoted]
+    frontier_position = max(
+        ((block.message_index if block.message_index is not None else block.position,
+          block.position) for block in promoted_blocks if block.is_meaningful),
+        default=None,
+    )
+    promoted_keys = frozenset(
+        key for item in delta.promoted
+        if (key := semantic_key(parent_by_id[item.parent_block_id])) is not None
+    )
+    if parent_output_weight:
+        score = 0.35 * retention + 0.45 * child_coverage + 0.20 * promotion
+    else:
+        score = 0.45 * retention + 0.55 * child_coverage
+
+    strong_persisted = any(
+        not parent_by_id[item.parent_block_id].is_configuration
+        for item in delta.persisted
+    )
+    matching_tool_ids = {
+        parent_by_id[item.parent_block_id].tool_call_id
+        for item in delta.persisted + delta.promoted
+        if parent_by_id[item.parent_block_id].tool_call_id
+    }
+    strong_signal = strong_persisted or promoted_weight > 0 or bool(matching_tool_ids)
+    if not strong_signal:
+        score = min(score, 0.30)
+    if child.context_fidelity in ("partial", "opaque"):
+        score *= 0.92
+    cross_agent_unproven = bool(
+        parent.agent and child.agent and parent.agent != child.agent
+        and (promotion < 0.5 or not promoted_keys)
+    )
+    if cross_agent_unproven:
+        score = min(score, INFERENCE_THRESHOLD - 0.01)
+
+    reasons: list[str] = []
+    if retained_weight:
+        reasons.append("ordered_context_retained")
+    if promoted_weight:
+        reasons.append("parent_output_promoted")
+    if matching_tool_ids:
+        reasons.append("tool_call_ids_match")
+    if delta.replaced:
+        reasons.append("configuration_replaced")
+    if child.context_fidelity in ("partial", "opaque"):
+        reasons.append(f"child_context_{child.context_fidelity}")
+    if not strong_signal:
+        reasons.append("boilerplate_only")
+    if cross_agent_unproven:
+        reasons.append("cross_agent_continuation_unproven")
+
+    return lineage_module.CandidateScore(
+        request=parent,
+        score=max(0.0, min(score, 1.0)),
+        reason_codes=reasons,
+        retained_weight=retained_weight,
+        promoted_weight=promoted_weight,
+        child_coverage=child_coverage,
+        frontier_position=frontier_position,
+        frontier_coverage=promotion,
+        promoted_keys=promoted_keys,
+    )
+
+
+
+
+_START = datetime(2026, 10, 29, tzinfo=timezone.utc)
+
+
+def _snapshot(rid: str, seq: int, blocks, rng: random.Random) -> RequestSnapshot:
+    return RequestSnapshot(
+        id=rid, session_id="s", session_seq=seq, timestamp=_START + timedelta(seconds=seq),
+        started_at=None, duration_ms=1, provider="p", model="m",
+        agent=rng.choice([None, "a", "b"]), endpoint="/e", provider_response_id=None,
+        predecessor_response_id=None,
+        context_fidelity=rng.choice(["complete", "complete", "partial", "opaque"]),
+        tokens_total_input=1, tokens_total_output=1, blocks=tuple(blocks),
+    )
+
+
+def test_candidate_scores_equal_the_previous_scoring_function():
+    rng = random.Random(20261030)
+    prefix_cases = 0
+    for case in range(400):
+        count = rng.randint(2, 6)
+        contexts = [_random_context(rng, "r0", 1)]
+        for i in range(1, count):
+            previous = contexts[rng.randrange(len(contexts))]
+            contexts.append(_extend(rng, previous, f"r{i}", 1000 * i)
+                            if rng.random() < 0.7 else _random_context(rng, f"r{i}", 1000 * i))
+        requests = [_snapshot(f"r{i}", i, blocks, rng) for i, blocks in enumerate(contexts)]
+        frequencies, total = lineage_module._document_frequencies(requests)
+        weights = lineage_module._scoring_weights(requests, frequencies, total)
+        for parent in requests:
+            for child in requests:
+                if parent is child:
+                    continue
+                expected = reference_score_candidate(parent, child, weights)
+                actual = lineage_module._score_candidate(parent, child, weights)
+                prefix_cases += weights.contexts[child.id].transcript_keys[
+                    :len(weights.contexts[parent.id].transcript_keys)
+                ] == weights.contexts[parent.id].transcript_keys
+                where = (case, parent.id, child.id)
+                assert actual.reason_codes == expected.reason_codes, where
+                assert actual.frontier_position == expected.frontier_position, where
+                assert actual.promoted_keys == expected.promoted_keys, where
+                for name in ("score", "retained_weight", "promoted_weight",
+                             "child_coverage", "frontier_coverage"):
+                    assert abs(getattr(actual, name) - getattr(expected, name)) < 1e-9, (name, where)
+    assert prefix_cases > 200  # the prefix path is actually exercised
