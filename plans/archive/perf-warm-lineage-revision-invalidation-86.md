@@ -1,6 +1,6 @@
 # Perf: warm lineage calls and polls pay the full revision check
 
-Status: **IMPLEMENTED 2026-10-29 (uncommitted), see "Implementation notes".** GitHub issue [#86](https://github.com/RimantasZ/contextspy/issues/86) (`perf:`). Follow-up of [#68](https://github.com/RimantasZ/contextspy/issues/68) ([archive/perf-cold-lineage-analysis-68.md](archive/perf-cold-lineage-analysis-68.md)), which made the cold build 3.4x faster but left the warm path unchanged. Part of [ANALYSIS_ROADMAP.md](ANALYSIS_ROADMAP.md).
+Status: **IMPLEMENTED 2026-10-29 (uncommitted), see "Implementation notes".** GitHub issue [#86](https://github.com/RimantasZ/contextspy/issues/86) (`perf:`). Follow-up of [#68](https://github.com/RimantasZ/contextspy/issues/68) ([archive/perf-cold-lineage-analysis-68.md](perf-cold-lineage-analysis-68.md)), which made the cold build 3.4x faster but left the warm path unchanged. Part of [ANALYSIS_ROADMAP.md](../ANALYSIS_ROADMAP.md).
 
 ## Problem
 `session_lineage_service.graph_for_session` computes `evidence_revision` (a fingerprint of every request and block row the graph reads) **before** it looks at the graph cache, on every call. Measured 2026-10-29 on a copy of the author's database (samples, one machine):
