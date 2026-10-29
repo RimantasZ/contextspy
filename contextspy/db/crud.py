@@ -193,16 +193,16 @@ def _lineage_snapshots_for_requests(
         request_id: [] for request_id in request_ids
     }
     if request_ids:
+        # Plain column rows, not ORM entities: building 800k BlockRecord objects costs more
+        # than the query itself on a long session.
         rows = db.execute(
-            select(BlockRecord)
-            .options(load_only(
+            select(
                 BlockRecord.id, BlockRecord.request_id, BlockRecord.direction,
                 BlockRecord.position, BlockRecord.message_index,
                 BlockRecord.block_type, BlockRecord.category,
                 BlockRecord.content_hash, BlockRecord.token_count,
                 BlockRecord.tool_name, BlockRecord.tool_call_id,
-                raiseload=True,
-            ))
+            )
             .where(BlockRecord.request_id.in_(request_ids))
             .order_by(
                 BlockRecord.request_id.asc(),
@@ -210,21 +210,10 @@ def _lineage_snapshots_for_requests(
                 BlockRecord.position.asc(),
                 BlockRecord.id.asc(),
             )
-        ).scalars().all()
-        for block in rows:
-            blocks_by_request[block.request_id].append(ContextBlock(
-                id=block.id,
-                request_id=block.request_id,
-                direction=block.direction,
-                position=block.position,
-                message_index=block.message_index,
-                block_type=block.block_type,
-                category=block.category,
-                content_hash=block.content_hash,
-                token_count=block.token_count,
-                tool_name=block.tool_name,
-                tool_call_id=block.tool_call_id,
-            ))
+        )
+        # The select list follows ContextBlock's field order, so a row is its arguments.
+        for row in rows:
+            blocks_by_request[row[1]].append(ContextBlock(*row))
 
     return [RequestSnapshot(
         id=request.id,

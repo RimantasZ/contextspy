@@ -12,7 +12,10 @@ from typing import Any, Iterable, Mapping
 
 from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.analysis.conversation_projection import _conversation_projection
-from contextspy.analysis.context_diff import ContextBlock, ContextDelta, diff_contexts, new_child_block_ids, semantic_key
+from contextspy.analysis.context_diff import (
+    ContextBlock, ContextDelta, PreparedContext, diff_contexts, diff_prepared, new_child_block_ids,
+    prepare_context, semantic_key,
+)
 from contextspy.analysis.lineage_types import (
     LineageEdge, RequestSnapshot, input_blocks as _input_blocks,
     output_blocks as _output_blocks, request_order as _request_order,
@@ -67,9 +70,8 @@ def _document_frequencies(requests: Iterable[RequestSnapshot]) -> tuple[Counter,
     for request in requests:
         count += 1
         keys = {
-            semantic_key(block)
-            for block in _input_blocks(request)
-            if semantic_key(block) is not None
+            key for block in _input_blocks(request)
+            if (key := semantic_key(block)) is not None
         }
         frequencies.update(keys)
     return frequencies, max(count, 1)
@@ -88,9 +90,8 @@ def _candidate_ids_by_shared_context(
     key_counts: dict[str, int] = {}
     for request in requests:
         keys = {
-            semantic_key(block)
-            for block in request.blocks
-            if not block.is_configuration and semantic_key(block) is not None
+            key for block in request.blocks
+            if not block.is_configuration and (key := semantic_key(block)) is not None
         }
         key_counts[request.id] = len(keys)
         for key in keys:
@@ -119,6 +120,9 @@ class ScoringWeights:
     # Per request: summed block weight by semantic key, for the score upper bound.
     input_by_key: Mapping[str, Mapping[tuple, float]]
     output_by_key: Mapping[str, Mapping[tuple, float]]
+    # Per request: blocks ordered, config slots and fingerprints computed once, so each
+    # candidate comparison starts from them instead of redoing that work for every pair.
+    contexts: Mapping[str, PreparedContext]
 
 
 def _scoring_weights(
@@ -129,7 +133,9 @@ def _scoring_weights(
     output_totals: dict[str, float] = {}
     input_by_key: dict[str, dict[tuple, float]] = {}
     output_by_key: dict[str, dict[tuple, float]] = {}
+    contexts: dict[str, PreparedContext] = {}
     for request in requests:
+        contexts[request.id] = prepare_context(request.blocks)
         input_total = output_total = 0.0
         by_input: dict[tuple, float] = defaultdict(float)
         by_output: dict[tuple, float] = defaultdict(float)
@@ -148,7 +154,9 @@ def _scoring_weights(
         output_totals[request.id] = output_total
         input_by_key[request.id] = by_input
         output_by_key[request.id] = by_output
-    return ScoringWeights(blocks, input_totals, output_totals, input_by_key, output_by_key)
+    return ScoringWeights(
+        blocks, input_totals, output_totals, input_by_key, output_by_key, contexts,
+    )
 
 
 def _score_upper_bound(
@@ -190,9 +198,11 @@ def _score_candidate(
     weights: ScoringWeights,
 ) -> CandidateScore:
     # Scoring reads only the mappings; the full delta is computed for the chosen parent.
-    delta = diff_contexts(parent.blocks, child.blocks, detail=False)
-    parent_by_id = {block.id: block for block in parent.blocks}
-    child_by_id = {block.id: block for block in child.blocks}
+    parent_context = weights.contexts[parent.id]
+    child_context = weights.contexts[child.id]
+    delta = diff_prepared(parent_context, child_context, detail=False)
+    parent_by_id = parent_context.by_id
+    child_by_id = child_context.by_id
 
     retained_weight = sum(
         weights.blocks[id(parent_by_id[item.parent_block_id])]
@@ -432,7 +442,7 @@ def build_lineage_graph(
             unresolved.append(diagnostic)
             continue
         delta = (
-            diff_contexts(parent.blocks, child.blocks)
+            diff_prepared(scoring_weights.contexts[parent.id], scoring_weights.contexts[child.id])
             if parent.blocks and child.blocks else None
         )
         edges.append(LineageEdge(
@@ -455,9 +465,8 @@ def build_lineage_graph(
             continue
 
         child_keys = {
-            semantic_key(block)
-            for block in _input_blocks(child)
-            if not block.is_configuration and semantic_key(block) is not None
+            key for block in _input_blocks(child)
+            if not block.is_configuration and (key := semantic_key(block)) is not None
         }
         overlaps: Counter[str] = Counter()
         for key in child_keys:
@@ -527,7 +536,9 @@ def build_lineage_graph(
                           "raw_candidate_margin": round(
                               best.score - max((candidate.score for candidate in candidates[1:]),
                                                default=0.0), 4)},
-                delta=diff_contexts(best.request.blocks, child.blocks),
+                delta=diff_prepared(
+                    scoring_weights.contexts[best.request.id], scoring_weights.contexts[child.id],
+                ),
             ))
             parents[child.id] = best.request.id
             parent_states[child.id] = "inferred"
@@ -631,7 +642,9 @@ def build_lineage_graph(
             confidence=round(chosen.score, 4),
             evidence_source="context_diff",
             evidence=evidence,
-            delta=diff_contexts(chosen.request.blocks, child.blocks),
+            delta=diff_prepared(
+                scoring_weights.contexts[chosen.request.id], scoring_weights.contexts[child.id],
+            ),
         ))
         ambiguous = [item for item in ambiguous if item["request_id"] != child.id]
 

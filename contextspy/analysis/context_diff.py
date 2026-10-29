@@ -124,36 +124,34 @@ def _configuration_slots(blocks: list[ContextBlock]) -> dict[tuple[str, str], Co
 
 
 def _lcs_mappings(
-    parent: list[ContextBlock], child: list[ContextBlock],
+    parent_keys: list, parent_ids: list[int], child_keys: list, child_ids: list[int],
 ) -> list[BlockMapping]:
-    # Unmatchable structural blocks must not participate as equal ``None``
-    # values because their alignment can hide meaningful matches around them.
-    parent_values = [
-        (key, block.id) for block in parent if (key := semantic_key(block)) is not None
-    ]
-    child_values = [
-        (key, block.id) for block in child if (key := semantic_key(block)) is not None
-    ]
-    # IDs deliberately do not participate in equality. Keeping them beside the
-    # key makes the occurrence mapping explicit after SequenceMatcher selects
-    # an order-preserving alignment, including duplicate content occurrences.
-    # The common unchanged-context case has the same occurrence order. The
-    # positional mapping is exactly SequenceMatcher's full-match result, while
-    # avoiding its index construction for every candidate in a dense session.
-    if [key for key, _ in parent_values] == [key for key, _ in child_values]:
-        return [BlockMapping(parent_block_id=left[1], child_block_id=right[1])
-                for left, right in zip(parent_values, child_values)]
-    matcher = SequenceMatcher(
-        a=[key for key, _ in parent_values],
-        b=[key for key, _ in child_values],
-        autojunk=False,
-    )
+    """Order-preserving alignment of two sequences of fingerprints.
+
+    Blocks without a fingerprint never reach here: as equal ``None`` values they would
+    align with each other and hide meaningful matches around them. The ids ride beside
+    the keys so duplicate content keeps an explicit occurrence mapping.
+    """
+    if not parent_keys or not child_keys:
+        return []
+    parent_size, child_size = len(parent_keys), len(child_keys)
+    # Exact shortcuts for the common shapes. When one sequence is a prefix of the other
+    # (an unchanged context, or a conversation that only grew) SequenceMatcher's longest
+    # match is the whole shorter sequence at offset 0, so the result is positional.
+    # tests/test_lineage.py checks this against SequenceMatcher on random sequences.
+    if parent_size <= child_size and child_keys[:parent_size] == parent_keys:
+        return [BlockMapping(parent_block_id=left, child_block_id=right)
+                for left, right in zip(parent_ids, child_ids)]
+    if child_size < parent_size and parent_keys[:child_size] == child_keys:
+        return [BlockMapping(parent_block_id=left, child_block_id=right)
+                for left, right in zip(parent_ids, child_ids)]
+    matcher = SequenceMatcher(a=parent_keys, b=child_keys, autojunk=False)
     mappings: list[BlockMapping] = []
     for parent_start, child_start, size in matcher.get_matching_blocks():
         for offset in range(size):
             mappings.append(BlockMapping(
-                parent_block_id=parent_values[parent_start + offset][1],
-                child_block_id=child_values[child_start + offset][1],
+                parent_block_id=parent_ids[parent_start + offset],
+                child_block_id=child_ids[child_start + offset],
             ))
     return mappings
 
@@ -180,6 +178,45 @@ def _counts(
     }
 
 
+class PreparedContext:
+    """Everything ``diff_prepared`` needs from one request, computed once.
+
+    Comparing a request with many candidates would otherwise re-sort its blocks, rebuild
+    its configuration slots and recompute every fingerprint for each pair.
+    """
+
+    __slots__ = (
+        "blocks", "by_id", "input", "output", "config_slots",
+        "transcript_keys", "transcript_ids", "output_keys", "output_ids",
+    )
+
+    def __init__(self, blocks: Iterable[ContextBlock]) -> None:
+        self.blocks = list(blocks)
+        self.by_id = {block.id: block for block in self.blocks}
+        self.input = _ordered(self.blocks, Direction.INPUT)
+        self.output = _ordered(self.blocks, Direction.OUTPUT)
+        self.config_slots = _configuration_slots(self.input)
+        self.transcript_keys, self.transcript_ids = _keyed(
+            block for block in self.input if not block.is_configuration
+        )
+        self.output_keys, self.output_ids = _keyed(self.output)
+
+
+def _keyed(blocks: Iterable[ContextBlock]) -> tuple[list, list[int]]:
+    keys: list = []
+    ids: list[int] = []
+    for block in blocks:
+        key = semantic_key(block)
+        if key is not None:
+            keys.append(key)
+            ids.append(block.id)
+    return keys, ids
+
+
+def prepare_context(blocks: Iterable[ContextBlock]) -> PreparedContext:
+    return PreparedContext(blocks)
+
+
 def diff_contexts(
     parent_blocks: Iterable[ContextBlock], child_blocks: Iterable[ContextBlock],
     *, detail: bool = True,
@@ -190,56 +227,65 @@ def diff_contexts(
     (what candidate scoring reads) and leaves ``added``, ``removed``, the unavailable lists
     and ``summary`` empty.
     """
-    parent_all = list(parent_blocks)
-    child_all = list(child_blocks)
-    parent_input = _ordered(parent_all, Direction.INPUT)
-    parent_output = _ordered(parent_all, Direction.OUTPUT)
-    child_input = _ordered(child_all, Direction.INPUT)
+    return diff_prepared(
+        prepare_context(parent_blocks), prepare_context(child_blocks), detail=detail,
+    )
 
-    by_id = {block.id: block for block in parent_all + child_all}
-    parent_config = _configuration_slots(parent_input)
-    child_config = _configuration_slots(child_input)
+
+def diff_prepared(
+    parent: PreparedContext, child: PreparedContext, *, detail: bool = True,
+) -> ContextDelta:
+    """``diff_contexts`` for contexts that were prepared once and compared many times."""
+    parent_input, child_input = parent.input, child.input
+    parent_config, child_config = parent.config_slots, child.config_slots
 
     delta = ContextDelta()
     consumed_parent: set[int] = set()
     consumed_child: set[int] = set()
 
     for slot in sorted(parent_config.keys() & child_config.keys()):
-        parent = parent_config[slot]
-        child = child_config[slot]
-        parent_key = semantic_key(parent)
-        child_key = semantic_key(child)
+        parent_block = parent_config[slot]
+        child_block = child_config[slot]
+        parent_key = semantic_key(parent_block)
+        child_key = semantic_key(child_block)
         if parent_key is not None and parent_key == child_key:
-            delta.persisted.append(BlockMapping(parent.id, child.id))
+            delta.persisted.append(BlockMapping(parent_block.id, child_block.id))
         elif parent_key is not None and child_key is not None:
             delta.replaced.append(BlockReplacement(
-                parent.id, child.id, slot=f"{slot[0]}:{slot[1]}",
+                parent_block.id, child_block.id, slot=f"{slot[0]}:{slot[1]}",
             ))
         # When either fingerprint is unavailable the pair remains explicitly
         # unavailable rather than also being claimed as a replacement.
-        consumed_parent.add(parent.id)
-        consumed_child.add(child.id)
+        consumed_parent.add(parent_block.id)
+        consumed_child.add(child_block.id)
 
-    parent_transcript = [
-        block for block in parent_input
-        if block.id not in consumed_parent and not block.is_configuration
-    ]
-    child_transcript = [
-        block for block in child_input
-        if block.id not in consumed_child and not block.is_configuration
-    ]
-    persisted = _lcs_mappings(parent_transcript, child_transcript)
+    persisted = _lcs_mappings(
+        parent.transcript_keys, parent.transcript_ids,
+        child.transcript_keys, child.transcript_ids,
+    )
     delta.persisted.extend(persisted)
     consumed_parent.update(item.parent_block_id for item in persisted)
     consumed_child.update(item.child_block_id for item in persisted)
 
-    unmatched_child = [block for block in child_transcript if block.id not in consumed_child]
-    promoted = _lcs_mappings(parent_output, unmatched_child)
+    if persisted:
+        unmatched = [
+            (key, block_id)
+            for key, block_id in zip(child.transcript_keys, child.transcript_ids)
+            if block_id not in consumed_child
+        ]
+        unmatched_keys = [key for key, _ in unmatched]
+        unmatched_ids = [block_id for _, block_id in unmatched]
+    else:
+        unmatched_keys, unmatched_ids = child.transcript_keys, child.transcript_ids
+    promoted = _lcs_mappings(
+        parent.output_keys, parent.output_ids, unmatched_keys, unmatched_ids,
+    )
     delta.promoted.extend(promoted)
     consumed_child.update(item.child_block_id for item in promoted)
     if not detail:
         return delta
 
+    by_id = {block.id: block for block in parent.blocks + child.blocks}
     delta.removed = [
         block.id
         for block in parent_input

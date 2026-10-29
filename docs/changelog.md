@@ -81,8 +81,10 @@
 - `contextspy status` / restore listed the newest backup wrongly once schema versions reached two digits.
 - A restore made in second :00 of the same minute as a migration backup was listed before it (newest-last ordering).
 - Compact request cards show the lineage icon tooltip on hover and focus.
-- Conversation analysis of very long sessions is about a third faster to build (28 s instead of 48 s for a 4,000-request
-  session). When a request continues from an early point of a long conversation (a rewind, or a fork from an old turn),
+- Conversation analysis of very long sessions is more than twice as fast from a cold start (about 27 s instead of 59 s
+  for a 4,000-request session, 3.4 s instead of 6 s for a 560-request one): requests are prepared once instead of for
+  every comparison, and their blocks are loaded without building database objects.
+- When a request continues from an early point of a long conversation (a rewind, or a fork from an old turn),
   candidate parents are now ranked by how much of their own context the request contains, so the right parent is no
   longer crowded out by the later turns. In rare cases a request that used to show no parent now shows as ambiguous.
 - The check that decides whether the cached conversation analysis is still current (run on every conversation or
