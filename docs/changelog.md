@@ -1,5 +1,14 @@
 # What's New
 
+## 0.6.1
+
+New `contextspy db-switch NAME` swaps the active database with a shelved one, so you can start a clean database
+(`--new`) for a test session and come back to the old one later; it moves the `.db` file and its backups, never
+overwrites anything and handles the WAL files safely (see *Switching databases* in the CLI guide). Lineage analysis
+loads much faster on a cold start and its cached results are invalidated correctly when a session changes. Sessions
+and conversations now show total tokens, the session trend chart is easier to read (panning, at most four labels,
+extra metrics), and the *End session* button refreshes properly. No `db-upgrade` is needed.
+
 ## 0.6.0
 
 ### Upgrading from 0.5.4
