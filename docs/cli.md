@@ -140,6 +140,7 @@ contextspy db-stats        Print database row counts
 contextspy db-backup       Create an on-demand SQLite backup
 contextspy db-compact      Shrink the database file (offline); add --backup / --yes
 contextspy db-restore FILE Restore FILE, preserving the current DB for rollback
+contextspy db-switch NAME  Swap the active database with the shelved database NAME
 contextspy db-upgrade      Back up the DB and apply pending data migrations
 contextspy report          Print aggregate token stats and category breakdown table
 contextspy reset-db        Delete ALL requests and sessions (prompts for confirmation)
@@ -168,6 +169,27 @@ and retains the former database as `contextspy_backup_v7_pre_restore_...back` be
 files. The source backup is not consumed. Restore replaces the database; it does not merge in
 newer requests. If the restored backup has pending data migrations, run `contextspy db-upgrade`
 before starting ContextSpy. A pre-WAL backup can be restored; startup will enable WAL again.
+
+### Switching databases (`db-switch`)
+
+Keep several databases (for example a clean one for a test session) and swap them without losing data.
+Stop ContextSpy first; the command refuses while the server runs.
+
+```
+contextspy db-switch NAME          Shelve the active database, make NAME active
+contextspy db-switch NAME --new    Start a new, empty database called NAME
+contextspy db-switch NAME --as OLD Shelve the active database under the name OLD
+contextspy db-switch --list        Show the active and shelved databases
+```
+
+The active database's `.db` file and its `.back` backups move to `db_switch/<name>/` next to the
+database (default `~/.contextspy/db_switch/`), and the files of `NAME` move back. The first time, the
+active database is shelved as `default`; the active name is recorded in `db_switch/.active` and shown by
+`contextspy status`. An unknown name is refused unless `--new` is given, and nothing is ever overwritten:
+if a destination already exists the switch stops (use `--as` to pick another name for the active
+database), and a failure part-way moves everything back. Other files such as `config.toml` are untouched.
+If the database you switch to has pending data migrations, run `contextspy db-upgrade` before starting.
+Shelved databases are ordinary standalone files (no `-wal`/`-shm`), so copying them is safe.
 
 ### Shrinking the database file (`db-compact`)
 

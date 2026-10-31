@@ -980,6 +980,14 @@ contextspy db-upgrade
     refuse to boot until this (or reset-db) has been run against a DB with
     pending migrations.
 
+contextspy db-switch NAME [--new] [--as OLD] | --list
+    Offline. Shelve the active database (its .db file and .back backups, never
+    -wal/-shm) under <db_dir>/db_switch/<OLD or its recorded name, default "default">/
+    and move the shelved database NAME back into place. The active name is kept in
+    db_switch/.active. Unknown NAME is refused unless --new. Takes the maintenance
+    lock, checkpoints the outgoing database out of WAL, never overwrites a file, and
+    rolls back on failure. --list shows the active and shelved databases.
+
 contextspy db-stats
     Print row counts for each table in the database (offline — no server needed).
 
@@ -1042,7 +1050,7 @@ contextspy --version
     Print the installed package version and exit.
 ```
 
-`pause`, `resume`, `session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-upgrade`, `db-stats`, `report`, and all `setup-*`/`inject-cert` commands work offline.
+`pause`, `resume`, `session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-upgrade`, `db-switch`, `db-stats`, `report`, and all `setup-*`/`inject-cert` commands work offline.
 
 ---
 
@@ -1184,6 +1192,7 @@ contextspy/                         # repo root
 │   │   ├── hotspots_service.py     # hot-spots aggregation (scope temp table, one pass)
 │   │   ├── session_archive.py      # explicit archive of an ended session
 │   │   ├── compaction.py           # contextspy db-compact (offline VACUUM, incremental auto-vacuum)
+│   │   ├── switching.py            # contextspy db-switch (shelve/swap databases)
 │   │   └── crud.py                 # Database read/write helpers (incl. block link resolution)
 │   ├── api/
 │   │   ├── __init__.py

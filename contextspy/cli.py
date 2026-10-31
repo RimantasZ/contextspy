@@ -437,6 +437,11 @@ def status() -> None:
                 console.print("Active session:  [dim]none[/dim]")
         except Exception:
             pass
+    from contextspy.db import switching
+
+    active_db = switching.active_name(settings.storage.db_path)
+    if active_db:
+        console.print(f"Database:        [bold]{active_db}[/bold]")
     _print_database_backups(settings.storage.db_path)
 
 
@@ -731,6 +736,7 @@ def help_cmd() -> None:
         ("reset-db", "Delete all requests and sessions from the local database"),
         ("db-backup", "Create a consistent on-demand SQLite backup"),
         ("db-restore", "Restore a backup, preserving the current DB for rollback"),
+        ("db-switch <name>", "Swap the active database with a shelved one (--new, --as, --list)"),
         (
             "db-upgrade",
             "Apply pending data migrations (e.g. backfill blocks from raw bodies)",
@@ -903,6 +909,58 @@ def db_restore(
         console.print(f"  Previous database preserved: {result.rollback_path}")
     if pending:
         console.print("Run [bold]contextspy db-upgrade[/bold] before starting ContextSpy.")
+
+
+@app.command("db-switch")
+def db_switch(
+    name: Optional[str] = typer.Argument(None, help="Database to make active"),
+    new: bool = typer.Option(False, "--new", help="Start a new, empty database called NAME"),
+    save_as: Optional[str] = typer.Option(
+        None, "--as", help="Name to shelve the current database under (default: its recorded name)"
+    ),
+    list_: bool = typer.Option(False, "--list", help="List shelved databases and the active one"),
+) -> None:
+    """Swap the active database with a shelved one, keeping both intact (offline)."""
+    from contextspy.config import Settings
+    from contextspy.db import switching
+
+    settings = Settings.load()
+    db_path = settings.storage.db_path
+    if list_ or name is None:
+        entries = switching.list_databases(db_path)
+        if not entries:
+            console.print("[dim]No databases found.[/dim]")
+        for entry in entries:
+            marker = "[green]* active[/green]" if entry.active else "  shelved"
+            console.print(
+                f"{marker}  {entry.name}  {_format_bytes(entry.db_bytes)}, {entry.backups} backup(s)"
+            )
+        if name is None and not list_:
+            console.print("Usage: contextspy db-switch NAME  (or --list)")
+        return
+    if _configured_backend_reachable(settings):
+        console.print("[red]Stop ContextSpy before switching databases.[/red]")
+        raise typer.Exit(1)
+    try:
+        result = switching.switch_database(db_path, name, save_as=save_as, create=new)
+    except (switching.SwitchError, OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        console.print(f"[red]Switch failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(
+        f"[green]Active database is now '{result.new_name}'"
+        f"{' (new, empty)' if result.created else ''}.[/green]"
+    )
+    console.print(f"  Previous database shelved as '{result.previous_name}'")
+    if not result.created:
+        from contextspy.db import migrations
+
+        try:
+            _version, pending = migrations.inspect_migration_state(db_path)
+        except (OSError, RuntimeError, ValueError, sqlite3.Error):
+            pending = []
+        if pending:
+            console.print(f"  Data migrations required: {pending}")
+            console.print("Run [bold]contextspy db-upgrade[/bold] before starting ContextSpy.")
 
 
 @app.command("db-compact")

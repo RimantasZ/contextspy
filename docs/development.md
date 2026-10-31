@@ -113,6 +113,22 @@ and `PRAGMA journal_mode=DELETE;`, and confirm that the latter returns `delete` 
 the older build. The current build enables WAL again on its next start; never remove sidecar
 files manually as a rollback method.
 
+#### Database files and WAL
+
+Only the live database has `-wal`/`-shm` sidecars; every `.back` file and every shelved database is
+converted to rollback-journal mode, so it is one self-contained file. That is why a directory holds many
+backups but a single `-wal`/`-shm` pair. Sidecars are never moved or copied apart from their `.db`: a
+stale `-wal` beside a different `.db` could be misapplied. Offline operations that replace the database
+(`db-restore`, `db-switch`) take the maintenance lock, then `backups._checkpoint_and_close`
+(`wal_checkpoint(TRUNCATE)`, `journal_mode=DELETE`, verify no sidecar remains) before touching files.
+
+`db-switch` (`db/switching.py`) moves only the `.db` and its `list_backups` files between
+`<db_dir>` and `<db_dir>/db_switch/<name>/`. The incoming database must be standalone and pass
+`inspect_backup`. The swap runs through `db_switch/.swap-<ts>/` (outgoing -> staging, incoming -> root,
+staging -> shelf slot), every rename refuses an existing destination, and a failure rolls the moves back
+in reverse. A leftover `.swap-*` after a crash blocks further switches until fixed by hand. `.lock` is
+not moved.
+
 Observed request payloads, canonical request/response payloads, normalized SSE/NDJSON/WebSocket
 event logs, plus the content-addressed `block_contents` table (see below), are removed explicitly by
 **archiving a session** (`db/session_archive.py`; `POST /api/sessions/{id}/archive`, `contextspy session archive`).
