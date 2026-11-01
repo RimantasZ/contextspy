@@ -1,6 +1,6 @@
 # What's New
 
-## 0.6.1
+## 0.6.2
 
 New `contextspy db-switch NAME` swaps the active database with a shelved one, so you can start a clean database
 (`--new`) for a test session and come back to the old one later; it moves the `.db` file and its backups, never
