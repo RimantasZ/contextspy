@@ -166,6 +166,9 @@ If that name already exists, `-1`, `-2`, and so on is added before `.back`.
 - **Context breakdown** — input tokens split into 8 categories:
   system prompt, tool definitions, tool results, file contents, conversation history,
   current user message, assistant prefill, uncategorised
+- **Hotspot analysis** — helps to identify what elements in context use most tokens over
+lifespan of whole agentic sessions
+  current user message, assistant prefill, uncategorised
 - **Live dashboard** — responsive light/dark charts, tool-use treemaps, and a request workbench
   with compact, relative-size, and raw payload views plus block search and inspection
 - **Session tracking** — name time windows, keep stable per-session request numbers, and compare
