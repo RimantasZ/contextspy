@@ -108,7 +108,6 @@ interface RowView {
   label: string
   title: string
   icon: React.ReactNode
-  badges?: React.ReactNode
   openLabel: string
   open?: () => void
   facts: React.ReactNode
@@ -139,7 +138,6 @@ function describeRow(row: Row, group: HotspotGroup, onOpen: (at: HotspotOccurren
     return {
       key: r.key, label: r.file_path, icon: <TypeIcon blockType="tool_result" />,
       title: `${r.file_path}\nTokens attributed to this file: read ${r.result_tokens.toLocaleString()}, written or edited ${r.call_tokens.toLocaleString()}`,
-      badges: !r.in_latest_request ? <Badge tone="warning" title="Not in the latest request of this scope">dropped</Badge> : undefined,
       openLabel: `Open the latest request that touched ${r.file_path}`,
       open: r.latest.request_id ? () => onOpen(r.latest) : undefined,
       facts: <>
@@ -148,6 +146,7 @@ function describeRow(row: Row, group: HotspotGroup, onOpen: (at: HotspotOccurren
         <Fact name="Versions">{r.distinct_versions.toLocaleString()}</Fact>
         <Fact name="Requests">{r.request_count.toLocaleString()}</Fact>
         <Fact name="Seen in">{range(r.first_seen_session_seq, r.last_seen_session_seq)}</Fact>
+        {!r.in_latest_request && <Fact name="Status"><Badge tone="warning" title="Not in the latest request of this scope">dropped</Badge></Fact>}
       </>,
     }
   }
@@ -156,7 +155,6 @@ function describeRow(row: Row, group: HotspotGroup, onOpen: (at: HotspotOccurren
   return {
     key: r.key, label, icon: <TypeIcon blockType={r.block_type} />,
     title: r.preview ? `${label}\n${r.preview}` : r.content_purged ? `${label}\n(content no longer stored)` : label,
-    badges: !r.in_latest_request ? <Badge tone="warning" title="Not in the latest request of this scope">dropped</Badge> : undefined,
     openLabel: `Open the latest request carrying ${label}`,
     open: r.latest.request_id ? () => onOpen(r.latest) : undefined,
     facts: <>
@@ -173,6 +171,7 @@ function describeRow(row: Row, group: HotspotGroup, onOpen: (at: HotspotOccurren
       {r.source_key && <Fact name="Source">{r.source_key}</Fact>}
       {r.tool_name && <Fact name="Tool">{r.tool_name}</Fact>}
       {r.file_path && <Fact name="File">{r.file_path}</Fact>}
+      {!r.in_latest_request && <Fact name="Status"><Badge tone="warning" title="Not in the latest request of this scope">dropped</Badge></Fact>}
     </>,
     preview: r.preview ?? (r.content_purged ? '(content no longer stored)' : null),
   }
@@ -205,13 +204,11 @@ function HotspotRow({ row, group, sort, layout, largest, occurrencesTotal, expan
         {layout === 'name' && (
           <span className="flex min-w-0 items-center gap-2">
             <span className="truncate text-sm text-[var(--text)]">{view.label}</span>
-            {view.badges}
           </span>
         )}
         {layout === 'name' ? <BarCell pct={barPercent(main.value, largest)} /> : (
           <span className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 flex-1"><BarCell pct={barPercent(main.value, largest)} label={view.label} /></span>
-            {view.badges}
           </span>
         )}
         <span className="text-right text-sm tabular-nums">

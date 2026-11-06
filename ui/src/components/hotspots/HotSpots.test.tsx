@@ -73,7 +73,7 @@ describe('HotSpots', () => {
     expect(screen.getByText(/5,390,318 visible tokens/)).toBeTruthy()
     expect(screen.getByText('648,000')).toBeTruthy()
     expect(screen.getByText('(12.1%)')).toBeTruthy()
-    expect(screen.getByText('dropped')).toBeTruthy()
+    expect(screen.queryByText('dropped')).toBeNull()  // detail only
     expect(screen.queryByText('reappears')).toBeNull()  // detail only
     expect(screen.getByText(/4 partial, 10 opaque/)).toBeTruthy()
     expect(screen.getByText(/133 unidentifiable blocks, 432 tokens/)).toBeTruthy()
