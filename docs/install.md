@@ -28,6 +28,13 @@ brew tap RimantasZ/contextspy
 brew install contextspy
 contextspy help
 ```
+
+Sometimes Homebrew requires you to trust the tap before installing or upgrading. If `brew install` or `brew upgrade` refuses to proceed, run:
+
+```bash
+brew trust RimantasZ/contextspy
+```
+
 Next steps: [install CA certificate](#ca-certificate-setup-cloudforward-proxy-mode-only), [setup coding agent](cloud-mode.md)
 
 ### Linux (Ubuntu / Debian)

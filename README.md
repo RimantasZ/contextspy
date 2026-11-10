@@ -36,6 +36,8 @@ Quick setup for macOS (Apple Silicon) — see [install guide](docs/install.md) f
 ```bash
 # install latest binary release with Homebrew
 brew tap RimantasZ/contextspy
+# optional - sometimes Homebrew requires trusting the tap before installing
+brew trust RimantasZ/contextspy
 brew install contextspy
 
 # Install CA certificate into system trust store (one-time, cloud mode only)
@@ -135,6 +137,8 @@ The new version can be installed with homebrew:
 ```bash
 ## optional - sometimes brew "forgets" custom tap, add it again if just update fails
 brew tap RimantasZ/contextspy 
+## optional - sometimes Homebrew requires trusting the tap before upgrading
+brew trust RimantasZ/contextspy
 ## update homebrew and upgrade contextspy
 brew update
 brew upgrade contextspy
