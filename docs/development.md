@@ -289,8 +289,13 @@ key). Rules to keep when changing it:
 - **The scope table must be the outer loop** (`FROM hs_scope s CROSS JOIN blocks b ON b.request_id = s.id`).
   Left free, SQLite walks `idx_blocks_content_hash` for a `GROUP BY content_hash` and is 15-100 times slower.
   `tests/test_hotspots.py` asserts the query plan for all three groupings.
-- `aggregate_select` must not depend on sort, paging or the in-context filter, so a cache can wrap it
-  later (postponed, GitHub issue #67).
+- `aggregate_select` must not depend on sort, paging or the in-context filter: the result of the pass
+  (`_Aggregate`: resolved scope, aggregate rows, totals, input totals) is cached in-process for 60 s, keyed by
+  database, session, the session's request count, scope, conversation, grouping and the category / block type /
+  source filters (at most 8 entries; a new request drops the session's older entries). Sort, in-context filter and
+  paging then run in Python (`_page`, same ordering as the former SQL) and only the page costs a DB lookup, so
+  "Show more" and toggles take milliseconds. In-place edits that keep the request count (re-analysis,
+  `db-upgrade`, archiving, lineage changes) can lag by the TTL. Tests call `clear_hotspots_cache()`.
 - The latest occurrence of a group is found in the same pass by maximising `position * 2**32 + block id`
   (`analysis/block_hotspots.py: unpack_latest`); run counts come from a `GROUP_CONCAT` of positions.
 - Conversation membership comes from `block_occurrence_service.scope_for_session`, shared with the block

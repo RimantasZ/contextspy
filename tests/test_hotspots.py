@@ -57,11 +57,13 @@ def test_block_label(kwargs, expected):
 @pytest.fixture
 def db():
     occurrences.clear_membership_cache()
+    service.clear_hotspots_cache()
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with OrmSession(engine) as session:
         yield session
     occurrences.clear_membership_cache()
+    service.clear_hotspots_cache()
 
 
 def _session(db, sid="s1"):
@@ -363,6 +365,7 @@ def test_statement_count_is_constant_as_requests_grow(db):
 
     def count(limit_requests):
         occurrences.clear_membership_cache()
+        service.clear_hotspots_cache()
         statements.clear()
         service.get_session_hotspots(db, "s1", scope="session")
         return len(statements)
@@ -381,6 +384,94 @@ def test_temp_tables_are_cleaned_up(db):
     assert not names & {"hs_scope", "hs_agg"}
 
 
+# --------------------------------------------------------------------------- cache
+
+def _counting(monkeypatch):
+    calls = []
+    original = service._build_aggregate
+    monkeypatch.setattr(service, "_build_aggregate", lambda *a: calls.append(a) or original(*a))
+    return calls
+
+
+def _busy_session(db):
+    _fork(db)
+    for index, rid in enumerate(("r1", "r2", "r3")):
+        for position in range(6):
+            _block(db, rid, f"h{position % 4}", tokens=5 + position, position=position,
+                   source_key=f"tool:{position % 2}", file_path=f"/f{position % 3}.py")
+
+
+def test_paging_sorting_and_in_context_reuse_one_aggregate(db, monkeypatch):
+    _busy_session(db)
+    calls = _counting(monkeypatch)
+    service.get_session_hotspots(db, "s1", limit=2)
+    service.get_session_hotspots(db, "s1", limit=2, offset=2)
+    service.get_session_hotspots(db, "s1", sort="occurrences")
+    service.get_session_hotspots(db, "s1", in_context="current")
+    service.get_session_hotspots(db, "s1", in_context="dropped")
+    assert len(calls) == 1
+
+
+def test_cache_misses_on_new_request_filter_group_scope_and_conversation(db, monkeypatch):
+    _busy_session(db)
+    calls = _counting(monkeypatch)
+    service.get_session_hotspots(db, "s1")
+    for kwargs in ({"category": "x"}, {"block_type": "tool_result"}, {"source": "tool:0"},
+                   {"group": "source"}, {"group": "file"}, {"scope": "session"}, {"conversation": "nope"}):
+        before = len(calls)
+        service.get_session_hotspots(db, "s1", **kwargs)
+        assert len(calls) == before + 1, kwargs
+    before = len(calls)
+    service.get_session_hotspots(db, "s1")  # earlier entries are still there
+    assert len(calls) == before
+    _req(db, "r99", 99, parent="r3")
+    service.get_session_hotspots(db, "s1")
+    assert len(calls) == before + 1
+
+
+def test_new_request_drops_the_stale_entries_of_the_session(db):
+    _busy_session(db)
+    service.get_session_hotspots(db, "s1")
+    service.get_session_hotspots(db, "s1", group="source")
+    assert len(service._cache) == 2
+    _req(db, "r99", 99, parent="r3")
+    service.get_session_hotspots(db, "s1")
+    assert len(service._cache) == 1
+
+
+def test_cache_entry_limit_and_ttl(db, monkeypatch):
+    _busy_session(db)
+    for index in range(service._CACHE_LIMIT + 3):
+        service.get_session_hotspots(db, "s1", category=f"c{index}")
+    assert len(service._cache) == service._CACHE_LIMIT
+    calls = _counting(monkeypatch)
+    service.get_session_hotspots(db, "s1")
+    service.get_session_hotspots(db, "s1")
+    assert len(calls) == 1
+    real = service.time.monotonic
+    monkeypatch.setattr(service.time, "monotonic", lambda: real() + service.HOTSPOTS_CACHE_TTL_SECONDS + 1)
+    service.get_session_hotspots(db, "s1")
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("group", service.GROUPS)
+def test_cached_and_uncached_responses_are_identical(db, group):
+    _busy_session(db)
+    for scope in ("conversation", "session"):
+        for sort in service.SORTS:
+            for in_context in service.IN_CONTEXT:
+                for limit, offset in ((25, 0), (2, 0), (2, 2), (2, 100)):
+                    kwargs = dict(group=group, scope=scope, sort=sort, in_context=in_context, limit=limit, offset=offset)
+                    service.clear_hotspots_cache()
+                    fresh = service.get_session_hotspots(db, "s1", **kwargs)
+                    cached = service.get_session_hotspots(db, "s1", **kwargs)
+                    other = service.get_session_hotspots(db, "s1", **{**kwargs, "sort": "occurrences", "limit": 1})
+                    assert cached == fresh
+                    # a page served from an aggregate built for another page equals a freshly built one
+                    service.clear_hotspots_cache()
+                    assert service.get_session_hotspots(db, "s1", **{**kwargs, "sort": "occurrences", "limit": 1}) == other
+
+
 # --------------------------------------------------------------------------- HTTP
 
 @pytest.fixture
@@ -389,6 +480,7 @@ def client(tmp_path):
     from contextspy.db.database import get_db, init_db
 
     occurrences.clear_membership_cache()
+    service.clear_hotspots_cache()
     init_db(tmp_path / "hotspots.db")
     with get_db() as session:
         _chain(session, 3)
@@ -398,6 +490,7 @@ def client(tmp_path):
     app.include_router(sessions_router.router, prefix="/api")
     yield TestClient(app)
     occurrences.clear_membership_cache()
+    service.clear_hotspots_cache()
 
 
 def test_endpoint_returns_the_ranking(client):

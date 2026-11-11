@@ -13,13 +13,21 @@ the returned rows (at most ``MAX_LIMIT``) cost a second, bounded lookup for thei
 ``idx_blocks_content_hash`` for a ``GROUP BY content_hash`` and is 15-100x slower. A test asserts the plan.
 Block identity is the content hash; input blocks only (output blocks reappear as input in the next request,
 so counting both would double count). See plans/archive/hot-spots.md.
+
+The result of that pass (``_Aggregate``: the resolved scope, the aggregate rows, the totals) does not depend on
+sort, paging or the in-context filter, so it is cached for ``HOTSPOTS_CACHE_TTL_SECONDS`` and invalidated
+immediately when the session's request count changes; sorting, filtering and paging then run in Python on the
+cached rows (``_page``). In-place edits that keep the request count (re-analysis, ``db-upgrade``, archiving,
+lineage changes) can therefore lag by the TTL. See plans/hot-spots-cache.md.
 """
 from __future__ import annotations
 
 import json
-from typing import Any
+import time
+from threading import Lock
+from typing import Any, NamedTuple
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.analysis.activity import activity_for
@@ -34,6 +42,8 @@ SORTS = ("total_tokens", "occurrences")
 IN_CONTEXT = ("all", "current", "dropped")
 MAX_LIMIT = 100
 MAX_OFFSET = 1000
+HOTSPOTS_CACHE_TTL_SECONDS = 60
+_CACHE_LIMIT = 8
 
 _GROUP_KEY = {
     "block": "b.content_hash",
@@ -164,6 +174,111 @@ def _input_totals(db: OrmSession, scope: SessionScope) -> dict:
     }
 
 
+class _Aggregate(NamedTuple):
+    """Everything a response needs that does not depend on sort, paging or the in-context filter."""
+    resolved: SessionScope
+    fidelity: dict[str, int]
+    rows: list[dict]                # aggregate rows with a key (``k IS NOT NULL``); ``poss`` replaced by ``run_count``
+    total: int
+    occurrences_total: int
+    unidentifiable: dict | None
+    input_totals: dict              # {"session": ..., "conversation": ... | None}
+
+
+_cache: dict[tuple, tuple[float, _Aggregate]] = {}
+_cache_lock = Lock()
+
+
+def clear_hotspots_cache() -> None:
+    with _cache_lock:
+        _cache.clear()
+
+
+def _build_aggregate(
+    db: OrmSession, session_id: str, group: str, scope: str, conversation: str | None,
+    category: str | None, block_type: str | None, source: str | None,
+) -> _Aggregate:
+    resolved = scope_for_session(
+        db, session_id, scope, conversation_key=conversation, with_conversations=True,
+    )
+    fidelity: dict[str, int] = {}
+    for request in resolved.requests:
+        fidelity[request.context_fidelity] = fidelity.get(request.context_fidelity, 0) + 1
+
+    try:
+        _load_scope(db, resolved)
+        select_sql, params = aggregate_select(group, category=category, block_type=block_type, source=source)
+        db.execute(text(f"CREATE TEMP TABLE hs_agg AS {select_sql}"), params)
+        totals = db.execute(text("SELECT COALESCE(SUM(total), 0) AS tokens, COALESCE(SUM(occ), 0) AS occurrences FROM hs_agg")).one()
+        unidentifiable = None
+        if group == "block":
+            row = db.execute(text("SELECT occ, total FROM hs_agg WHERE k IS NULL")).first()
+            unidentifiable = {"blocks": row.occ if row else 0, "tokens": row.total if row else 0}
+        rows = [dict(r) for r in db.execute(text("SELECT * FROM hs_agg WHERE k IS NOT NULL")).mappings()]
+    finally:
+        _drop_temp(db)
+
+    if group == "block":
+        for row in rows:
+            row["run_count"] = count_runs(int(p) for p in row.pop("poss").split(","))
+
+    session_scope = resolved if resolved.scope == "session" else scope_for_session(db, session_id, "session")
+    return _Aggregate(
+        resolved, fidelity, rows, totals.tokens or 0, totals.occurrences or 0, unidentifiable,
+        {
+            "session": _input_totals(db, session_scope),
+            "conversation": _input_totals(db, resolved) if resolved.scope == "conversation" else None,
+        },
+    )
+
+
+def _aggregate(
+    db: OrmSession, session_id: str, group: str, scope: str, conversation: str | None,
+    category: str | None, block_type: str | None, source: str | None,
+) -> _Aggregate:
+    request_count = db.execute(
+        select(func.count()).select_from(Request).where(Request.session_id == session_id)
+    ).scalar() or 0
+    key = (db.get_bind(), session_id, request_count, scope, conversation, group, category, block_type, source)
+    with _cache_lock:
+        cached = _cache.get(key)
+        if cached is not None and cached[0] > time.monotonic():
+            return cached[1]
+
+    aggregate = _build_aggregate(db, session_id, group, scope, conversation, category, block_type, source)
+    now = time.monotonic()  # after the build: a build slower than the TTL must still be reused
+    with _cache_lock:
+        for old in [k for k in _cache if k[:2] == key[:2] and k != key and k[2] != request_count]:
+            del _cache[old]  # the session has new requests: its other entries are stale
+        _cache.pop(key, None)
+        while len(_cache) >= _CACHE_LIMIT:
+            del _cache[min(_cache, key=lambda k: _cache[k][0])]
+        _cache[key] = (now + HOTSPOTS_CACHE_TTL_SECONDS, aggregate)
+    return aggregate
+
+
+def _page(
+    aggregate: _Aggregate, sort: str, in_context: str, limit: int, offset: int,
+) -> tuple[list[dict], int]:
+    """The filtered, sorted page of aggregate rows and the number of rows before paging.
+
+    Ordering is the one the SQL used: ``total DESC, occ DESC, k`` (or ``occ DESC, total DESC, k``).
+    Python compares strings by code point, which is the byte order SQLite's BINARY collation gives.
+    """
+    rows = aggregate.rows
+    if in_context != "all":
+        last_position = len(aggregate.resolved.requests) - 1
+        if in_context == "current":
+            rows = [r for r in rows if r["latest_key"] // POSITION_SHIFT == last_position]
+        else:
+            rows = [r for r in rows if r["latest_key"] // POSITION_SHIFT < last_position]
+    if sort == "total_tokens":
+        ordered = sorted(rows, key=lambda r: (-r["total"], -r["occ"], r["k"]))
+    else:
+        ordered = sorted(rows, key=lambda r: (-r["occ"], -r["total"], r["k"]))
+    return ordered[offset:offset + limit], len(ordered)
+
+
 def get_session_hotspots(
     db: OrmSession, session_id: str, *, group: str = "block", scope: str = "conversation",
     conversation: str | None = None, sort: str = "total_tokens", category: str | None = None,
@@ -173,45 +288,15 @@ def get_session_hotspots(
     """The ranking described in plans/archive/hot-spots.md; None when the session does not exist."""
     if db.get(Session, session_id) is None:
         return None
-    resolved = scope_for_session(
-        db, session_id, scope, conversation_key=conversation, with_conversations=True,
-    )
+    aggregate = _aggregate(db, session_id, group, scope, conversation, category, block_type, source)
+    resolved, total = aggregate.resolved, aggregate.total
     last_position = len(resolved.requests) - 1
-    fidelity: dict[str, int] = {}
-    for request in resolved.requests:
-        fidelity[request.context_fidelity] = fidelity.get(request.context_fidelity, 0) + 1
-
-    try:
-        _load_scope(db, resolved)
-        select_sql, params = aggregate_select(group, category=category, block_type=block_type, source=source)
-        db.execute(text(f"CREATE TEMP TABLE hs_agg AS {select_sql}"), params)
-
-        totals = db.execute(text("SELECT COALESCE(SUM(total), 0) AS tokens, COALESCE(SUM(occ), 0) AS occurrences FROM hs_agg")).one()
-        total, occurrences_total = totals.tokens or 0, totals.occurrences or 0
-        unidentifiable = None
-        if group == "block":
-            row = db.execute(text("SELECT occ, total FROM hs_agg WHERE k IS NULL")).first()
-            unidentifiable = {"blocks": row.occ if row else 0, "tokens": row.total if row else 0}
-
-        where = ["k IS NOT NULL"]
-        query_params: dict[str, Any] = {}
-        if in_context != "all":
-            where.append(f"latest_key / {POSITION_SHIFT} {'=' if in_context == 'current' else '<'} :last")
-            query_params["last"] = last_position
-        condition = " AND ".join(where)
-        total_rows = db.execute(text(f"SELECT COUNT(*) FROM hs_agg WHERE {condition}"), query_params).scalar() or 0
-        order = "total DESC, occ DESC, k" if sort == "total_tokens" else "occ DESC, total DESC, k"
-        page = db.execute(text(
-            f"SELECT * FROM hs_agg WHERE {condition} ORDER BY {order} LIMIT :limit OFFSET :offset"
-        ), {**query_params, "limit": limit, "offset": offset}).mappings().all()
-
-        pointers = [
-            unpack_latest(r["latest_key"])[1] if group != "source" else unpack_latest(r["largest_key"])[1]
-            for r in page
-        ]
-        described = _describe(db, pointers)
-    finally:
-        _drop_temp(db)
+    page, total_rows = _page(aggregate, sort, in_context, limit, offset)
+    pointers = [
+        unpack_latest(r["latest_key"])[1] if group != "source" else unpack_latest(r["largest_key"])[1]
+        for r in page
+    ]
+    described = _describe(db, pointers)
 
     rows: list[dict] = []
     for record, pointer in zip(page, pointers):
@@ -243,7 +328,7 @@ def get_session_hotspots(
                 "first_seen_session_seq": _seq(resolved, record["first_pos"]),
                 "last_seen_session_seq": _seq(resolved, last_pos),
                 "in_latest_request": last_pos == last_position,
-                "run_count": count_runs(int(p) for p in record["poss"].split(",")),
+                "run_count": record["run_count"],
                 "latest": latest,
             })
         elif group == "source":
@@ -270,7 +355,6 @@ def get_session_hotspots(
             })
 
     returned_tokens = sum(row["total_tokens"] for row in rows)
-    session_scope = resolved if resolved.scope == "session" else scope_for_session(db, session_id, "session")
     return {
         "scope": resolved.scope,
         "requested_scope": scope,
@@ -278,16 +362,13 @@ def get_session_hotspots(
         "group": group,
         "sort": sort,
         "conversations": resolved.conversations,
-        "input_totals": {
-            "session": _input_totals(db, session_scope),
-            "conversation": _input_totals(db, resolved) if resolved.scope == "conversation" else None,
-        },
+        "input_totals": aggregate.input_totals,
         "summary": {
             "scope_request_count": len(resolved.requests),
             "visible_tokens_total": total,
-            "occurrences_total": occurrences_total,
-            "fidelity_counts": fidelity,
-            "unidentifiable": unidentifiable,
+            "occurrences_total": aggregate.occurrences_total,
+            "fidelity_counts": aggregate.fidelity,
+            "unidentifiable": aggregate.unidentifiable,
             "returned_tokens": returned_tokens,
             "returned_share_pct": share_pct(returned_tokens, total),
         },
