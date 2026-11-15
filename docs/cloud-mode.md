@@ -6,6 +6,8 @@ used by Codex CLI.
 
 ContextSpy acts as an HTTPS man-in-the-middle proxy. It terminates TLS, inspects the
 request, logs and analyses it, then re-encrypts and forwards it to the provider.
+Traffic to any other host (MCP servers, telemetry, downloads) is tunnelled through
+unchanged: it is not decrypted, delayed or recorded.
 
 ![](_static/cloud-proxy.svg)
 
