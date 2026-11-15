@@ -55,7 +55,8 @@ export interface ActivityChartDatum {
 }
 
 export function toActivityChartData(activity: DashboardActivityPoint[]): ActivityChartDatum[] {
-  return activity.map((point) => ({
+  // API order is oldest first; show newest on the left to match the request flow.
+  return [...activity].reverse().map((point) => ({
     label: requestLabel(point.session_seq, point.id),
     tokens_total_input: point.tokens_total_input,
     tokens_total_output: point.tokens_total_output,

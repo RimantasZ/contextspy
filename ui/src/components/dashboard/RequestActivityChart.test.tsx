@@ -34,10 +34,10 @@ const activity: DashboardActivityPoint[] = [
 ]
 
 describe('activity chart helpers', () => {
-  it('keeps chronological order and raw values', () => {
+  it('orders newest first (matching the request flow) and keeps raw values', () => {
     expect(toActivityChartData(activity)).toEqual([
-      { label: '#3', tokens_total_input: 120000, tokens_total_output: 340 },
       { label: '#4', tokens_total_input: 87412, tokens_total_output: 612 },
+      { label: '#3', tokens_total_input: 120000, tokens_total_output: 340 },
     ])
   })
 
