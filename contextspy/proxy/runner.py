@@ -23,6 +23,7 @@ from mitmproxy.tools.dump import DumpMaster
 from mitmproxy.addons import errorcheck as _errorcheck
 
 from contextspy.proxy.addon import ContextSpyAddon
+from contextspy.proxy.capture_worker import CaptureWorker
 
 if TYPE_CHECKING:
     from contextspy.api.websocket import ConnectionManager
@@ -33,11 +34,13 @@ logger = logging.getLogger(__name__)
 _master: DumpMaster | None = None
 _thread: threading.Thread | None = None
 _addon: ContextSpyAddon | None = None
+_capture_worker: CaptureWorker | None = None
 _bound: bool = False  # True only after mitmproxy successfully binds the port
 
 # Reverse-proxy masters (one per [[reverse_targets]] entry)
 _reverse_masters: list[DumpMaster] = []
 _reverse_threads: list[threading.Thread] = []
+_reverse_workers: list[CaptureWorker] = []
 
 
 def _make_master(
@@ -92,12 +95,15 @@ def _make_master(
 
 
 def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = None) -> None:
-    global _master, _thread, _addon, _bound
+    global _master, _thread, _addon, _bound, _capture_worker
 
     if _master is not None:
         return  # already running
 
-    _addon = ContextSpyAddon()
+    # Capture analysis and persistence run here, never on mitmproxy's event loop.
+    _capture_worker = CaptureWorker()
+    _capture_worker.start()
+    _addon = ContextSpyAddon(capture_worker=_capture_worker)
     _addon.ws_manager = ws_manager
 
     options = Options(
@@ -164,14 +170,17 @@ def start_local_proxies(
     ws_manager: "ConnectionManager | None" = None,
 ) -> None:
     """Start one reverse-mode mitmproxy instance per [[reverse_targets]] entry."""
-    global _reverse_masters, _reverse_threads
+    global _reverse_masters, _reverse_threads, _reverse_workers
 
     if not settings.reverse_targets:
         logger.warning("start_local_proxies called but no [[reverse_targets]] are configured.")
         return
 
     for target in settings.reverse_targets:
-        addon = ContextSpyAddon(provider_override=target.provider)
+        worker = CaptureWorker(name=f"contextspy-capture-{target.name}")
+        worker.start()
+        _reverse_workers.append(worker)
+        addon = ContextSpyAddon(provider_override=target.provider, capture_worker=worker)
         addon.ws_manager = ws_manager
 
         options = Options(
@@ -242,7 +251,7 @@ def start_local_proxies(
 
 
 def stop_proxy() -> None:
-    global _master, _thread, _addon
+    global _master, _thread, _addon, _capture_worker
     if _master is not None:
         try:
             _master.shutdown()
@@ -254,10 +263,14 @@ def stop_proxy() -> None:
         _thread = None
         _addon = None
         logger.info("Proxy stopped.")
+    if _capture_worker is not None:
+        # After the proxy loop is gone, so no new captures arrive: save what is queued.
+        _capture_worker.stop()
+        _capture_worker = None
 
 
 def stop_local_proxies() -> None:
-    global _reverse_masters, _reverse_threads
+    global _reverse_masters, _reverse_threads, _reverse_workers
     for master in _reverse_masters:
         try:
             master.shutdown()
@@ -265,8 +278,11 @@ def stop_local_proxies() -> None:
             logger.debug("Reverse proxy shutdown error: %s", exc)
     for t in _reverse_threads:
         t.join(timeout=3)
+    for worker in _reverse_workers:
+        worker.stop()
     _reverse_masters = []
     _reverse_threads = []
+    _reverse_workers = []
     logger.info("All reverse proxies stopped.")
 
 

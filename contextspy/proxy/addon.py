@@ -39,6 +39,7 @@ from contextspy.analysis.stream_hint import extract_stream_hint
 from contextspy.db import crud
 from contextspy.db.database import get_db
 from contextspy.proxy import capture_state
+from contextspy.proxy.capture_worker import CaptureWorker
 from contextspy.proxy.capture_writer import CaptureEnvelope, persist_capture
 from contextspy.normalization import (
     InvocationLineageRepository,
@@ -146,6 +147,19 @@ def _captured_request_text(flow) -> tuple[str | None, str | None]:
     return raw, error
 
 
+def _mark_complete(flow) -> None:
+    """Record when the exchange finished, on the proxy loop, before the work is queued."""
+    flow.metadata["ts_end"] = time.monotonic()
+    flow.metadata["contextspy_completed_at"] = datetime.now(timezone.utc)
+
+
+def _flow_duration_ms(flow) -> int | None:
+    if "ts_start" not in flow.metadata:
+        return None
+    end = flow.metadata.get("ts_end", time.monotonic())
+    return int((end - flow.metadata["ts_start"]) * 1000)
+
+
 def _invocation_outcome(status_code: int | None, response_complete: bool) -> str:
     if status_code is not None and status_code >= 400:
         return "failed"
@@ -206,15 +220,34 @@ class _DatabaseLineageRepository(InvocationLineageRepository):
 
 
 class ContextSpyAddon:
-    def __init__(self, provider_override: str | None = None) -> None:
+    """mitmproxy addon. Hooks run on mitmproxy's event loop and must stay cheap.
+
+    With a ``capture_worker`` (the proxy runner always passes one), hooks only snapshot
+    the exchange and its timing, and analysis, persistence and the dashboard broadcast
+    run on the worker thread. Without one, captures are processed inline (tests).
+    """
+
+    def __init__(
+        self,
+        provider_override: str | None = None,
+        capture_worker: CaptureWorker | None = None,
+    ) -> None:
         self.ws_manager: ConnectionManager | None = None
         # When set, skip host-based detection and always use this provider.
         # Used by reverse-proxy mode where the upstream is a known local server.
         self._provider_override = provider_override
+        self._capture_worker = capture_worker
         # Keyed by flow.id — hooks run on the addon's own DumpMaster event loop
-        # (single-threaded), so no locking is needed around this dict.
+        # (single-threaded), so no locking is needed around this dict. Each state's
+        # WsSession is only used by the capture work, which runs in FIFO order.
         self._ws_flows: dict[str, _WsFlowState] = {}
         self._lineage = _DatabaseLineageRepository()
+
+    def _dispatch(self, fn, *args) -> None:
+        if self._capture_worker is not None:
+            self._capture_worker.submit(fn, *args)
+        else:
+            fn(*args)
 
     def _get_provider(self, host: str, port: int) -> str | None:
         if self._provider_override is not None:
@@ -350,11 +383,9 @@ class ContextSpyAddon:
                 sse_chunks.append(data)
             else:
                 # Empty bytes signals end of stream
-                raw = b"".join(sse_chunks)
-                try:
-                    addon._handle_sse_response(flow, raw)
-                except Exception as exc:
-                    logger.warning("SSE handler error: %s", exc, exc_info=True)
+                _mark_complete(flow)
+                flow.metadata["contextspy_dispatched"] = True
+                addon._dispatch(addon._handle_sse_chunks, flow, sse_chunks)
             return data
 
         flow.metadata["is_sse"] = True
@@ -369,10 +400,23 @@ class ContextSpyAddon:
             return  # no response to process (e.g., connection error)
         if flow.metadata.get("contextspy_paused_ignore"):
             return  # request arrived while capture was paused
+        if self._get_provider(flow.request.pretty_host, flow.request.port) is None:
+            return  # not an LLM host: nothing to record
+        _mark_complete(flow)
+        flow.metadata["contextspy_dispatched"] = True
+        self._dispatch(self._handle_response_safely, flow)
+
+    def _handle_response_safely(self, flow: http.HTTPFlow) -> None:
         try:
             self._handle_response(flow)
         except Exception as exc:
             logger.warning("ContextSpyAddon error: %s", exc, exc_info=True)
+
+    def _handle_sse_chunks(self, flow: http.HTTPFlow, chunks: list[bytes]) -> None:
+        try:
+            self._handle_sse_response(flow, b"".join(chunks))
+        except Exception as exc:
+            logger.warning("SSE handler error: %s", exc, exc_info=True)
 
     def _handle_sse_response(self, flow: http.HTTPFlow, raw_sse: bytes) -> None:
         # Decompress if the response was content-encoded
@@ -422,9 +466,7 @@ class ContextSpyAddon:
             req_body = {}
             request_decode_error = exc
 
-        duration_ms: int | None = None
-        if "ts_start" in flow.metadata:
-            duration_ms = int((time.monotonic() - flow.metadata["ts_start"]) * 1000)
+        duration_ms = _flow_duration_ms(flow)
 
         ttft_ms: int | None = None
         if "ts_start" in flow.metadata and "ts_first_chunk" in flow.metadata:
@@ -486,6 +528,7 @@ class ContextSpyAddon:
             response_complete=response_complete, response_events=response_events,
             capture_error=capture_error, canonical=canonical_invocation,
             started_at=flow.metadata.get("contextspy_started_at"),
+            completed_at=flow.metadata.get("contextspy_completed_at"),
             session_id=(
                 flow.metadata.get("contextspy_session_id_at_start")
                 if flow.metadata.get("contextspy_capture_resolved") else _CAPTURE_UNSET
@@ -541,9 +584,7 @@ class ContextSpyAddon:
             except json.JSONDecodeError:
                 pass
 
-        duration_ms: int | None = None
-        if "ts_start" in flow.metadata:
-            duration_ms = int((time.monotonic() - flow.metadata["ts_start"]) * 1000)
+        duration_ms = _flow_duration_ms(flow)
 
         adapter = get_adapter(endpoint)
         content_type = flow.response.headers.get("content-type", "").lower()
@@ -636,6 +677,7 @@ class ContextSpyAddon:
             capture_error=capture_error,
             canonical=canonical_invocation,
             started_at=flow.metadata.get("contextspy_started_at"),
+            completed_at=flow.metadata.get("contextspy_completed_at"),
             session_id=(
                 flow.metadata.get("contextspy_session_id_at_start")
                 if flow.metadata.get("contextspy_capture_resolved") else _CAPTURE_UNSET
@@ -654,6 +696,7 @@ class ContextSpyAddon:
                       capture_error: dict | None = None,
                       canonical: CanonicalInvocation | None = None,
                       started_at: datetime | None = None,
+                      completed_at: datetime | None = None,
                       session_id: str | None | object = _CAPTURE_UNSET) -> None:
         # Skip non-LLM endpoints (telemetry, auth, health checks, etc.)
         # Only persist requests that we could actually parse OR that look like
@@ -700,7 +743,7 @@ class ContextSpyAddon:
         data: dict = {
             "id": str(uuid.uuid4()),
             "session_id": resolved_session_id,
-            "timestamp": datetime.now(timezone.utc),
+            "timestamp": completed_at or datetime.now(timezone.utc),
             "started_at": started_at,
             "provider": provider,
             "model": model,
@@ -850,6 +893,19 @@ class ContextSpyAddon:
                     started_at=datetime.now(timezone.utc),
                     session_id=active_session.id if active_session else None,
                 )
+        # Bound memory on long-lived, pooled connections — forwarding already
+        # happened via a local variable inside mitmproxy's websocket layer, so
+        # trimming the flow's own message history here is safe.
+        del flow.websocket.messages[:-1]
+
+        self._dispatch(
+            self._process_ws_message, state, message, capture_context,
+            datetime.now(timezone.utc),
+        )
+
+    def _process_ws_message(
+        self, state: _WsFlowState, message, capture_context, completed_at: datetime,
+    ) -> None:
         try:
             exchanges = state.session.on_message(
                 from_client=message.from_client,
@@ -861,15 +917,14 @@ class ContextSpyAddon:
         except Exception as exc:
             logger.warning("WS session.on_message error: %s", exc, exc_info=True)
             exchanges = []
+        self._handle_ws_exchanges(state, exchanges, completed_at)
 
-        # Bound memory on long-lived, pooled connections — forwarding already
-        # happened via a local variable inside mitmproxy's websocket layer, so
-        # trimming the flow's own message history here is safe.
-        del flow.websocket.messages[:-1]
-
+    def _handle_ws_exchanges(
+        self, state: _WsFlowState, exchanges, completed_at: datetime,
+    ) -> None:
         for exchange in exchanges:
             try:
-                self._handle_ws_exchange(state, exchange)
+                self._handle_ws_exchange(state, exchange, completed_at)
             except Exception as exc:
                 logger.warning("WS exchange handling error: %s", exc, exc_info=True)
 
@@ -877,16 +932,15 @@ class ContextSpyAddon:
         state = self._ws_flows.pop(flow.id, None)
         if state is None:
             return
+        self._dispatch(self._close_ws_session, state, datetime.now(timezone.utc))
+
+    def _close_ws_session(self, state: _WsFlowState, completed_at: datetime) -> None:
         try:
             exchanges = state.session.on_close()
         except Exception as exc:
             logger.warning("WS session.on_close error: %s", exc, exc_info=True)
             exchanges = []
-        for exchange in exchanges:
-            try:
-                self._handle_ws_exchange(state, exchange)
-            except Exception as exc:
-                logger.warning("WS exchange handling error: %s", exc, exc_info=True)
+        self._handle_ws_exchanges(state, exchanges, completed_at)
 
     def error(self, flow: http.HTTPFlow) -> None:
         # Belt-and-braces: mitmproxy errors (e.g. connection reset mid-turn) don't
@@ -894,12 +948,27 @@ class ContextSpyAddon:
         if flow.id in self._ws_flows:
             self.websocket_end(flow)
             return
-        if flow.metadata.get("contextspy_saved") or flow.metadata.get("contextspy_paused_ignore"):
+        if (
+            flow.metadata.get("contextspy_saved")
+            or flow.metadata.get("contextspy_dispatched")
+            or flow.metadata.get("contextspy_paused_ignore")
+        ):
             return
 
         provider = self._get_provider(flow.request.pretty_host, flow.request.port)
         if provider is None:
             return
+        _mark_complete(flow)
+        flow.metadata["contextspy_dispatched"] = True
+        self._dispatch(self._handle_error_safely, flow, provider)
+
+    def _handle_error_safely(self, flow: http.HTTPFlow, provider: str) -> None:
+        try:
+            self._handle_error(flow, provider)
+        except Exception as exc:
+            logger.warning("ContextSpyAddon error (failed request): %s", exc, exc_info=True)
+
+    def _handle_error(self, flow: http.HTTPFlow, provider: str) -> None:
         endpoint = flow.request.path
         raw_request_body, request_capture_error = _captured_request_text(flow)
         capture_error = {
@@ -950,6 +1019,7 @@ class ContextSpyAddon:
             capture_error=capture_error,
             canonical=canonical_invocation,
             started_at=flow.metadata.get("contextspy_started_at"),
+            completed_at=flow.metadata.get("contextspy_completed_at"),
             session_id=(
                 flow.metadata.get("contextspy_session_id_at_start")
                 if flow.metadata.get("contextspy_capture_resolved") else _CAPTURE_UNSET
@@ -957,7 +1027,10 @@ class ContextSpyAddon:
         )
         flow.metadata["contextspy_saved"] = True
 
-    def _handle_ws_exchange(self, state: _WsFlowState, ex: CompletedExchange) -> None:
+    def _handle_ws_exchange(
+        self, state: _WsFlowState, ex: CompletedExchange,
+        completed_at: datetime | None = None,
+    ) -> None:
         adapter = get_adapter(state.endpoint)
         analyzed: AnalyzedRequest | None = None
         response_events: str | None = None
@@ -1043,6 +1116,7 @@ class ContextSpyAddon:
             started_at=(
                 ex.capture_context.started_at if ex.capture_context is not None else None
             ),
+            completed_at=completed_at,
             session_id=(
                 ex.capture_context.session_id
                 if ex.capture_context is not None else _CAPTURE_UNSET
