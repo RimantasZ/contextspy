@@ -140,7 +140,7 @@ def _scope_requests(db: OrmSession, request: Request, scope: str) -> tuple[list[
 
 
 def _index(db: OrmSession, request_id: str, block_id: int, scope: str):
-    request = db.get(Request, request_id)
+    request = db.get(Request, request_id, options=crud.without_bodies())
     block = db.get(BlockRecord, block_id)
     if request is None or block is None or block.request_id != request_id:
         return None

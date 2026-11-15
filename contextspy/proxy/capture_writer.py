@@ -56,14 +56,13 @@ def _persist_once(envelope: CaptureEnvelope) -> dict | None:
     with get_db() as db:
         # A commit can succeed while its acknowledgement fails. The stable UUID
         # lets the next attempt discover that result without inserting twice.
-        existing = db.get(Request, envelope.request_id)
+        existing = db.get(Request, envelope.request_id, options=crud.without_bodies())
         if existing is not None:
             return existing.to_dict(include_raw=False)
         if envelope.provider_response_id:
-            duplicate = crud.get_request_by_provider_response_id(
+            if crud.provider_response_exists(
                 db, envelope.provider, envelope.provider_response_id,
-            )
-            if duplicate is not None:
+            ):
                 logger.debug(
                     "Skipping duplicate provider response %s",
                     envelope.provider_response_id,

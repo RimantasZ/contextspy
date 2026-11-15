@@ -22,7 +22,7 @@ from typing import Any, TYPE_CHECKING
 
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.orm import Session as OrmSession, load_only
+from sqlalchemy.orm import Session as OrmSession, defer, load_only
 
 from contextspy.analysis.blocks import BlockType, Direction
 from contextspy.db import session_lineage_service, trend_service
@@ -30,6 +30,22 @@ from contextspy.db.models import BlockContent, BlockRecord, Request, Session, To
 
 if TYPE_CHECKING:
     from contextspy.analysis.blocks import Block
+
+
+# The payload columns of ``requests``. On an unarchived session each holds the full
+# conversation (megabytes per row), so a read that only needs metadata or token counts
+# must not load them: dashboard reads run on every captured request, in the same process
+# as the proxy.
+_REQUEST_BODY_COLUMNS = (
+    Request.raw_request_body, Request.canonical_request_body,
+    Request.raw_response_body, Request.canonical_response_body,
+    Request.response_events,
+)
+
+
+def without_bodies() -> tuple:
+    """Load options for whole Request entities whose payload columns stay unloaded until read."""
+    return tuple(defer(column) for column in _REQUEST_BODY_COLUMNS)
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +168,24 @@ def get_request(db: OrmSession, request_id: str) -> Request | None:
     return db.get(Request, request_id)
 
 
+def get_request_session_seq(db: OrmSession, request_id: str) -> tuple[bool, int | None]:
+    """(exists, session_seq) for one request, without loading its payload columns."""
+    row = db.execute(select(Request.session_seq).where(Request.id == request_id)).first()
+    return (row is not None, row[0] if row is not None else None)
+
+
+def provider_response_exists(db: OrmSession, provider: str, response_id: str) -> bool:
+    """Whether a request with this explicit provider response ID is already stored."""
+    return db.scalar(
+        select(Request.id)
+        .where(
+            Request.provider == provider,
+            Request.provider_response_id == response_id,
+        )
+        .limit(1)
+    ) is not None
+
+
 def get_request_by_provider_response_id(
     db: OrmSession, provider: str, response_id: str,
 ) -> Request | None:
@@ -238,21 +272,24 @@ def _lineage_snapshots_for_requests(
     ) for request in requests]
 
 
+# Every Request column _lineage_snapshots_for_requests reads.
+_LINEAGE_COLUMNS = (
+    Request.id, Request.session_id, Request.session_seq, Request.timestamp,
+    Request.started_at, Request.duration_ms, Request.provider, Request.model,
+    Request.agent, Request.endpoint, Request.provider_response_id,
+    Request.predecessor_response_id, Request.context_fidelity,
+    Request.tokens_total_input, Request.tokens_total_output,
+    Request.stream_hint_source, Request.stream_hint_digest,
+)
+
+
 def get_session_lineage_snapshots(db: OrmSession, session_id: str) -> tuple[list, list]:
     """Load one capture and any exact parents outside it without N+1 queries."""
     from dataclasses import replace
 
-    lineage_columns = (
-        Request.id, Request.session_id, Request.session_seq, Request.timestamp,
-        Request.started_at, Request.duration_ms, Request.provider, Request.model,
-        Request.agent, Request.endpoint, Request.provider_response_id,
-        Request.predecessor_response_id, Request.context_fidelity,
-        Request.tokens_total_input, Request.tokens_total_output,
-        Request.stream_hint_source, Request.stream_hint_digest,
-    )
     requests = list(db.execute(
         select(Request)
-        .options(load_only(*lineage_columns, raiseload=True))
+        .options(load_only(*_LINEAGE_COLUMNS, raiseload=True))
         .where(Request.session_id == session_id)
         .order_by(Request.session_seq.asc(), Request.timestamp.asc(), Request.id.asc())
     ).scalars().all())
@@ -274,7 +311,7 @@ def get_session_lineage_snapshots(db: OrmSession, session_id: str) -> tuple[list
     response_ids = {response_id for _, response_id in missing_ids}
     candidates = list(db.execute(
         select(Request)
-        .options(load_only(*lineage_columns, raiseload=True))
+        .options(load_only(*_LINEAGE_COLUMNS, raiseload=True))
         .where(Request.provider_response_id.in_(response_ids))
         .order_by(Request.timestamp.desc(), Request.id.desc())
     ).scalars().all())
@@ -294,7 +331,9 @@ def get_context_diff_snapshots(
     db: OrmSession, parent_id: str, child_id: str,
 ) -> tuple | None:
     rows = list(db.execute(
-        select(Request).where(Request.id.in_((parent_id, child_id)))
+        select(Request)
+        .options(load_only(*_LINEAGE_COLUMNS, raiseload=True))
+        .where(Request.id.in_((parent_id, child_id)))
     ).scalars().all())
     if len(rows) != 2:
         return None
@@ -330,7 +369,7 @@ def list_requests(
     limit: int = 50,
     offset: int = 0,
 ) -> list[Request]:
-    stmt = select(Request)
+    stmt = select(Request).options(*without_bodies())
     if sort_by == 'session':
         stmt = stmt.outerjoin(Session, Request.session_id == Session.id)
     if session_id is not None:
@@ -405,11 +444,22 @@ _CATEGORY_COLS = [
 ]
 
 
+# Every Request column get_stats reads; rows are plain column tuples, not entities.
+_STATS_COLUMNS = (
+    Request.tokens_total_input, Request.tokens_total_output,
+    Request.tokens_output_text, Request.tokens_output_thinking,
+    Request.provider_input_tokens, Request.cache_read_tokens, Request.cache_creation_tokens,
+    *(getattr(Request, col) for col in _CATEGORY_COLS),
+    Request.provider, Request.agent, Request.model,
+    Request.duration_ms, Request.status_code, Request.invocation_outcome, Request.timestamp,
+)
+
+
 def get_stats(db: OrmSession, session_id: str | None = None) -> dict:
-    q = select(Request)
+    q = select(*_STATS_COLUMNS)
     if session_id is not None:
         q = q.where(Request.session_id == session_id)
-    rows = list(db.execute(q).scalars().all())
+    rows = list(db.execute(q).all())
 
     if not rows:
         return _empty_stats()
@@ -739,11 +789,11 @@ def get_timeline(
     bucket_map = {"minute": "%Y-%m-%dT%H:%M", "hour": "%Y-%m-%dT%H:00", "day": "%Y-%m-%d"}
     fmt = bucket_map.get(bucket, "%Y-%m-%dT%H")
 
-    q = select(Request)
+    q = select(Request.timestamp, Request.tokens_total_input)
     if session_id is not None:
         q = q.where(Request.session_id == session_id)
 
-    rows = list(db.execute(q).scalars().all())
+    rows = list(db.execute(q).all())
     buckets: dict[str, dict] = {}
     for r in rows:
         key = r.timestamp.strftime(fmt)
