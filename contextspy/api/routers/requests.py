@@ -70,12 +70,12 @@ def get_request(request_id: str):
 @router.get("/requests/{request_id}/blocks")
 def get_request_blocks(request_id: str):
     with get_db() as db:
-        req = crud.get_request(db, request_id)
-        if not req:
+        exists, session_seq = crud.get_request_session_seq(db, request_id)
+        if not exists:
             raise HTTPException(status_code=404, detail="Request not found")
         blocks = crud.get_blocks(db, request_id)
         return {
-            "session_seq": req.session_seq,
+            "session_seq": session_seq,
             "blocks": blocks,
             "token_totals": block_visual_token_totals(blocks),
         }
