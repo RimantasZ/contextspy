@@ -619,7 +619,8 @@ def test_lineage_revision_does_not_read_block_attrs(db):
     _blocks(db, "r1", "user_message", 1, content_hash="visible", attrs="large attrs")
     statements = []
     def record(_connection, _cursor, statement, _parameters, _context, _many):
-        if "FROM blocks" in statement:
+        # The watermark query reads only max(blocks.id), never a block row.
+        if "FROM blocks" in statement and "max(blocks.id)" not in statement:
             statements.append(statement)
     engine = db.get_bind()
     event.listen(engine, "before_cursor_execute", record)

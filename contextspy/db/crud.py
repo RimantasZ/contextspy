@@ -18,7 +18,7 @@ import binascii
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, TYPE_CHECKING
+from typing import Any, Mapping, TYPE_CHECKING
 
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -194,7 +194,12 @@ def _lineage_snapshots_for_requests(
     }
     if request_ids:
         # Plain column rows, not ORM entities: building 800k BlockRecord objects costs more
-        # than the query itself on a long session.
+        # than the query itself on a long session. Every string column repeats from request
+        # to request (each one carries the conversation so far), so equal values share one
+        # object: on a 2,500-request session this keeps the snapshots several times smaller.
+        own_id = {request_id: request_id for request_id in request_ids}
+        shared = {}
+        same = shared.setdefault
         rows = db.execute(
             select(
                 BlockRecord.id, BlockRecord.request_id, BlockRecord.direction,
@@ -211,9 +216,16 @@ def _lineage_snapshots_for_requests(
                 BlockRecord.id.asc(),
             )
         )
-        # The select list follows ContextBlock's field order, so a row is its arguments.
-        for row in rows:
-            blocks_by_request[row[1]].append(ContextBlock(*row))
+        # The select list follows ContextBlock's field order.
+        for (block_id, request_id, direction, position, message_index, block_type, category,
+             content_hash, token_count, tool_name, tool_call_id) in rows:
+            request_id = own_id[request_id]
+            blocks_by_request[request_id].append(ContextBlock(
+                block_id, request_id, same(direction, direction), position, message_index,
+                same(block_type, block_type), same(category, category),
+                same(content_hash, content_hash), token_count, same(tool_name, tool_name),
+                same(tool_call_id, tool_call_id),
+            ))
 
     return [RequestSnapshot(
         id=request.id,
@@ -238,25 +250,50 @@ def _lineage_snapshots_for_requests(
     ) for request in requests]
 
 
-def get_session_lineage_snapshots(db: OrmSession, session_id: str) -> tuple[list, list]:
-    """Load one capture and any exact parents outside it without N+1 queries."""
+_SNAPSHOT_REQUEST_FIELDS = (
+    "id", "session_id", "session_seq", "timestamp", "started_at", "duration_ms", "provider",
+    "model", "agent", "endpoint", "provider_response_id", "predecessor_response_id",
+    "context_fidelity", "tokens_total_input", "tokens_total_output", "stream_hint_source",
+    "stream_hint_digest",
+)
+
+
+def get_session_lineage_snapshots(
+    db: OrmSession, session_id: str, reusable: Mapping[str, Any] | None = None,
+) -> tuple[list, list]:
+    """Load one capture and any exact parents outside it without N+1 queries.
+
+    ``reusable`` maps request ids to snapshots the caller knows are current: the lineage
+    service passes the snapshots whose request and block evidence is unchanged since they
+    were loaded (see ``session_lineage_service``). Their block rows are not read again; a
+    snapshot whose request columns no longer match the row is loaded afresh regardless.
+    """
     from dataclasses import replace
 
-    lineage_columns = (
-        Request.id, Request.session_id, Request.session_seq, Request.timestamp,
-        Request.started_at, Request.duration_ms, Request.provider, Request.model,
-        Request.agent, Request.endpoint, Request.provider_response_id,
-        Request.predecessor_response_id, Request.context_fidelity,
-        Request.tokens_total_input, Request.tokens_total_output,
-        Request.stream_hint_source, Request.stream_hint_digest,
-    )
+    lineage_columns = tuple(getattr(Request, name) for name in _SNAPSHOT_REQUEST_FIELDS)
     requests = list(db.execute(
         select(Request)
         .options(load_only(*lineage_columns, raiseload=True))
         .where(Request.session_id == session_id)
         .order_by(Request.session_seq.asc(), Request.timestamp.asc(), Request.id.asc())
     ).scalars().all())
-    internal = _lineage_snapshots_for_requests(db, requests)
+    if reusable:
+        kept = {}
+        for request in requests:
+            snapshot = reusable.get(request.id)
+            if snapshot is not None and not snapshot.external and all(
+                getattr(snapshot, name) == getattr(request, name)
+                for name in _SNAPSHOT_REQUEST_FIELDS
+            ):
+                kept[request.id] = snapshot
+        loaded = {
+            snapshot.id: snapshot for snapshot in _lineage_snapshots_for_requests(
+                db, [request for request in requests if request.id not in kept],
+            )
+        }
+        internal = [kept.get(request.id) or loaded[request.id] for request in requests]
+    else:
+        internal = _lineage_snapshots_for_requests(db, requests)
 
     internal_response_ids = {
         (request.provider, request.provider_response_id)

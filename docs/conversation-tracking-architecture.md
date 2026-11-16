@@ -48,9 +48,23 @@ The on-demand revision hashes metadata relevant to the session's graph and selec
 panel: its request rows, matching external provider-predecessor rows, and their block metadata.
 It excludes raw/canonical bodies and unrelated sessions. This catches edits to hints, fidelity,
 provider IDs, tokens, blocks, deletions, reassignments, and external-parent arrival. It does
-not persist the graph or require a schema migration. The revision calculation is proportional
-to the session's evidence size, even when the graph cache hits; this is a deliberate correctness
-tradeoff to measure against the approximately 2,000-request normal upper bound.
+not persist the graph or require a schema migration. The revision is remembered until a write
+to `requests` or `blocks` (through the process's engine) could have changed it, or for
+`REVISION_TTL_SECONDS` for writers in other processes.
+
+A live session gets a capture every few seconds, so the revision and the graph inputs are also
+kept per request:
+
+- The revision sums one digest per request (row and block rows) plus a digest of the
+  external parents. When every write since the last full computation was a plain `INSERT` (a
+  capture), only the rows above the stored `requests.rowid` and `blocks.id` watermarks are
+  hashed. Any other write, a rollback, a request count that does not add up, or a base older
+  than the TTL computes it in full, which gives the same revision for the same data.
+- A request's lineage snapshot is reused while its digest is unchanged, so only new or
+  changed requests have their block rows read again; `LineageBuildMemo` reuses each request's
+  prepared context and the delta summary of each exact edge. The graph itself is always
+  rebuilt over all requests, because block weights are document frequencies over the whole
+  session. Snapshots are kept for the two most recently built sessions.
 
 The graph cache keeps at most four sessions, one revision each, and approximately 12 MiB of
 serialized graph size. Oversized graphs are recomputed rather than retained. The serialized
@@ -71,8 +85,10 @@ needed for this additive cleanup.
    required additive and data-migration steps if the schema changes. Keep raw provider IDs
    distinct from heuristic stream hints.
 2. Add an immutable snapshot field only if the graph truly needs it; add that field to the
-   metadata-only read and revision fingerprint together. A new block-level evidence field
-   likewise belongs in both the snapshot read and revision hash.
+   metadata-only read and revision fingerprint together (`crud._SNAPSHOT_REQUEST_FIELDS` and
+   `session_lineage_service._EVIDENCE_COLUMNS`). A new block-level evidence field likewise
+   belongs in both the snapshot read and revision hash: snapshots are reused while the hash
+   is unchanged, so a field missing from the hash would be served stale.
 3. Add a focused synthetic positive and negative fixture in `tests/test_lineage.py`. Cover
    candidate competition, forks, opaque/partial context, and cross-session exact links as
    relevant. Check both direct edges and display grouping, because they are different claims.
