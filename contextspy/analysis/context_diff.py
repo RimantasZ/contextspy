@@ -15,9 +15,13 @@ from contextspy.analysis.blocks import BlockType, Direction
 _CONFIG_TYPES = {BlockType.SYSTEM_PROMPT, BlockType.TOOL_DEFINITION}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ContextBlock:
-    """The retained block metadata needed for lineage analysis."""
+    """The retained block metadata needed for lineage analysis.
+
+    A long session has hundreds of thousands of these (one per stored block), so they use
+    slots instead of a per-instance dict.
+    """
 
     id: int
     request_id: str

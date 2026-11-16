@@ -130,8 +130,55 @@ class ScoringWeights:
     transcript_has_tool: Mapping[str, bool]
 
 
+class LineageBuildMemo:
+    """Results of pure per-request and per-pair steps, kept between builds of one session.
+
+    A graph depends on every request of the session (block weights are document
+    frequencies over all of them), so each new capture rebuilds it. Two of its inputs do not
+    depend on the other requests: a request's prepared context, and the delta summary of an
+    exact provider edge. Snapshots are immutable and every entry holds the snapshots it was
+    computed from, so an entry is reused only for the very same snapshot objects (the
+    session lineage service keeps a snapshot until its stored evidence changes).
+    """
+
+    def __init__(self) -> None:
+        self._contexts: dict[int, tuple[RequestSnapshot, PreparedContext]] = {}
+        self._exact: dict[tuple[int, int], tuple[RequestSnapshot, RequestSnapshot, ContextDelta]] = {}
+
+    def context(self, request: RequestSnapshot) -> PreparedContext:
+        entry = self._contexts.get(id(request))
+        if entry is None or entry[0] is not request:
+            entry = (request, prepare_context(request.blocks))
+            self._contexts[id(request)] = entry
+        return entry[1]
+
+    def exact_delta(
+        self, parent: RequestSnapshot, child: RequestSnapshot, weights: "ScoringWeights",
+    ) -> ContextDelta:
+        """The delta of an exact edge, reduced to its summary: the graph serializes edges
+        without their block mappings, and keeping the mappings would hold one object per
+        block of the session."""
+        key = (id(parent), id(child))
+        entry = self._exact.get(key)
+        if entry is None or entry[0] is not parent or entry[1] is not child:
+            full = diff_prepared(weights.contexts[parent.id], weights.contexts[child.id])
+            entry = (parent, child, ContextDelta(summary=full.summary))
+            self._exact[key] = entry
+        return entry[2]
+
+    def retain(self, requests: Iterable[RequestSnapshot]) -> None:
+        """Forget entries of snapshots that are not part of the latest build."""
+        live = {id(request) for request in requests}
+        self._contexts = {key: value for key, value in self._contexts.items() if key in live}
+        self._exact = {
+            key: value for key, value in self._exact.items()
+            if key[0] in live and key[1] in live
+        }
+
+
 def _scoring_weights(
     requests: Iterable[RequestSnapshot], frequencies: Counter, document_count: int,
+    memo: LineageBuildMemo | None = None,
 ) -> ScoringWeights:
     blocks: dict[int, float] = {}
     input_totals: dict[str, float] = {}
@@ -142,7 +189,9 @@ def _scoring_weights(
     transcript_cumulative: dict[str, list[float]] = {}
     transcript_has_tool: dict[str, bool] = {}
     for request in requests:
-        contexts[request.id] = prepare_context(request.blocks)
+        contexts[request.id] = (
+            memo.context(request) if memo is not None else prepare_context(request.blocks)
+        )
         input_total = output_total = 0.0
         by_input: dict[tuple, float] = defaultdict(float)
         by_output: dict[tuple, float] = defaultdict(float)
@@ -489,8 +538,13 @@ def build_lineage_graph(
     requests: Iterable[RequestSnapshot],
     *,
     external_requests: Iterable[RequestSnapshot] = (),
+    memo: LineageBuildMemo | None = None,
 ) -> dict[str, Any]:
-    """Build a deterministic graph from exact IDs and conservative block inference."""
+    """Build a deterministic graph from exact IDs and conservative block inference.
+
+    ``memo`` (optional) reuses the pure per-request and per-pair steps of an earlier build
+    over the same snapshot objects; the graph is the same with or without it.
+    """
     internal = sorted(list(requests), key=_request_order)
     external = list(external_requests)
     all_requests = internal + external
@@ -505,7 +559,7 @@ def build_lineage_graph(
             )
 
     frequencies, document_count = _document_frequencies(internal)
-    scoring_weights = _scoring_weights(all_requests, frequencies, document_count)
+    scoring_weights = _scoring_weights(all_requests, frequencies, document_count, memo)
     internal_by_id = {request.id: request for request in internal}
     order_by_id, context_postings, context_key_counts = _candidate_ids_by_shared_context(internal)
     edges: list[LineageEdge] = []
@@ -533,10 +587,12 @@ def build_lineage_graph(
                 diagnostic["reason"] = "cycle_rejected"
             unresolved.append(diagnostic)
             continue
-        delta = (
-            diff_prepared(scoring_weights.contexts[parent.id], scoring_weights.contexts[child.id])
-            if parent.blocks and child.blocks else None
-        )
+        if not (parent.blocks and child.blocks):
+            delta = None
+        elif memo is not None:
+            delta = memo.exact_delta(parent, child, scoring_weights)
+        else:
+            delta = diff_prepared(scoring_weights.contexts[parent.id], scoring_weights.contexts[child.id])
         edges.append(LineageEdge(
             source_request_id=parent.id,
             target_request_id=child.id,

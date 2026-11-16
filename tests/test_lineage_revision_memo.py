@@ -32,15 +32,15 @@ def engine(tmp_path):
 
 @pytest.fixture
 def counted(monkeypatch):
-    """Counts how often the exact fingerprint is computed."""
+    """Counts how often the exact fingerprint is computed in full."""
     calls = []
-    real = service.evidence_revision
+    real = service._full_evidence
 
-    def counting(db, session_id, session_count):
+    def counting(db, session_id):
         calls.append(session_id)
-        return real(db, session_id, session_count)
+        return real(db, session_id)
 
-    monkeypatch.setattr(service, "evidence_revision", counting)
+    monkeypatch.setattr(service, "_full_evidence", counting)
     return calls
 
 
@@ -184,16 +184,16 @@ def test_archiving_does_not_change_the_revision(engine):
 
 def test_a_write_during_the_computation_is_not_remembered(engine, monkeypatch):
     _seed(engine)
-    real = service.evidence_revision
+    real = service._full_evidence
     state = {"first": True}
 
-    def racing(db, session_id, session_count):
-        revision = real(db, session_id, session_count)
+    def racing(db, session_id):
+        evidence = real(db, session_id)
         if state.pop("first", False):
             _write(engine, "update blocks set token_count = 77 where request_id = 's1-r1'")
-        return revision
+        return evidence
 
-    monkeypatch.setattr(service, "evidence_revision", racing)
+    monkeypatch.setattr(service, "_full_evidence", racing)
     stale = _revision(engine)
     assert _revision(engine) != stale  # the stale value was served once, never kept
     assert _revision(engine) == _exact(engine)
