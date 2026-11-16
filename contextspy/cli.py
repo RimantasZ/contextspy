@@ -812,6 +812,7 @@ def reset_db(
         "tool_stats",
         "blocks",
         "block_contents",
+        "payload_parts",
         "requests",
         "sessions",
         "schema_meta",
@@ -987,7 +988,14 @@ def db_compact(
         console.print(f"Database: {db_path}")
         console.print(f"  Size on disk: {_format_bytes(space.file_bytes + space.wal_bytes)}")
         console.print(f"  Free space inside the file: {_format_bytes(space.free_bytes)} ({space.free_fraction:.0%})")
-        console.print(f"  Expected size after compacting: about {_format_bytes(space.live_bytes)}")
+        if space.packable_requests:
+            console.print(
+                f"  Request bodies to pack first: {space.packable_requests:,} requests "
+                "(lossless; repeated conversation history is stored once)"
+            )
+            console.print(f"  Expected size after compacting: well below {_format_bytes(space.live_bytes)}")
+        else:
+            console.print(f"  Expected size after compacting: about {_format_bytes(space.live_bytes)}")
         if yes:
             return True
         return typer.confirm("Compact the database now? Keep ContextSpy stopped until it finishes.")

@@ -23,6 +23,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
+from contextspy.db import payload_store
 from contextspy.db.models import Base
 from contextspy.db.maintenance_lock import acquire_database_lock, release_database_lock
 
@@ -144,6 +145,9 @@ def _migrate(engine) -> None:
         ("sessions", "archived_at", "DATETIME"),
         # v10: file a read/edit tool call targets
         ("blocks", "file_path", "TEXT"),
+        # Packed request bodies (db/payload_store.py); the parts table itself comes from create_all
+        ("requests", "raw_request_parts", "TEXT"),
+        ("requests", "canonical_request_parts", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_columns:
@@ -254,17 +258,22 @@ def startup_vacuum(settings=None) -> None:
                         raw_response_body = NULL,
                         canonical_request_body = NULL,
                         canonical_response_body = NULL,
-                        response_events = NULL
+                        response_events = NULL,
+                        raw_request_parts = NULL,
+                        canonical_request_parts = NULL
                     WHERE timestamp < :cutoff
                       AND (raw_request_body IS NOT NULL
                            OR raw_response_body IS NOT NULL
                            OR canonical_request_body IS NOT NULL
                            OR canonical_response_body IS NOT NULL
-                           OR response_events IS NOT NULL)
+                           OR response_events IS NOT NULL
+                           OR raw_request_parts IS NOT NULL
+                           OR canonical_request_parts IS NOT NULL)
                     """
                 ),
                 {"cutoff": cutoff.isoformat()},
             )
+            payload_store.delete_unreferenced(conn)
 
         block_content_days = settings.retention.block_content_days
         if block_content_days > 0:

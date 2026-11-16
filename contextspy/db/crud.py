@@ -25,7 +25,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session as OrmSession, load_only
 
 from contextspy.analysis.blocks import BlockType, Direction
-from contextspy.db import session_lineage_service, trend_service
+from contextspy.db import payload_store, session_lineage_service, trend_service
 from contextspy.db.models import BlockContent, BlockRecord, Request, Session, ToolStat
 
 if TYPE_CHECKING:
@@ -104,6 +104,7 @@ def delete_session_with_requests(db: OrmSession, session_id: str) -> bool:
         text("DELETE FROM requests WHERE session_id = :sid"),
         {"sid": session_id},
     )
+    payload_store.delete_unreferenced(db)
     db.delete(session)
     db.flush()
     return True

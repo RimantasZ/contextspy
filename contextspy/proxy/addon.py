@@ -36,7 +36,7 @@ from contextspy.analysis.invocations import (
     analyze_invocation,
 )
 from contextspy.analysis.stream_hint import extract_stream_hint
-from contextspy.db import crud
+from contextspy.db import crud, payload_store
 from contextspy.db.database import get_db
 from contextspy.proxy import capture_state
 from contextspy.proxy.capture_writer import CaptureEnvelope, persist_capture
@@ -183,7 +183,8 @@ class _DatabaseLineageRepository(InvocationLineageRepository):
             )
             if row is None:
                 return None
-            request_text = row.canonical_request_body or row.raw_request_body
+            raw_request_text, canonical_request_text = payload_store.request_bodies(db, row)
+            request_text = canonical_request_text or raw_request_text
             response_text = row.canonical_response_body or row.raw_response_body
             if request_text is None:
                 return None

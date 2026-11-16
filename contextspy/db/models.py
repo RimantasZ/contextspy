@@ -26,7 +26,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, object_session, relationship
 
 from contextspy.analysis.accounting import cached_share_pct
 from contextspy.analysis.activity import activity_for
@@ -171,6 +171,10 @@ class Request(Base):
     raw_response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Complete normalized application-level SSE records / WebSocket events.
     response_events: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+    # Layouts of large request bodies stored in ``payload_parts`` (the body column is then NULL).
+    # Read bodies through ``db/payload_store.py: request_bodies``.
+    raw_request_parts: Mapped[Optional[str]] = mapped_column(Text, nullable=True, deferred=True)
+    canonical_request_parts: Mapped[Optional[str]] = mapped_column(Text, nullable=True, deferred=True)
 
     session: Mapped[Optional[Session]] = relationship("Session", back_populates="requests")
 
@@ -244,17 +248,20 @@ class Request(Base):
             "cached_share_pct": cached_share,
         }
         if include_raw:
-            d["raw_request_body"] = self.raw_request_body
+            from contextspy.db.payload_store import request_bodies
+
+            raw_request_body, canonical_request_body = request_bodies(object_session(self), self)
+            d["raw_request_body"] = raw_request_body
             d["raw_response_body"] = self.raw_response_body
-            d["canonical_request_body"] = self.canonical_request_body
+            d["canonical_request_body"] = canonical_request_body
             d["canonical_response_body"] = self.canonical_response_body
-            d["request_body"] = self.canonical_request_body or self.raw_request_body
+            d["request_body"] = canonical_request_body or raw_request_body
             d["response_body"] = self.canonical_response_body or self.raw_response_body
             d["response_events"] = json.loads(self.response_events) if self.response_events else None
             # Why content may be missing: still stored, removed by an explicit archive, or simply not stored
             # (everything the old time-based purge removed lands here). Not part of list rows (needs the session).
             bodies = (
-                self.raw_request_body, self.raw_response_body, self.canonical_request_body,
+                raw_request_body, self.raw_response_body, canonical_request_body,
                 self.canonical_response_body, self.response_events,
             )
             if any(body is not None for body in bodies):
@@ -317,6 +324,15 @@ class BlockContent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
+
+
+class PayloadPart(Base):
+    """Content-addressed slice of a large request body; see ``db/payload_store.py``."""
+
+    __tablename__ = "payload_parts"
+
+    hash: Mapped[str] = mapped_column(String, primary_key=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class BlockRecord(Base):

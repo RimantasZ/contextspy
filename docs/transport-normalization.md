@@ -111,6 +111,9 @@ The request record may contain several related artifacts:
 For a reconstructed WebSocket invocation, `raw_response_body` may currently equal
 `canonical_response_body`, while `response_events` separately retains the larger event history.
 This intentional compatibility duplication affects local database size, not token accounting.
+Large request bodies are stored packed: their repeated conversation history is kept once, as
+content-addressed parts shared by every request that contains it, and each body reads back
+byte for byte (see `docs/development.md`, "Packed request bodies").
 All of these sensitive payloads are removed together when a session is archived (and by the opt-in time-based purge, if configured).
 
 ## Usage and visible composition

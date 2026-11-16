@@ -91,7 +91,8 @@ Both proxy modes feed the same pipeline. The key sequence to understand spans th
    exact counts they are stored alongside.
 5. **`db/crud.py` + `db/models.py`** — the `Request` row (aggregate token counts) plus one
    `Block` row per content part (`db/models.py: BlockRecord`), content-addressed into
-   `block_contents` for dedup across a session. Then broadcast over WebSocket
+   `block_contents` for dedup across a session. Large request bodies are stored as content-addressed
+   `payload_parts` (`db/payload_store.py`); read them through `payload_store.request_bodies`, not the columns. Then broadcast over WebSocket
    (`api/websocket.py` `ConnectionManager`) so the dashboard updates live.
 
 ### Two proxy modes

@@ -10,13 +10,13 @@ import logging
 import random
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from sqlalchemy.exc import OperationalError
 
 from contextspy.analysis.blocks import Block
-from contextspy.db import crud
+from contextspy.db import crud, payload_store
 from contextspy.db.database import get_db
 from contextspy.db.models import Request
 
@@ -35,6 +35,8 @@ class CaptureEnvelope:
     data: Mapping[str, Any]
     blocks: tuple[Block, ...]
     tool_rows: tuple[Mapping[str, Any], ...]
+    # Content-addressed parts of the request bodies ``data`` holds packed (db/payload_store.py)
+    payload_parts: Mapping[str, str] = field(default_factory=dict)
 
 
 def _is_transient_sqlite_lock(exc: OperationalError) -> bool:
@@ -70,6 +72,7 @@ def _persist_once(envelope: CaptureEnvelope) -> dict | None:
                 )
                 return None
 
+        payload_store.write_parts(db, dict(envelope.payload_parts))
         record = crud.create_request(db, dict(envelope.data))
         if envelope.blocks:
             crud.insert_blocks(db, record.id, list(envelope.blocks))
@@ -81,6 +84,12 @@ def _persist_once(envelope: CaptureEnvelope) -> dict | None:
 
 
 def persist_capture(envelope: CaptureEnvelope) -> dict | None:
+    # Large request bodies are stored as content-addressed parts (db/payload_store.py); split them once,
+    # outside the write transaction and the retries.
+    if not envelope.payload_parts:
+        data, parts = payload_store.pack_fields(envelope.data)
+        if parts:
+            envelope = replace(envelope, data=data, payload_parts=parts)
     deadline = time.monotonic() + _RETRY_BUDGET_SECONDS
     attempts = 0
     while True:

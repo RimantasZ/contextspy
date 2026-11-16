@@ -14,13 +14,14 @@ the server cannot be running. ``VACUUM`` is atomic: an interruption leaves the o
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sqlite3
 import tempfile
 import time
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -45,6 +46,8 @@ class DatabaseSpace:
     auto_vacuum: int
     file_bytes: int
     wal_bytes: int
+    # Requests whose large request bodies are still stored whole (see db/payload_store.py)
+    packable_requests: int = 0
 
     @property
     def free_bytes(self) -> int:
@@ -78,8 +81,97 @@ def inspect_space(db_path: Path) -> DatabaseSpace:
     )
 
 
+def _request_columns(conn: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
+
+
+def _octet_length(conn: sqlite3.Connection, column: str) -> str:
+    """SQL for a column's size in bytes: ``octet_length`` (SQLite 3.43+) reads it from the record header
+    without loading the value; older versions load it."""
+    try:
+        conn.execute("SELECT octet_length('')")
+        return f"octet_length({column})"
+    except sqlite3.OperationalError:
+        return f"LENGTH(CAST({column} AS BLOB))"
+
+
+def _packable_condition(conn: sqlite3.Connection, columns: set[str]) -> str | None:
+    """Rows holding a request body large enough to pack that is stored whole."""
+    from contextspy.db.payload_store import PACK_MIN_CHARS, PACKED_COLUMNS
+
+    terms = []
+    for body, layout in PACKED_COLUMNS.items():
+        if body in columns:
+            unpacked = f"{layout} IS NULL AND " if layout in columns else ""
+            terms.append(f"({unpacked}{_octet_length(conn, body)} >= {PACK_MIN_CHARS})")
+    return " OR ".join(terms) or None
+
+
+def count_packable(db_path: Path) -> int:
+    """Requests whose large request bodies are still stored whole, read through a read-only connection."""
+    with closing(sqlite3.connect(f"{Path(db_path).resolve().as_uri()}?mode=ro", uri=True)) as conn:
+        condition = _packable_condition(conn, _request_columns(conn))
+        if condition is None:
+            return 0
+        return conn.execute(f"SELECT COUNT(*) FROM requests WHERE {condition}").fetchone()[0]
+
+
+def pack_request_bodies(db_path: Path, report: Callable[[str], None] = lambda _message: None, *, batch: int = 20) -> int:
+    """Store large request bodies packed (lossless, see ``db/payload_store.py``); returns the rows packed.
+
+    Each batch is its own transaction, so an interruption keeps every finished batch and loses nothing.
+    """
+    from contextspy.db.payload_store import PACKED_COLUMNS, pack
+
+    conn = sqlite3.connect(db_path, timeout=_BUSY_TIMEOUT_SECONDS)
+    try:
+        columns = _request_columns(conn)
+        condition = _packable_condition(conn, columns)
+        if condition is None:
+            return 0
+        conn.execute("CREATE TABLE IF NOT EXISTS payload_parts (hash VARCHAR NOT NULL PRIMARY KEY, content TEXT NOT NULL)")
+        for layout in PACKED_COLUMNS.values():
+            if layout not in columns:
+                conn.execute(f"ALTER TABLE requests ADD COLUMN {layout} TEXT")
+        conn.commit()
+        bodies = [body for body in PACKED_COLUMNS if body in columns]
+        ids = [row[0] for row in conn.execute(f"SELECT id FROM requests WHERE {condition}")]
+        packed_rows = 0
+        for index, request_id in enumerate(ids, start=1):
+            values = conn.execute(
+                f"SELECT {', '.join(bodies)} FROM requests WHERE id = ?", (request_id,),
+            ).fetchone()
+            updates: dict[str, str | None] = {}
+            for column, value in zip(bodies, values):
+                result = pack(value) if isinstance(value, str) else None
+                if result is None:
+                    continue
+                layout, parts = result
+                conn.executemany(
+                    "INSERT OR IGNORE INTO payload_parts (hash, content) VALUES (?, ?)", parts.items(),
+                )
+                updates[column] = None
+                updates[PACKED_COLUMNS[column]] = json.dumps(layout, ensure_ascii=False, separators=(",", ":"))
+            if updates:
+                conn.execute(
+                    f"UPDATE requests SET {', '.join(f'{column} = ?' for column in updates)} WHERE id = ?",
+                    (*updates.values(), request_id),
+                )
+                packed_rows += 1
+            if index % batch == 0:
+                conn.commit()
+            if index % 200 == 0:
+                report(f"  packed {index:,} of {len(ids):,} requests")
+        conn.commit()
+        return packed_rows
+    finally:
+        conn.close()
+
+
 def needs_compaction(space: DatabaseSpace) -> bool:
     """False only when the file is already incremental and has (almost) nothing to give back."""
+    if space.packable_requests:
+        return True
     if not space.incremental:
         return True  # conversion to incremental auto-vacuum is itself the point
     return space.free_bytes >= max(_NOTHING_TO_DO_BYTES, _NOTHING_TO_DO_FRACTION * space.file_bytes)
@@ -179,7 +271,9 @@ def compact_database(
     """Compact ``db_path`` in place. Preconditions are all checked before anything changes.
 
     ``confirm`` is shown the current space figures and may decline (nothing is changed). ``backup`` first
-    writes a standalone ``..._pre_compact_...back`` snapshot (see ``db/backups.py``).
+    writes a standalone ``..._pre_compact_...back`` snapshot (see ``db/backups.py``). Large request bodies
+    still stored whole are packed before the VACUUM (lossless, see ``db/payload_store.py``); the free space
+    for the VACUUM is then checked after packing, since packing usually leaves far less to rebuild.
     """
     db_path = Path(db_path)
     if not db_path.is_file() or db_path.stat().st_size == 0:
@@ -187,10 +281,11 @@ def compact_database(
 
     lock = acquire_database_lock(db_path)  # raises RuntimeError when a server or another command holds it
     try:
-        before = inspect_space(db_path)
+        before = replace(inspect_space(db_path), packable_requests=count_packable(db_path))
         if not needs_compaction(before):
             return CompactionOutcome("already_compact", before=before, after=before)
-        check_free_space(db_path, before, backup=backup, temp_dir=temp_dir)
+        if backup or not before.packable_requests:
+            check_free_space(db_path, before, backup=backup, temp_dir=temp_dir)
         if confirm is not None and not confirm(before):
             return CompactionOutcome("declined", before=before)
 
@@ -204,8 +299,13 @@ def compact_database(
             backup_path = create_backup(db_path, version, purpose="pre_compact")
             report(f"Backup created: {backup_path}")
 
-        report("Compacting (VACUUM)...")
         started = time.monotonic()
+        if before.packable_requests:
+            # Packing is lossless and needs little space; VACUUM afterwards needs room for what is left.
+            report(f"Packing the request bodies of {before.packable_requests:,} requests...")
+            pack_request_bodies(db_path, report)
+            check_free_space(db_path, inspect_space(db_path), backup=False, temp_dir=temp_dir)
+        report("Compacting (VACUUM)...")
         _vacuum(db_path)
         seconds = time.monotonic() - started
         return CompactionOutcome(
