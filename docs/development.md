@@ -198,6 +198,29 @@ Inherited system-block tails are treated as uncertain, and server-side context e
 the actual post-edit prompt opaque. A versioned data migration reanalyzes retained thread rows;
 requests whose payloads were already removed (archived or purged) cannot be reconstructed from usage numbers.
 
+#### Packed request bodies
+
+Each request of a conversation repeats almost all of the previous one, whether the agent resends
+it or ContextSpy expands a `thread.continue` / `previous_response_id` delta. Storing every body
+whole therefore grows the database with the square of the conversation length (one 12-hour
+Claude Code session reached 19 GB, 11.7 MB per request). The capture writer stores
+`raw_request_body` and `canonical_request_body` of at least 32 KB *packed* (`db/payload_store.py`):
+each top-level JSON value of at least 128 characters (each element, for arrays such as `messages`,
+`input`, `tools` or `system`) goes to `payload_parts`, keyed by its hash, and the row keeps a small
+layout in `raw_request_parts` / `canonical_request_parts` while the body column is `NULL`. The parts
+are exact slices, so the body reads back byte for byte. A growing conversation stores only its new
+messages.
+
+- Read request bodies through `payload_store.request_bodies(db, row)` (or `payload_store.body`), never
+  the columns directly: a packed row has `NULL` there. `Request.to_dict` and the lineage repository do.
+- Rows stored whole (captured before packing existed, below the size limit, not one JSON object, or
+  rewritten by a data migration) are read directly, so both forms can coexist.
+- Whatever removes request bodies or requests must also remove the parts nothing references any more:
+  archive (chunked, under the write lock, like `block_contents`), the time-based purge and
+  `delete_session_with_requests` do. The capture writes its parts with INSERT OR IGNORE in the request
+  row's transaction, so a cleanup never deletes a part a capture is about to reference.
+- `contextspy db-compact` packs the rows still stored whole before its VACUUM.
+
 Reconstruction and block-analysis failures are recorded in `capture_error` without discarding the
 canonical application payload. The UI's JSON is provider-level application content, not
 byte-identical compressed/chunked network traffic.

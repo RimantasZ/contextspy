@@ -26,6 +26,7 @@ from threading import Lock
 from sqlalchemy import text
 from sqlalchemy.orm import Session as OrmSession
 
+from contextspy.db import payload_store
 from contextspy.db.models import Session
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ VACUUM_BUDGET_SECONDS = 30.0
 _BODY_COLUMNS = (
     "raw_request_body", "raw_response_body", "canonical_request_body",
     "canonical_response_body", "response_events",
+    *payload_store.PACKED_COLUMNS.values(),
 )
 _ANY_BODY = " OR ".join(f"{column} IS NOT NULL" for column in _BODY_COLUMNS)
 _BODY_BYTES = " + ".join(f"COALESCE(LENGTH(CAST({column} AS BLOB)), 0)" for column in _BODY_COLUMNS)
@@ -99,6 +101,9 @@ def archive_session_data(db: OrmSession, session_id: str) -> dict:
             ),
             {"sid": session_id},
         ).one()
+        # Parts of packed bodies (db/payload_store.py) this session references, read before the layouts go.
+        part_candidates = payload_store.hashes_of(db, "r.session_id = :sid", {"sid": session_id})
+        db.commit()
         if request_rows:
             db.execute(
                 text(
@@ -141,6 +146,22 @@ def archive_session_data(db: OrmSession, session_id: str) -> dict:
             db.commit()
             content_rows += rows
             content_bytes += size
+
+        # Same pattern for payload parts: any request still holding a layout keeps its parts (archived
+        # requests no longer hold one), and a capture that references a part either committed before the
+        # DELETE or re-inserts it after.
+        for chunk in _chunks(part_candidates, HASH_CHUNK):
+            placeholders, params = _hash_params(chunk)
+            _take_write_lock(db, session_id)
+            unreferenced = payload_store.unreferenced_condition(placeholders)
+            rows, size = db.execute(
+                text(f"SELECT COUNT(*), COALESCE(SUM(LENGTH(CAST(content AS BLOB))), 0) FROM payload_parts WHERE {unreferenced}"),
+                params,
+            ).one()
+            if rows:
+                db.execute(text(f"DELETE FROM payload_parts WHERE {unreferenced}"), params)
+            db.commit()
+            request_bytes += size
 
         if not already_archived:
             session = db.get(Session, session_id)
