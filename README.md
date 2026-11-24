@@ -105,7 +105,7 @@ database. A local web server serves the dashboard used to explore the captured d
 
 <p align="center"><strong>Request view</strong><br><img src="docs/_static/request.png" alt="Request view"></p>
 
-<p align="center"><strong>Context breakdown</strong><br><img src="docs/_static/request2.png" alt="Context breakdown"></p>
+<p align="center"><strong>Hotspots</strong><br><img src="docs/_static/hotspots.png" alt="Context breakdown"></p>
 
 <p align="center"><strong>Session view</strong><br><img src="docs/_static/session.png" alt="Session view"></p>
 
