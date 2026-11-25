@@ -1,12 +1,13 @@
 import type { ContentMode } from './types'
 
 export function ContentToolbar({
-  title, hasContent, mode, languageLabel, showStructured, hasCollapsedScopes, query, matchCount,
+  title, hasContent, tokenHighlight, mode, languageLabel, showStructured, hasCollapsedScopes, query, matchCount,
   activeIndex, tokenizing, tokenError, tokenCount, tokensTruncated, tokenWindowAtStart,
   onMode, onToggleScopes, onMoveTokenWindow, onCopy, onQuery, onMoveMatch,
 }: {
   title: string
   hasContent: boolean
+  tokenHighlight: boolean
   mode: ContentMode
   languageLabel: string
   showStructured: boolean
@@ -31,7 +32,7 @@ export function ContentToolbar({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-xs font-semibold text-[var(--text)]">{title}</h3>
         <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">Formatting<select aria-label="Formatting" value={mode} disabled={!hasContent} onChange={(event) => onMode(event.target.value as ContentMode)} className="app-field py-1.5"><option value="verbatim">Verbatim raw</option><option value="formatted">Formatted raw</option><option value="tokens">Highlight tokens</option><option value="structured">Structured view</option></select></label>
+          <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">Formatting<select aria-label="Formatting" value={mode} disabled={!hasContent} onChange={(event) => onMode(event.target.value as ContentMode)} className="app-field py-1.5"><option value="verbatim">Verbatim raw</option><option value="formatted">Formatted raw</option>{tokenHighlight && <option value="tokens">Highlight tokens</option>}<option value="structured">Structured view</option></select></label>
           <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--text-subtle)]" title={`Detected content type: ${languageLabel}`}>{languageLabel}</span>
           {showStructured && <button type="button" className="app-button min-h-8 py-1 text-xs" disabled={query.length > 0} title={query ? 'Clear search to change all scopes' : undefined} onClick={onToggleScopes}>{hasCollapsedScopes ? 'Expand' : 'Collapse'}</button>}
           {mode === 'tokens' && tokenizing && <span className="text-[10px] text-[var(--text-muted)]" role="status">Tokenizing…</span>}

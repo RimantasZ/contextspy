@@ -422,14 +422,12 @@ def test_responses_multimodal_tool_output_does_not_tokenize_inline_image_data():
 
     assert len(blocks) == 1
     block = blocks[0]
-    assert block.content == "Screenshot captured\n[input_image]"
-    assert "base64" not in block.content
+    assert block.content.startswith("Screenshot captured\n[image jpeg ")
+    assert "base64" not in block.content and "AAAA" not in block.content
     assert block.token_count < 20
-    assert block.attrs == {
-        "provider_item_type": "function_call_output",
-        "contains_media": True,
-        "token_estimate": "text_only",
-    }
+    assert block.attrs["provider_item_type"] == "function_call_output"
+    assert block.attrs["token_estimate"] == "unavailable"  # not a readable image
+    assert block.attrs["media_only"] is False
 
 
 def test_responses_multimodal_message_does_not_tokenize_inline_image_data():
@@ -446,13 +444,11 @@ def test_responses_multimodal_message_does_not_tokenize_inline_image_data():
     blocks, _ = OpenAIResponsesAdapter().parse_request(request)
 
     assert len(blocks) == 1
-    assert blocks[0].content == "[input_image]"
-    assert blocks[0].token_count < 10
-    assert blocks[0].attrs == {
-        "content_type": "input_image",
-        "contains_media": True,
-        "token_estimate": "text_only",
-    }
+    assert blocks[0].content.startswith("[image png ")
+    assert blocks[0].block_type == "user_message"
+    assert blocks[0].token_count == 0
+    assert blocks[0].attrs["content_type"] == "input_image"
+    assert blocks[0].attrs["media_only"] is True
 
 
 def test_responses_usage_includes_cache_and_reasoning_breakdowns():

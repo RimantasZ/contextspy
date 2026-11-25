@@ -1,6 +1,7 @@
 import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
 import type { RequestBlock } from '../../api/client'
 import { BLOCK_VISUALS, blockAccessibleName, blockBackground, visualOf } from '../../lib/blockVisuals'
+import { mediaItems } from '../../lib/media'
 
 export function BlockTile({ block, id, selected, dimmed = false, tabIndex, className = '', style, children, onSelect, onKeyDown }: {
   block: RequestBlock
@@ -26,6 +27,9 @@ export function BlockTile({ block, id, selected, dimmed = false, tabIndex, class
       style={{ backgroundColor: blockBackground(block), borderColor: visual.border, ...style, boxShadow: selected ? '0 0 0 3px var(--focus)' : style?.boxShadow }}
     >
       {children ?? <span aria-hidden="true">{visual.short}</span>}
+      {mediaItems(block).length > 0 && (
+        <span data-media-badge aria-hidden="true" className="absolute -bottom-0.5 -left-0.5 h-2 w-2 rounded-[2px] border border-[var(--surface)] bg-[var(--text)]" />
+      )}
       {block.content_purged && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full border border-[var(--surface)] bg-[var(--danger)]" />}
     </button>
   )

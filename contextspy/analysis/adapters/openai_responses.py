@@ -32,12 +32,19 @@ from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
-    contains_media_content,
+    content_block,
     flatten_content,
     reconcile_thinking,
 )
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
 from contextspy.analysis.capture import CanonicalResponse, CapturedEvent
+from contextspy.analysis.media import (
+    MEDIA_CONTENT_TYPES,
+    UNAVAILABLE,
+    Rendered,
+    describe_media,
+    scrub_binary,
+)
 
 
 def _reasoning_summary_text(item: dict) -> str:
@@ -118,6 +125,35 @@ def _tool_definition_blocks(
     )]
 
 
+def _other_item_block(
+    direction: str, item, attrs: dict | None = None, **kwargs,
+) -> Block:
+    """An unrecognised item as JSON text, with encoded binary payloads removed."""
+    scrubbed, changed = scrub_binary(item)
+    if changed:
+        attrs = {**(attrs or {}), "binary_scrubbed": True}
+    return Block.make(direction, BlockType.OTHER, _json_text(scrubbed), attrs=attrs, **kwargs)
+
+
+def _generated_image_block(direction: str, item: dict, model: str | None, **kwargs) -> Block:
+    """An ``image_generation_call`` item. Its ``result`` is the image, never text.
+
+    Resent as input it is estimated like any image; as output it is not estimated.
+    """
+    marker, media = describe_media(
+        {"result": item.get("result"), "file_id": item.get("id")}, model, kind="image",
+    )
+    if direction == Direction.OUTPUT:
+        media.update({"tokens": 0, "method": UNAVAILABLE})
+    prompt = str(item.get("revised_prompt") or "")
+    rendered = Rendered("\n".join(v for v in (marker, prompt) if v), prompt, media=[media])
+    return Block.make(
+        direction, BlockType.OTHER, rendered.text,
+        attrs={"provider_item_type": "image_generation_call", **rendered.attrs()},
+        token_count=rendered.token_count, **kwargs,
+    )
+
+
 class OpenAIResponsesAdapter(WireFormatAdapter):
     format_id = "openai_responses"
     endpoint_patterns = ("/responses",)
@@ -128,6 +164,7 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
         blocks: list[Block] = []
         tool_call_map: dict[str, str] = {}
         pending_tool_results: list[Block] = []
+        model = req_body.get("model")
 
         # (tool, location in the request document) for every top-level tool definition.
         top_level_tools: list[tuple[object, tuple[str | int, ...]]] = [
@@ -185,9 +222,8 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
         for i, item in enumerate(input_value):
             item_path: tuple[str | int, ...] = ("input",) if input_wrapped else ("input", i)
             if not isinstance(item, dict):
-                blocks.append(Block.make(
-                    Direction.INPUT, BlockType.OTHER, _json_text(item), message_index=i,
-                    json_path=item_path,
+                blocks.append(_other_item_block(
+                    Direction.INPUT, item, message_index=i, json_path=item_path,
                 ))
                 continue
             item_type = item.get("type", "")
@@ -198,13 +234,10 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
             if item_type in ("function_call_output", "custom_tool_call_output"):
                 call_id = item.get("call_id")
                 output = item.get("output", "")
-                attrs = {"provider_item_type": item_type}
-                if contains_media_content(output):
-                    attrs.update({"contains_media": True, "token_estimate": "text_only"})
-                b = Block.make(
-                    Direction.INPUT, BlockType.TOOL_RESULT, flatten_content(output),
+                b = content_block(
+                    Direction.INPUT, BlockType.TOOL_RESULT, output, model,
                     message_index=i, tool_call_id=call_id,
-                    attrs=attrs, json_path=item_path,
+                    attrs={"provider_item_type": item_type}, json_path=item_path,
                 )
                 blocks.append(b)
                 pending_tool_results.append(b)
@@ -248,6 +281,10 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                             attrs={"provider_item_type": item_type},
                             path=item_path + ("tools", tool_index),
                         ))
+            elif item_type == "image_generation_call":
+                blocks.append(_generated_image_block(
+                    Direction.INPUT, item, model, message_index=i, json_path=item_path,
+                ))
             elif role in block_type_for_role:
                 block_type = block_type_for_role[role]
                 content_raw = item.get("content", "")
@@ -270,12 +307,11 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                                 attrs={"refusal": True}, json_path=part_path,
                             ))
                         else:
-                            attrs = {"content_type": ptype}
-                            if contains_media_content(part):
-                                attrs.update({"contains_media": True, "token_estimate": "text_only"})
-                            blocks.append(Block.make(
-                                Direction.INPUT, BlockType.OTHER, flatten_content(part),
-                                message_index=i, attrs=attrs, json_path=part_path,
+                            blocks.append(content_block(
+                                Direction.INPUT,
+                                block_type if ptype in MEDIA_CONTENT_TYPES else BlockType.OTHER,
+                                part, model, message_index=i,
+                                attrs={"content_type": ptype}, json_path=part_path,
                             ))
                 elif isinstance(content_raw, str) and content_raw:
                     blocks.append(Block.make(
@@ -283,16 +319,14 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                         json_path=content_path,
                     ))
                 elif content_raw:
-                    blocks.append(Block.make(
-                        Direction.INPUT, block_type, flatten_content(content_raw), message_index=i,
+                    blocks.append(content_block(
+                        Direction.INPUT, block_type, content_raw, model, message_index=i,
                         json_path=content_path,
                     ))
             else:
-                blocks.append(Block.make(
-                    Direction.INPUT, BlockType.OTHER,
-                    json.dumps(item, ensure_ascii=False), message_index=i,
-                    attrs={"provider_item_type": item_type or "unknown"},
-                    json_path=item_path,
+                blocks.append(_other_item_block(
+                    Direction.INPUT, item, {"provider_item_type": item_type or "unknown"},
+                    message_index=i, json_path=item_path,
                 ))
 
         for b in pending_tool_results:
@@ -350,11 +384,13 @@ class OpenAIResponsesAdapter(WireFormatAdapter):
                     attrs={"provider_item_type": itype, "opaque": True},
                     json_path=item_path,
                 ))
+            elif itype == "image_generation_call":
+                blocks.append(_generated_image_block(
+                    Direction.OUTPUT, item, resp_body.get("model"), json_path=item_path,
+                ))
             else:
-                blocks.append(Block.make(
-                    Direction.OUTPUT, BlockType.OTHER,
-                    json.dumps(item, ensure_ascii=False),
-                    attrs={"provider_item_type": itype or "unknown"},
+                blocks.append(_other_item_block(
+                    Direction.OUTPUT, item, {"provider_item_type": itype or "unknown"},
                     json_path=item_path,
                 ))
 

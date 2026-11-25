@@ -23,7 +23,7 @@ def test_inspect_migration_state_is_read_only_for_legacy_database(tmp_path):
     version_from, pending = migrations.inspect_migration_state(db_path)
 
     assert version_from == 1
-    assert pending == [2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert pending == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     assert db_path.read_bytes() == original_bytes
     with sqlite3.connect(db_path) as conn:
         tables = {
@@ -102,7 +102,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
     settings = Settings(config_dir=tmp_path)
     settings.storage.db_path = db_path
     monkeypatch.setattr(Settings, "load", classmethod(lambda cls: settings))
-    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3, 4, 5, 6, 7, 8, 9, 10]))
+    monkeypatch.setattr(migrations, "inspect_migration_state", lambda path: (1, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]))
 
     events = []
     real_create_backup = migrations.create_migration_backup
@@ -125,8 +125,8 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
         yield object()
 
     monkeypatch.setattr(migrations, "create_migration_backup", create_backup)
-    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3, 4, 5, 6, 7, 8, 9, 10])
-    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3, 4, 5, 6, 7, 8, 9, 10])
+    monkeypatch.setattr(migrations, "check_and_flag_pending_migrations", lambda db: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    monkeypatch.setattr(migrations, "apply_data_migrations", lambda db: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
     monkeypatch.setattr(database, "init_db", init_db)
     monkeypatch.setattr(database, "get_db", get_db)
 
@@ -140,7 +140,7 @@ def test_db_upgrade_copies_database_before_initialization(monkeypatch, tmp_path)
 
     cli.db_upgrade()
 
-    backup_path = tmp_path / "profile_backup_v1_to_v10_2026-08-27-0000.back"
+    backup_path = tmp_path / "profile_backup_v1_to_v11_2026-08-27-0000.back"
     assert events == ["backup", "init"]
     with sqlite3.connect(backup_path) as backup:
         assert backup.execute("SELECT id FROM requests").fetchall() == [("old-request",)]
@@ -550,7 +550,7 @@ def test_v4_reanalyzes_inline_media_without_tokenizing_base64(tmp_path):
         assert row.tokens_output_text == 17
 
     result = next(block for block in blocks if block["block_type"] == "tool_result")
-    assert result["content"] == "Screenshot captured\n[input_image]"
+    assert result["content"].startswith("Screenshot captured\n[image jpeg ")
     assert result["attrs"]["contains_media"] is True
     assert tool_stats[0]["result_tokens"] < 20
 

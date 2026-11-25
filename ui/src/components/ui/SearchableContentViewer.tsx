@@ -10,11 +10,15 @@ import { useContentSearch } from './content-viewer/useContentSearch'
 import { useTokenWindow } from './content-viewer/useTokenWindow'
 import { useTreeExpansion } from './content-viewer/useTreeExpansion'
 
-export function SearchableContentViewer({ title, content, emptyMessage = 'No content was captured.', maxHeight = 520 }: {
+export function SearchableContentViewer({ title, content, emptyMessage = 'No content was captured.', maxHeight = 520, tokenHighlight = true, note }: {
   title: string
   content: string | null | undefined
   emptyMessage?: string
   maxHeight?: number
+  /** False when the content is only a placeholder, so tokenizing it would be misleading. */
+  tokenHighlight?: boolean
+  /** A short remark shown above the content. */
+  note?: string
 }) {
   const [mode, setMode] = useState<ContentMode>('structured')
   const contentRootRef = useRef<HTMLDivElement>(null)
@@ -49,7 +53,7 @@ export function SearchableContentViewer({ title, content, emptyMessage = 'No con
   return (
     <section className="surface-inset min-w-0 overflow-hidden rounded-md border border-[var(--border)]" aria-label={title}>
       <ContentToolbar
-        title={title} hasContent={content != null} mode={mode} languageLabel={analysis.languageLabel}
+        title={title} hasContent={content != null} tokenHighlight={tokenHighlight} mode={mode} languageLabel={analysis.languageLabel}
         showStructured={showStructured && collapsiblePaths.length > 0} hasCollapsedScopes={expansion.hasCollapsedScopes}
         query={search.query} matchCount={search.matchCount} activeIndex={search.activeIndex}
         tokenizing={tokens.loading} tokenError={tokens.error} tokenCount={tokens.tokenCount}
@@ -59,6 +63,7 @@ export function SearchableContentViewer({ title, content, emptyMessage = 'No con
         onMoveTokenWindow={() => tokens.moveToViewport(contentRootRef.current)}
         onCopy={() => navigator.clipboard?.writeText(displayed)} onQuery={search.setQuery} onMoveMatch={search.moveMatch}
       />
+      {note && <p className="border-b border-[var(--border)] px-4 py-2 text-xs text-[var(--text-muted)]">{note}</p>}
       <div ref={contentRootRef} data-content-viewport className="min-h-28 min-w-0 overflow-auto p-4 font-mono text-xs leading-5 text-[var(--text)]" style={{ maxHeight }}>
         {content == null ? <span className="italic text-[var(--text-muted)]">{emptyMessage}</span>
           : showJsonTree && parsedJson !== undefined ? <JsonTreeView value={parsedJson} query={search.query} collapsedPaths={expansion.collapsedPaths} onToggle={expansion.toggle} />

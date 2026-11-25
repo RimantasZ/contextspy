@@ -308,7 +308,7 @@ def test_capture_persists_file_path_on_call_and_result(database):
 
 
 def test_classifier_version_was_bumped_and_v10_is_registered():
-    assert CLASSIFIER_VERSION == 2 and migrations.SCHEMA_VERSION == 10
+    assert CLASSIFIER_VERSION == 2 and migrations.SCHEMA_VERSION >= 10
     assert 10 in migrations._DATA_MIGRATIONS
 
 

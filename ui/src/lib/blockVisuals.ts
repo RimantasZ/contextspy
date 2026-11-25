@@ -1,4 +1,5 @@
 import type { RequestBlock } from '../api/client'
+import { mediaSummary } from './media'
 
 export type BlockVisual =
   | 'system'
@@ -65,8 +66,10 @@ export function blockLabel(block: RequestBlock): string {
 }
 
 export function blockAccessibleName(block: RequestBlock): string {
+  const media = mediaSummary(block)
   const states = [
     `${block.token_count.toLocaleString()} tokens`,
+    media ? `contains ${media}` : '',
     block.position != null ? `position ${block.position + 1}` : '',
     block.content_purged ? 'content purged' : '',
   ].filter(Boolean)

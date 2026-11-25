@@ -73,6 +73,8 @@ Both proxy modes feed the same pipeline. The key sequence to understand spans th
    Each adapter's `parse_request`/`parse_response`/`parse_sse` turns provider-specific JSON into
    provider-agnostic `Block`s (`analysis/blocks.py`) + a `Usage` — this is the provider-agnostic
    boundary. Adding a new provider/wire format is a new adapter module, nothing else changes.
+   Images, files and other binary parts go through `analysis/media.py` (markers and token
+   estimates); adapters build such blocks with `content_block` and never tokenize payloads.
 3. **`analysis/classifier.py`** — `classify(analyzed)` assigns each input `Block` a `category`
    (`classify_blocks`) using heuristics (e.g. `_is_file_content` regexes for detecting embedded
    file contents) and aggregates into the 8 categories: `system_prompt`, `tool_definitions`,

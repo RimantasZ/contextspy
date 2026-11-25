@@ -24,12 +24,13 @@ from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
-    contains_media_content,
+    content_block,
     flatten_content,
     reconcile_thinking,
 )
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
 from contextspy.analysis.capture import CanonicalResponse, CapturedEvent
+from contextspy.analysis.media import MEDIA_CONTENT_TYPES
 
 
 class OpenAIChatAdapter(WireFormatAdapter):
@@ -41,6 +42,7 @@ class OpenAIChatAdapter(WireFormatAdapter):
     def parse_request(self, req_body: dict) -> tuple[list[Block], dict[str, str]]:
         blocks: list[Block] = []
         tool_call_map: dict[str, str] = {}
+        model = req_body.get("model")
 
         tools_key = "tools" if req_body.get("tools") else "functions"
         tools = req_body.get("tools") or req_body.get("functions") or []
@@ -61,8 +63,8 @@ class OpenAIChatAdapter(WireFormatAdapter):
             is_tool_result = role == "tool" or bool(msg.get("tool_call_id"))
 
             if is_tool_result:
-                b = Block.make(
-                    Direction.INPUT, BlockType.TOOL_RESULT, flatten_content(content),
+                b = content_block(
+                    Direction.INPUT, BlockType.TOOL_RESULT, content, model,
                     message_index=i, tool_call_id=msg.get("tool_call_id"),
                     json_path=content_path,
                 )
@@ -71,10 +73,9 @@ class OpenAIChatAdapter(WireFormatAdapter):
                 continue
 
             if role == "system":
-                text = flatten_content(content)
-                if text:
-                    blocks.append(Block.make(
-                        Direction.INPUT, BlockType.SYSTEM_PROMPT, text, message_index=i,
+                if flatten_content(content):
+                    blocks.append(content_block(
+                        Direction.INPUT, BlockType.SYSTEM_PROMPT, content, model, message_index=i,
                         json_path=content_path,
                     ))
                 continue
@@ -92,12 +93,12 @@ class OpenAIChatAdapter(WireFormatAdapter):
                             json_path=part_path,
                         ))
                     elif part.get("type") not in ("text",):
-                        attrs = {"content_type": part.get("type")}
-                        if contains_media_content(part):
-                            attrs.update({"contains_media": True, "token_estimate": "text_only"})
-                        blocks.append(Block.make(
-                            Direction.INPUT, BlockType.OTHER, flatten_content(part),
-                            message_index=i, attrs=attrs, json_path=part_path,
+                        ptype = part.get("type")
+                        blocks.append(content_block(
+                            Direction.INPUT,
+                            msg_block_type if ptype in MEDIA_CONTENT_TYPES else BlockType.OTHER,
+                            part, model,
+                            message_index=i, attrs={"content_type": ptype}, json_path=part_path,
                         ))
             elif isinstance(content, str) and content:
                 blocks.append(Block.make(

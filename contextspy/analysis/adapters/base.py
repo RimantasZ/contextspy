@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import json
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -24,6 +23,7 @@ from contextspy.analysis.capture import (
     decode_ndjson,
     decode_sse,
 )
+from contextspy.analysis.media import MEDIA_CONTENT_TYPES, render_content
 
 
 class WireFormatAdapter(ABC):
@@ -78,32 +78,12 @@ def get_adapter(endpoint: str) -> WireFormatAdapter | None:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-_MEDIA_CONTENT_TYPES = frozenset({
-    "audio",
-    "computer_screenshot",
-    "document",
-    "file",
-    "image",
-    "image_url",
-    "input_audio",
-    "input_file",
-    "input_image",
-    "input_video",
-    "output_audio",
-    "output_image",
-    "video",
-})
-
-
 def contains_media_content(content: Any) -> bool:
     """Return whether a nested provider content value contains media.
 
-    Inline image/audio/file payloads are transport encodings, not text shown to
-    the model.  Adapters use this marker to explain why a block's local token
-    count covers only its textual content.
     """
     if isinstance(content, dict):
-        if content.get("type") in _MEDIA_CONTENT_TYPES:
+        if content.get("type") in MEDIA_CONTENT_TYPES:
             return True
         return any(contains_media_content(value) for value in content.values())
     if isinstance(content, list):
@@ -216,26 +196,22 @@ def _residual_output_tokens(blocks: list[Block], usage: Usage) -> int | None:
 def flatten_content(content: Any) -> str:
     """Flatten a provider content value (str, or list of content-part dicts) to text.
 
-    Used for content that stays a single block even though it may itself be
-    a nested list — e.g. a tool_result's inner content array, or a plain
-    multimodal message with no text/tool parts worth splitting out. Media is
-    represented by a short marker: tokenizing an inline base64 transport value
-    as text can overstate a screenshot by tens of thousands of tokens.
+    Media becomes a short marker; see ``analysis/media.py``. Use ``content_block`` when
+    the result becomes an input block, so that media is estimated and described.
     """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, dict):
-        content_type = content.get("type")
-        if content_type in _MEDIA_CONTENT_TYPES:
-            return f"[{content_type}]"
-        if content_type in ("text", "output_text", "input_text"):
-            return str(content.get("text", ""))
-        if content_type == "tool_result":
-            return flatten_content(content.get("content", ""))
-        if "text" in content:
-            return str(content["text"])
-        return json.dumps(content, ensure_ascii=False)
-    if isinstance(content, list):
-        parts = [flatten_content(block) for block in content]
-        return "\n".join(p for p in parts if p)
-    return json.dumps(content, ensure_ascii=False) if content is not None else ""
+    return render_content(content).text
+
+
+def content_block(
+    direction: str, block_type: str, content: Any, model: str | None, *,
+    attrs: dict | None = None, **kwargs: Any,
+) -> Block:
+    """A block for a content value that may hold media, documents or binary payloads.
+
+    The token count is the text (without media markers) plus the media estimates.
+    """
+    rendered = render_content(content, model)
+    return Block.make(
+        direction, block_type, rendered.text,
+        attrs={**(attrs or {}), **rendered.attrs()}, token_count=rendered.token_count, **kwargs,
+    )

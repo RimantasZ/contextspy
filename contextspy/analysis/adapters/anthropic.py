@@ -23,12 +23,13 @@ from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
-    contains_media_content,
+    content_block,
     flatten_content,
     reconcile_thinking,
 )
 from contextspy.analysis.blocks import Block, BlockType, Direction, Usage
 from contextspy.analysis.capture import CanonicalResponse, CapturedEvent
+from contextspy.analysis.media import MEDIA_CONTENT_TYPES, scrub_binary
 
 
 def _cache_attrs(part: dict) -> dict:
@@ -45,6 +46,7 @@ class AnthropicAdapter(WireFormatAdapter):
     def parse_request(self, req_body: dict) -> tuple[list[Block], dict[str, str]]:
         blocks: list[Block] = []
         tool_call_map: dict[str, str] = {}
+        model = req_body.get("model")
 
         system_text = req_body.get("system", "")
         if system_text:
@@ -123,9 +125,8 @@ class AnthropicAdapter(WireFormatAdapter):
                         json_path=part_path,
                     ))
                 elif ptype == "tool_result":
-                    b = Block.make(
-                        Direction.INPUT, BlockType.TOOL_RESULT,
-                        flatten_content(part.get("content", "")),
+                    b = content_block(
+                        Direction.INPUT, BlockType.TOOL_RESULT, part.get("content", ""), model,
                         message_index=i, tool_call_id=part.get("tool_use_id"), attrs=attrs,
                         json_path=part_path,
                     )
@@ -148,10 +149,11 @@ class AnthropicAdapter(WireFormatAdapter):
                         message_index=i, attrs=attrs, json_path=part_path,
                     ))
                 else:
-                    if contains_media_content(part):
-                        attrs.update({"contains_media": True, "token_estimate": "text_only"})
-                    blocks.append(Block.make(
-                        Direction.INPUT, BlockType.OTHER, flatten_content(part),
+                    # Images and documents belong to the message that carries them.
+                    blocks.append(content_block(
+                        Direction.INPUT,
+                        msg_block_type if ptype in MEDIA_CONTENT_TYPES else BlockType.OTHER,
+                        part, model,
                         message_index=i, attrs={**attrs, "content_type": ptype},
                         json_path=part_path,
                     ))
@@ -207,9 +209,11 @@ class AnthropicAdapter(WireFormatAdapter):
             return Block.make(
                 Direction.OUTPUT, BlockType.THINKING, "", attrs={"redacted": True}, json_path=path,
             )
+        scrubbed, changed = scrub_binary(part)
         return Block.make(
-            Direction.OUTPUT, BlockType.OTHER, json.dumps(part),
-            attrs={"content_type": ptype}, json_path=path,
+            Direction.OUTPUT, BlockType.OTHER, json.dumps(scrubbed),
+            attrs={"content_type": ptype, **({"binary_scrubbed": True} if changed else {})},
+            json_path=path,
         )
 
     @staticmethod

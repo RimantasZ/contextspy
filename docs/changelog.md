@@ -1,5 +1,18 @@
 # What's New
 
+## Unreleased
+
+- **Run `contextspy db-upgrade` once before starting** (schema v10 to v11; the server refuses to start until you do).
+  It backs the database up first. On a 6 GB database with about 8,700 requests it took under 3 minutes.
+- **Images are counted** ([#104](https://github.com/RimantasZ/contextspy/issues/104)). A pasted image used to show as
+  an *Other* block of a few tokens. It is now part of the user message (or of the tool result) with an estimate from
+  its dimensions and the model, marked with a badge in the block map and listed in the block inspector. Models with no
+  published rule get a rough estimate.
+- Text documents are now counted; they used to be dropped. Encoded binary data in unrecognised items, including
+  generated images, is no longer counted as text, which could add tens of thousands of tokens.
+- PDFs, other files, audio and video are identified but not estimated yet.
+- Only requests whose bodies are still stored can be recalculated; older ones keep their previous figures.
+
 ## 0.6.2
 
 New `contextspy db-switch NAME` swaps the active database with a shelved one, so you can start a clean database

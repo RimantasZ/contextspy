@@ -23,6 +23,7 @@ from copy import deepcopy
 
 from contextspy.analysis.adapters.base import (
     WireFormatAdapter,
+    content_block,
     flatten_content,
     reconcile_thinking,
 )
@@ -42,16 +43,24 @@ class OllamaAdapter(WireFormatAdapter):
 
     def parse_request(self, req_body: dict) -> tuple[list[Block], dict[str, str]]:
         blocks: list[Block] = []
+        model = req_body.get("model")
         for i, msg in enumerate(req_body.get("messages", [])):
             role = msg.get("role", "user")
-            content = flatten_content(msg.get("content", ""))
-            if not content:
-                continue
             block_type = _BLOCK_TYPE_FOR_ROLE.get(role, BlockType.USER_MESSAGE)
-            blocks.append(Block.make(
-                Direction.INPUT, block_type, content, message_index=i,
-                json_path=("messages", i, "content"),
-            ))
+            content = msg.get("content", "")
+            if flatten_content(content):
+                blocks.append(content_block(
+                    Direction.INPUT, block_type, content, model, message_index=i,
+                    json_path=("messages", i, "content"),
+                ))
+            images = msg.get("images")
+            for image_index, image in enumerate(images if isinstance(images, list) else []):
+                if isinstance(image, str) and image:
+                    blocks.append(content_block(
+                        Direction.INPUT, block_type, {"type": "image", "data": image}, model,
+                        message_index=i, attrs={"content_type": "image"},
+                        json_path=("messages", i, "images", image_index),
+                    ))
         return blocks, {}
 
     def parse_response(self, resp_body: dict) -> tuple[list[Block], Usage]:

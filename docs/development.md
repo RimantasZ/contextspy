@@ -318,13 +318,30 @@ Token counts are **estimates** using tiktoken `o200k_base` encoding
 When the provider reports exact token counts in the API response, those are stored
 alongside the estimate and shown on the request detail page for comparison.
 
-Inline image, audio, document, and other media payloads need different accounting. A base64 data
-URL is only a transport encoding; the provider does not tokenize those characters as prompt text.
-ContextSpy therefore replaces media parts with short typed markers in analyzed blocks and marks
-mixed blocks with `contains_media` plus `token_estimate: text_only`. The canonical request still
-retains the original payload for raw inspection. For multimodal requests, use the provider-reported
-input total as the authoritative total because the local estimate covers the visible text but not
-provider-specific media tokens.
+### Images, files and other binary parts
+
+A base64 payload is only a transport encoding, so it is never given to the text tokenizer
+(`analysis/media.py`). Each binary part becomes a marker that is unique per payload, such as
+`[image png 2000×1224 sha256:1a2b3c4d]`, and is described in the block's `attrs.media`.
+
+| Input | Estimate |
+|---|---|
+| Image, Claude models | `ceil(w/28) × ceil(h/28)` after downscaling to the model's tier (4,784 tokens from Claude 4.7, 1,568 before) |
+| Image, OpenAI models | 32 px patches × model multiplier, or base + 512 px tiles, following the model and `detail` |
+| Image, Gemma 3 | 256 |
+| Image, any other model | `ceil(w/32) × ceil(h/32)`, marked **rough**; it can be far off |
+| Image sent by URL or file ID, or unreadable | not estimated (0) |
+| PDF, office or other file, audio, video | not estimated (0) |
+| Text document (`source.type` `text` or `content`) | counted as text |
+
+An image in a user or assistant message is a block of that role; images in a tool result stay part of
+the result, whose count is its text plus the image estimates. The model name picks the rule, so
+Copilot and other gateways are covered; whether they bill images like the underlying model has not
+been confirmed. The only check against real traffic is Anthropic `claude-sonnet-5-5`
+(see `plans/104-image-token-estimates.md`).
+
+A tool screenshot that an agent attaches as a following *user* message (possible with Chat
+Completions) is read as user input, like any other text injected that way.
 
 ### Encoder choice, and the 0.3.4 switch
 

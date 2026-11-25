@@ -275,6 +275,21 @@ export interface ToolStat {
   result_tokens: number
 }
 
+/** One image, file, audio or video part of a block (`attrs.media`). */
+export interface MediaItem {
+  kind: 'image' | 'document' | 'audio' | 'video' | 'file'
+  tokens: number
+  /** `published`: the model's documented rule; `rough`: no rule for the model; `unavailable`: not estimated. */
+  method: 'published' | 'rough' | 'unavailable'
+  mime?: string
+  name?: string
+  detail?: string
+  width?: number
+  height?: number
+  bytes?: number
+  digest?: string
+}
+
 export interface RequestBlock {
   id: number
   direction: 'input' | 'output'

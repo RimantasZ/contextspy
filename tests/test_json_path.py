@@ -68,7 +68,7 @@ def test_anthropic_request_paths():
         ("tool_call", ("messages", 1, "content", 2)),
         ("tool_result", ("messages", 2, "content", 0)),
         ("user_message", ("messages", 2, "content", 1)),
-        ("other", ("messages", 2, "content", 2)),
+        ("user_message", ("messages", 2, "content", 2)),
     ]
     _assert_resolves(ANTHROPIC_REQUEST, blocks, unlocated=())
 
@@ -132,7 +132,7 @@ def test_openai_chat_request_paths():
         ("tool_definition", ("tools", 0)),
         ("system_prompt", ("messages", 0, "content")),
         ("user_message", ("messages", 1, "content", 0)),
-        ("other", ("messages", 1, "content", 1)),
+        ("user_message", ("messages", 1, "content", 1)),
         ("user_message", ("messages", 2, "content")),
         ("assistant_message", ("messages", 3, "content")),
         ("tool_call", ("messages", 3, "tool_calls", 0)),
@@ -208,7 +208,7 @@ def test_openai_responses_request_paths():
         ("system_prompt", ("input", 0, "content", 0)),
         ("user_message", ("input", 1, "content")),
         ("user_message", ("input", 2, "content", 0)),
-        ("other", ("input", 2, "content", 1)),
+        ("user_message", ("input", 2, "content", 1)),
         ("thinking", ("input", 3)),
         ("tool_call", ("input", 4)),
         ("tool_result", ("input", 5)),

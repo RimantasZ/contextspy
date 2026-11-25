@@ -446,10 +446,23 @@ When the encoder is first loaded, tiktoken downloads the encoding data file from
 - Each `Block`'s `token_count` is computed individually (`Block.make()` calls `tiktoken.encode()`
   on its content, unless a provider-reported count is passed explicitly — e.g. OpenAI Responses'
   hidden reasoning summaries, which have no visible content but a known token count).
-- Inline image/audio/file transport payloads are represented by short typed markers rather than
-  passing base64 data URLs to the text tokenizer. Mixed multimodal blocks carry
-  `attrs.contains_media = true` and `attrs.token_estimate = "text_only"`; the provider-reported
-  input total remains authoritative for media token accounting.
+- Binary payloads are never given to the text tokenizer (`analysis/media.py`). Each is replaced by
+  a marker unique per payload (kind, type, dimensions or size, digest) and listed in `attrs.media`
+  (`kind`, `tokens`, `method` = `published` | `rough` | `unavailable`, and `mime`, `name`, `detail`,
+  `width`, `height`, `bytes`, `digest` when known), with `attrs.contains_media`, `media_tokens`,
+  `media_only` and `token_estimate` (the weakest `method`). `token_count` is the text without markers
+  plus the media tokens.
+  - Images with readable dimensions are estimated by the rule of the **model name**: Anthropic 28 px
+    patches (standard or high-resolution tier), OpenAI patch or tile rules, Gemma 3 256, otherwise
+    32 px patches marked `rough`. Remote references are `unavailable`.
+  - Documents, files, audio and video are `unavailable` (0 tokens). Text documents are counted as text
+    (`attrs.document_text`).
+  - A media part in a message takes that message's block type; in a tool result it stays in the result.
+    Ollama `messages[].images` are separate blocks.
+  - Generated images (`image_generation_call`) are estimated when resent as input, not as output.
+  - Unrecognised items keep their JSON text with encoded binary removed (`attrs.binary_scrubbed`);
+    `encrypted_content` is left alone.
+  The provider-reported input total remains authoritative.
 - The 8 category columns and output text/thinking split are sums over blocks. `tokens_total_input`
   additionally includes the ChatML-style message-overhead estimate; `tokens_total_output` is the
   output text/thinking sum. All are computed by `classify()` — see §5.2.
@@ -661,7 +674,7 @@ both of:
    user at `db-upgrade` or `reset-db`) if any data migration is pending — this prevents the app
    from running against a DB with stale/missing derived data.
 
-Currently `SCHEMA_VERSION = 10`; `_migrate_to_v2` backfills `session_seq` (per-session request
+Currently `SCHEMA_VERSION = 11`; `_migrate_to_v2` backfills `session_seq` (per-session request
 ordinal, assigned by `timestamp` order) and reconstructs `blocks`/`block_contents` rows for
 pre-existing requests from their still-present `raw_request_body`/`raw_response_body` (re-running
 the adapter → classify → insert_blocks pipeline). `_migrate_to_v3` copies retained provider JSON
@@ -687,6 +700,10 @@ reporting through `db-upgrade`; the `archived_at` session column is added by `_m
 `_migrate_to_v10` re-runs that classification (source keys and `blocks.file_path`, not JSON paths) for requests whose
 `classifier_version` is below 2; the column and its index are added by `_migrate()`. File paths are only recovered where the
 tool call's text is still stored, so older purged requests keep `file_path` NULL.
+`_migrate_to_v11` re-parses retained canonical bodies and rewrites media, text-document and scrubbed blocks in
+place (matched by direction and `json_path`; purged content is not restored), then recomputes the request's input
+categories, totals, tool stats and purpose. Requests whose parts cannot be matched, or whose body is gone, are left
+unchanged. Idempotent.
 
 ---
 
@@ -1178,6 +1195,7 @@ contextspy/                         # repo root
 │   │   ├── classifier.py           # classify_blocks / classify / per_tool_tokens
 │   │   ├── sources.py              # block source keys + parser registry (Bash, Codex exec/js), shell helpers
 │   │   ├── paths.py                # blocks.file_path: normalize_file_path (single writer) and extractors
+│   │   ├── media.py                # images/files: markers, dimensions, token estimates
 │   │   ├── purpose.py              # request purpose + classify_request, CLASSIFIER_VERSION
 │   │   ├── activity.py             # source key -> activity label (read time)
 │   │   ├── block_occurrences.py    # runs/totals of one block across a scope ("Present in")

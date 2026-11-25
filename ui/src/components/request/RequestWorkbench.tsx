@@ -10,6 +10,7 @@ import { SearchableContentViewer } from '../ui/SearchableContentViewer'
 import { BlockInspector } from './BlockInspector'
 import { BlockLegend } from './BlockLegend'
 import { BlockToolbar } from './BlockToolbar'
+import { mediaItems } from '../../lib/media'
 import type { ShowMode } from './BlockToolbar'
 import { CompactBlockMap } from './CompactBlockMap'
 import { ProportionalBlockMap } from './ProportionalBlockMap'
@@ -246,6 +247,11 @@ export function RequestWorkbench({ request, activeDirection, onDirectionChange, 
                     ? 'Content was purged, but its structure and token count are retained.'
                     : 'No content was captured for this structural block.'}
                   maxHeight={420}
+                  tokenHighlight={selected.attrs?.media_only !== true}
+                  note={mediaItems(selected).length === 0 ? undefined
+                    : selected.attrs?.media_only === true
+                      ? 'The line below stands in for the binary data, which is not stored as block content.'
+                      : 'Image tokens are estimated and not highlighted; bracketed lines stand in for binary data.'}
                 />
               )}
             </div>

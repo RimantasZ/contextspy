@@ -101,6 +101,9 @@ Facts worth knowing about the data, measured on a copy of the author's database 
 
 **Not implemented:** Plans 5, 6, 7, 8 (context tree, compare, hints, similarity); `housekeeping` purpose detection and any agent purpose detectors; turn grouping (`turn_index`; specified in `archive/request-purpose.md`, needed by the tree's "by turn" mode); source/file parsers beyond Codex `exec`/`js`, `Bash` and the generic structured tools (no MCP file tools); Ollama tool-call blocks (its adapter emits none, so no sources/paths there); purpose in the request list and conversation cards; jumping from a block's JSON location to the raw JSON viewer; cache reporting (D2); the hot-spots cache (D19).
 
+**Outside this roadmap:** image and binary-part token estimates, schema v11 (issue #104,
+[`104-image-token-estimates.md`](104-image-token-estimates.md)), implemented 2026-11-25, uncommitted.
+
 ## Plans and order
 
 > **Naming:** *Plans 1–7* are the feature plans in the table below. *WI-0* is the data-foundation work item that precedes them; its own sub-steps are called *slices 1–5* inside `archive/wi0-data-foundation.md`. "Slice" never refers to a numbered plan.

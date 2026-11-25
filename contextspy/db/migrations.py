@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from contextspy.db.models import BlockRecord, Request, SchemaMeta, Session, ToolStat
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 logger = logging.getLogger(__name__)
 
@@ -1162,6 +1162,194 @@ def _backfill_classification(db: OrmSession, label: str, *, json_paths: bool) ->
     )
 
 
+# ---------------------------------------------------------------------------
+# v11: images, documents and binary payloads (plans/104-image-token-estimates.md)
+# ---------------------------------------------------------------------------
+
+# Substrings of a canonical document that can hold something v11 counts differently.
+_V11_BODY_MARKERS = (
+    ";base64,", '"base64"', '"images"', '"image"', '"input_image"', '"image_url"', '"input_file"',
+    '"input_audio"', '"file"', '"document"', '"image_generation_call"',
+)
+_V11_INPUT_CATEGORIES = (
+    "system_prompt", "tool_definitions", "tool_results", "file_contents",
+    "conversation_history", "current_user_message", "assistant_prefill", "uncategorized",
+)
+
+
+def _migrate_to_v11(db: OrmSession) -> None:
+    """Re-analyze the media blocks of requests whose canonical bodies are still retained.
+
+    Only blocks the current adapters mark as media, text document or scrubbed binary are
+    rewritten, in place, so ids and purged content stay as they are. Because an image can
+    move the "current user message", every input category and the request totals are then
+    recomputed. A request whose stored blocks cannot be matched is left untouched.
+    Idempotent.
+    """
+    from sqlalchemy import or_
+
+    body_may_apply = or_(
+        *(Request.canonical_request_body.contains(marker, autoescape=True) for marker in _V11_BODY_MARKERS),
+        Request.canonical_response_body.contains('"image_generation_call"', autoescape=True),
+        Request.id.in_(select(BlockRecord.request_id).where(BlockRecord.block_type == "other")),
+    )
+    stats = {"candidates": 0, "updated": 0, "skipped_unmatched": 0, "failed": 0, "without_body": 0}
+    stats["without_body"] = db.execute(
+        select(func.count(func.distinct(BlockRecord.request_id)))
+        .join(Request, Request.id == BlockRecord.request_id)
+        .where(Request.canonical_request_body.is_(None), BlockRecord.attrs.contains('"contains_media"'))
+    ).scalar() or 0
+    ids = db.execute(
+        select(Request.id)
+        .where(Request.canonical_request_body.isnot(None), body_may_apply)
+        .order_by(Request.id)
+    ).scalars().all()
+    stats["candidates"] = len(ids)
+    _report(f"v11: checking {len(ids):,} requests for images, files and binary payloads")
+    for done, request_id in enumerate(ids, start=1):
+        try:
+            outcome = _v11_reanalyze(db, request_id)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            logger.debug("v11: could not re-analyze %s", request_id, exc_info=True)
+            outcome = "failed"
+        if outcome:
+            stats[outcome] += 1
+        if done % 100 == 0:
+            db.flush()
+            db.expire_all()
+            _report(f"v11: {done:,}/{len(ids):,} requests checked")
+    db.flush()
+    db.info["v11_backfill"] = stats
+    _report(
+        f"v11: done. updated {stats['updated']:,} requests; {stats['skipped_unmatched']:,} could not be "
+        f"matched, {stats['failed']:,} failed, {stats['without_body']:,} with media have no retained body"
+    )
+
+
+def _v11_reanalyze(db: OrmSession, request_id: str) -> str | None:
+    """Return the stats key for one request, or None when nothing had to change."""
+    from types import SimpleNamespace
+
+    from contextspy.analysis.adapters import get_adapter
+    from contextspy.analysis.blocks import AnalyzedRequest, Usage
+    from contextspy.analysis.classifier import classify_blocks, per_tool_tokens
+    from contextspy.analysis.purpose import classify_request
+    from contextspy.db.crud import upsert_tool_stats
+    from contextspy.db.models import BlockContent
+
+    row = db.get(Request, request_id)
+    adapter = get_adapter(row.endpoint)
+    if adapter is None:
+        return None
+    request_value = json.loads(row.canonical_request_body)
+    if not isinstance(request_value, dict):
+        return None
+    input_blocks, tool_call_map = adapter.parse_request(request_value)
+    output_blocks, usage = [], Usage()
+    if row.canonical_response_body:
+        response_value = json.loads(row.canonical_response_body)
+        if isinstance(response_value, dict):
+            output_blocks, usage = adapter.parse_response(response_value)
+
+    def affected(block) -> bool:
+        return any(block.attrs.get(key) for key in ("contains_media", "document_text", "binary_scrubbed"))
+
+    if not any(affected(block) for block in [*input_blocks, *output_blocks]):
+        return None
+    classify_blocks(input_blocks)
+    analyzed = AnalyzedRequest(
+        model=request_value.get("model"), input_blocks=input_blocks,
+        output_blocks=output_blocks, usage=usage, tool_call_map=tool_call_map,
+    )
+    classification = classify_request(analyzed, agent=row.agent, has_response=bool(output_blocks))
+
+    stored = db.execute(
+        select(BlockRecord).where(BlockRecord.request_id == request_id)
+        .order_by(BlockRecord.direction, BlockRecord.position)
+    ).scalars().all()
+    pairs: list[tuple] = []
+    for direction, parsed in (("input", input_blocks), ("output", output_blocks)):
+        records = [record for record in stored if record.direction == direction]
+        by_path = {record.json_path: record for record in records if record.json_path}
+        same_shape = len(records) == len(parsed)
+        for index, block in enumerate(parsed):
+            path = (json.dumps(list(block.json_path), separators=(",", ":"))
+                    if block.json_path is not None else None)
+            record = by_path.get(path)
+            if record is None and same_shape and not records[index].json_path:
+                record = records[index]
+            if record is not None:
+                pairs.append((record, block))
+            elif affected(block):
+                # No stored row for this part (e.g. an Ollama image that was never parsed).
+                return "skipped_unmatched" if records else None
+
+    changed: set[str] = set()
+    replaced: set[str] = set()
+    for record, block in pairs:
+        if not affected(block):
+            continue
+        attrs = json.loads(record.attrs) if record.attrs else {}
+        if (record.block_type == str(block.block_type) and record.content_hash == block.content_hash
+                and record.token_count == block.token_count and attrs.get("media") == block.attrs.get("media")):
+            continue
+        old_hash = record.content_hash
+        old_content = db.get(BlockContent, old_hash) if old_hash else None
+        # Never bring purged content back: store the new text only if the old text was still there.
+        keep_content = old_hash is None or old_content is not None
+        if keep_content and block.content and db.get(BlockContent, block.content_hash) is None:
+            db.add(BlockContent(
+                hash=block.content_hash, content=block.content,
+                created_at=old_content.created_at if old_content else datetime.now(timezone.utc),
+            ))
+            db.flush()
+        for key in ("contains_media", "token_estimate"):
+            attrs.pop(key, None)
+        record.attrs = json.dumps({**attrs, **block.attrs})
+        record.block_type = str(block.block_type)
+        record.content_hash = block.content_hash
+        record.token_count = block.token_count
+        record.source_key = block.source_key
+        record.file_path = block.file_path
+        changed.add(record.direction)
+        if old_hash and old_hash != block.content_hash:
+            replaced.add(old_hash)
+    if not changed:
+        return None
+
+    if "input" in changed:
+        for record, block in pairs:
+            if record.direction == "input":
+                record.category = block.category
+        inputs = [record for record in stored if record.direction == "input"]
+        total = 0
+        for category in _V11_INPUT_CATEGORIES:
+            tokens = sum(r.token_count for r in inputs if (r.category or "uncategorized") == category)
+            setattr(row, f"tokens_{category}", tokens)
+            total += tokens
+        # Same ChatML overhead as classifier.classify.
+        messages = {r.message_index for r in inputs if r.message_index is not None}
+        row.tokens_total_input = total + 4 * len(messages) + 3
+        db.execute(delete(ToolStat).where(ToolStat.request_id == request_id))
+        tool_rows = per_tool_tokens(SimpleNamespace(input_blocks=inputs))
+        if tool_rows:
+            upsert_tool_stats(db, request_id, tool_rows)
+    if "output" in changed:
+        outputs = [record for record in stored if record.direction == "output"]
+        row.tokens_output_thinking = sum(r.token_count for r in outputs if r.block_type == "thinking")
+        row.tokens_output_text = sum(r.token_count for r in outputs if r.block_type != "thinking")
+        row.tokens_total_output = row.tokens_output_thinking + row.tokens_output_text
+    if classification is not None and classification.purpose is not None:
+        for field, value in classification.to_db_fields().items():
+            setattr(row, field, value)
+    db.flush()
+
+    for old_hash in replaced:
+        if db.execute(select(BlockRecord.id).where(BlockRecord.content_hash == old_hash).limit(1)).first() is None:
+            db.execute(delete(BlockContent).where(BlockContent.hash == old_hash))
+    return "updated"
+
+
 _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
@@ -1172,4 +1360,5 @@ _DATA_MIGRATIONS: dict[int, Callable[[OrmSession], None]] = {
     8: _migrate_to_v8,
     9: _migrate_to_v9,
     10: _migrate_to_v10,
+    11: _migrate_to_v11,
 }
