@@ -22,7 +22,7 @@ from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
 from mitmproxy.addons import errorcheck as _errorcheck
 
-from contextspy.proxy.addon import ContextSpyAddon
+from contextspy.proxy.addon import ContextSpyAddon, intercepted_host_patterns
 
 if TYPE_CHECKING:
     from contextspy.api.websocket import ConnectionManager
@@ -91,6 +91,21 @@ def _make_master(
     return thread  # type: ignore[return-value]
 
 
+def forward_proxy_options(settings: "Settings") -> Options:
+    """Options for the cloud-mode forward proxy.
+
+    Only tunnels to LLM API hosts are decrypted; everything else the agent talks to
+    passes through untouched (see ``intercepted_host_patterns``). Reverse-mode listeners
+    must not get ``allow_hosts``: their upstream is fixed and would be tunnelled blind.
+    """
+    return Options(
+        listen_host=settings.proxy.bind_addr,
+        listen_port=settings.proxy.port,
+        ssl_insecure=False,
+        allow_hosts=intercepted_host_patterns(settings.extra_hosts),
+    )
+
+
 def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = None) -> None:
     global _master, _thread, _addon, _bound
 
@@ -100,11 +115,7 @@ def start_proxy(settings: "Settings", ws_manager: "ConnectionManager | None" = N
     _addon = ContextSpyAddon()
     _addon.ws_manager = ws_manager
 
-    options = Options(
-        listen_host=settings.proxy.bind_addr,
-        listen_port=settings.proxy.port,
-        ssl_insecure=False,
-    )
+    options = forward_proxy_options(settings)
 
     def _run() -> None:
         global _master, _bound

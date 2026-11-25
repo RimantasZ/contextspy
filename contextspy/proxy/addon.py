@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import gzip
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -93,6 +94,21 @@ def _detect_provider(host: str, port: int) -> str | None:
         if host == pattern or host.endswith("." + pattern):
             return provider
     return None
+
+
+def intercepted_host_patterns(extra_hosts: list[str] | tuple[str, ...] = ()) -> list[str]:
+    """mitmproxy ``allow_hosts`` regexes for the forward proxy: the hosts worth decrypting.
+
+    mitmproxy matches them against ``host:port`` once a tunnel's destination is known
+    (CONNECT). Every other tunnel (MCP servers, telemetry, downloads, ...) passes through
+    as raw TCP: no TLS termination, no buffering, no addon hooks. It mirrors
+    ``_detect_provider``, which ignores those hosts anyway. ``extra_hosts`` comes from
+    ``[intercepted_hosts]`` in config.toml.
+    """
+    hosts = [pattern for pattern, _ in _HOST_PROVIDER] + [h for h in extra_hosts if h]
+    patterns = [rf"(^|\.){re.escape(host)}:\d+$" for host in hosts]
+    patterns += [rf":{port}$" for port in sorted(_OLLAMA_PORTS)]
+    return patterns
 
 
 # ---------------------------------------------------------------------------
@@ -317,14 +333,16 @@ class ContextSpyAddon:
                     active_session.id if active_session else None
                 )
                 flow.metadata["contextspy_capture_resolved"] = True
-        try:
-            flow.metadata["contextspy_request_body"] = flow.request.get_text()
-        except Exception as exc:
-            flow.metadata["contextspy_request_capture_error"] = str(exc)
+        if provider is not None:
+            # Snapshot only what may be recorded; other hosts are never analyzed.
+            try:
+                flow.metadata["contextspy_request_body"] = flow.request.get_text()
+            except Exception as exc:
+                flow.metadata["contextspy_request_capture_error"] = str(exc)
         logger.debug("HOOK request: %s %s", flow.request.pretty_host, flow.request.path[:60])
 
     def responseheaders(self, flow: http.HTTPFlow) -> None:
-        if flow.response is None or flow.metadata.get("contextspy_paused_ignore"):
+        if flow.response is None:
             return
         ct = flow.response.headers.get("content-type", "").lower()
         logger.debug(
@@ -334,11 +352,18 @@ class ContextSpyAddon:
         )
         if "text/event-stream" not in ct:
             return
-        # SSE streaming response — buffer all chunks, process when stream ends
         host = flow.request.pretty_host
         port = flow.request.port
-        if self._get_provider(host, port) is None:
-            return  # not an LLM host — skip overhead
+        if (
+            flow.metadata.get("contextspy_paused_ignore")
+            or self._get_provider(host, port) is None
+        ):
+            # Not captured (paused, or not an LLM host): relay events as they arrive.
+            # Without a stream setting mitmproxy holds the whole response until the
+            # server closes it, so the agent would see no streamed output.
+            flow.response.stream = True
+            return
+        # SSE streaming response — buffer all chunks, process when stream ends
 
         sse_chunks: list[bytes] = []
         addon = self
@@ -830,7 +855,12 @@ class ContextSpyAddon:
 
     def websocket_message(self, flow: http.HTTPFlow) -> None:
         state = self._ws_flows.get(flow.id)
-        if state is None or flow.websocket is None or not flow.websocket.messages:
+        if flow.websocket is None or not flow.websocket.messages:
+            return
+        if state is None:
+            # Not captured: drop the history so a long-lived connection does not keep
+            # every message it ever relayed (forwarding has already happened).
+            del flow.websocket.messages[:-1]
             return
 
         message = flow.websocket.messages[-1]
