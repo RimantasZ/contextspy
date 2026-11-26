@@ -48,7 +48,7 @@ export function useWebSocket() {
             for (const key of ['sessions', 'session', 'stats', 'session-conversations', 'request', 'requests']) {
               qc.invalidateQueries({ queryKey: [key] })
             }
-          } else if (msg.event === 'session_started' || msg.event === 'session_ended') {
+          } else if (msg.event === 'session_started' || msg.event === 'session_ended' || msg.event === 'session_reopened') {
             qc.invalidateQueries({ queryKey: ['sessions'] })
             qc.invalidateQueries({ queryKey: ['session'] })
             qc.invalidateQueries({ queryKey: ['stats'] })

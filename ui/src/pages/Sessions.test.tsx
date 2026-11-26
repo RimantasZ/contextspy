@@ -21,6 +21,8 @@ const entries = [
 ]
 
 vi.mock('../api/hooks', () => ({
+  useSessions: () => ({ data: undefined }),
+  useReopenSession: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
   useSessionsSummary: () => ({ isLoading: false, data: { entries } }),
   useRenameSession: () => ({ mutate: vi.fn() }),
   useDeleteSession: () => ({ mutate: vi.fn(), isPending: false }),

@@ -625,6 +625,32 @@ def session_end() -> None:
         raise typer.Exit(1)
 
 
+@session_app.command("reopen")
+def session_reopen() -> None:
+    """Reopen the last closed session (ends any current session)."""
+    port = _web_port()
+    try:
+        listing = httpx.get(_api(port, "/sessions"), timeout=5).json()
+        target = listing.get("reopenable_session_id")
+        if not target:
+            console.print("[yellow]Nothing to reopen: there is no closed session, or the last closed one is archived.[/yellow]")
+            return
+        response = httpx.post(_api(port, f"/sessions/{target}/reopen"), timeout=5)
+        if response.status_code == 409:
+            console.print(f"[red]Reopen failed:[/red] {response.json().get('detail', response.text)}")
+            raise typer.Exit(1)
+        response.raise_for_status()
+        data = response.json()
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}. Is contextspy running?[/red]")
+        raise typer.Exit(1)
+    if data.get("warning"):
+        console.print(f"[yellow]{data['warning']}[/yellow]")
+    console.print(f"[green]Session reopened:[/green] {data['session']['name']} ({data['session']['id'][:8]}…)")
+
+
 @session_app.command("archive")
 def session_archive_cmd(
     session: str = typer.Argument(..., help="Session id or a unique id prefix (see `contextspy session list`)"),
@@ -772,6 +798,7 @@ def help_cmd() -> None:
         ("resume", "Resume capture after a pause"),
         ("session start", "Start a named session"),
         ("session end", "End the current active session"),
+        ("session reopen", "Reopen the last closed session"),
         ("session list", "List all sessions"),
     ]
     table = Table(show_header=True, header_style="bold")

@@ -36,6 +36,16 @@ if TYPE_CHECKING:
 # Sessions
 # ---------------------------------------------------------------------------
 
+class ReopenRefused(ValueError):
+    """The session may not be reopened; the message says why."""
+
+
+def lock_sessions(db: OrmSession) -> None:
+    """Take SQLite's write lock before reading which session is active, so that concurrent
+    starts and reopens cannot leave two sessions active."""
+    db.execute(text("UPDATE sessions SET is_active = is_active WHERE 0"))
+
+
 def create_session(db: OrmSession, name: str) -> Session:
     session = Session(
         id=str(uuid.uuid4()),
@@ -71,6 +81,46 @@ def end_session(db: OrmSession, session_id: str) -> Session | None:
         session.is_active = 0
         db.flush()
     return session
+
+
+def _last_closed_session(db: OrmSession) -> Session | None:
+    return db.execute(
+        select(Session)
+        .where(Session.is_active == 0, Session.ended_at.isnot(None))
+        .order_by(Session.ended_at.desc())
+        .limit(1)
+    ).scalars().first()
+
+
+def get_reopenable_session(db: OrmSession) -> Session | None:
+    """The only session that may be reopened: the last closed one, unless it is archived."""
+    session = _last_closed_session(db)
+    return None if session is None or session.archived_at else session
+
+
+def reopen_session(db: OrmSession, session_id: str) -> tuple[Session, Session | None] | None:
+    """Make the last closed session active again, ending the active session if there is one.
+
+    Returns ``(reopened, ended)``, or ``None`` for an unknown id. Raises ``ReopenRefused``
+    before changing anything. Call ``lock_sessions`` first.
+    """
+    session = db.get(Session, session_id)
+    if session is None:
+        return None
+    if session.is_active:
+        raise ReopenRefused("This session is already active")
+    if session.archived_at:
+        raise ReopenRefused("An archived session cannot be reopened")
+    last = _last_closed_session(db)
+    if last is None or last.id != session.id:
+        raise ReopenRefused("Only the last closed session can be reopened")
+    active = get_active_session(db)
+    if active:
+        end_session(db, active.id)
+    session.ended_at = None
+    session.is_active = 1
+    db.flush()
+    return session, active
 
 
 def rename_session(db: OrmSession, session_id: str, new_name: str) -> Session | None:
@@ -833,17 +883,11 @@ def get_sessions_summary(db: OrmSession) -> list[dict]:
     ).all()
 
     # Build gap windows: each window is (start_boundary, end_boundary)
-    # where None means "no bound" (i.e. −∞ or +∞)
-    windows: list[tuple] = []
-    if not sessions:
-        windows.append((None, None))
-    else:
-        windows.append((None, sessions[0].started_at))
-        for i in range(len(sessions) - 1):
-            windows.append((sessions[i].ended_at, sessions[i + 1].started_at))
-        last = sessions[-1]
-        if not last.is_active:
-            windows.append((last.ended_at, None))
+    # where None means "no bound" (i.e. −∞ or +∞). Only session starts bound them:
+    # a reopened session can span later ones, and every unassigned request must
+    # still be listed exactly once.
+    boundaries = [None, *(s.started_at for s in sessions), None]
+    windows = list(zip(boundaries, boundaries[1:]))
 
     entries: list[dict] = []
 

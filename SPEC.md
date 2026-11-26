@@ -718,12 +718,13 @@ unchanged. Idempotent.
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/sessions` | Create and start a new session. Body: `{ "name": "string" }`. Returns session object. If another session is active, it is automatically ended first (warning included in response). |
-| `GET` | `/api/sessions` | List all sessions (newest first). Each session carries `status` (`active`\|`ended`\|`archived`) and `archived_at`. |
-| `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session. 404 if missing. |
+| `GET` | `/api/sessions` | List all sessions (newest first). Each session carries `status` (`active`\|`ended`\|`archived`) and `archived_at`; the response also has `reopenable_session_id` (nullable). |
+| `GET` | `/api/sessions/{id}` | Get session detail + aggregated token stats for that session, and `reopenable_session_id`. 404 if missing. |
 | `GET` | `/api/sessions/{id}/lineage` | Complete session lineage graph. Returns exact/inferred continuation edges, diagnostic root-to-leaf paths, conservative conversation groups and membership, uncertainty diagnostics, timing, and per-edge context-delta summaries. Exact parents captured outside the selected session are external nodes. Each node also carries `conversation_code` (`C<n>` / `AUX`, as on request cards; `null` for external nodes) and `conversation_previous_request_id` / `conversation_next_request_id`, the neighbouring requests in its conversation in session order (`null` for auxiliary and external nodes; neighbours are not proven parent/child links). |
 | `GET` | `/api/sessions/{id}/trend` | Per-request metric values for the session trend chart: a `metrics` registry (`id`, `label`, `unit` = `tokens` \| `percent` \| `ms` \| `count`, `estimated`, `empty_hint`, `kind` = `scalar` \| `composition`, `parts`) and one `series` per conversation (plus auxiliary), each with `points` (`request_id`, `session_seq`, `ordinal`, `time` = `started_at` else `timestamp`, `context_fidelity`, `purpose`, `values`, `parts`). Scalar metrics: `context_estimated`, `cache_hit_pct` (`cache_read / provider_input`, as request detail), `output_estimated`, `block_count` (input blocks), `ttft_ms`, `duration_ms`; a value is `null` when unavailable. Composition metrics (`context_composition`: the eight input categories; `output_composition`: text and thinking) list their `parts` in stacking order, `values` holds their total and each point's `parts[metric_id]` the tokens per part. A request appears in one series only; ids from other sessions are dropped. 404 if missing. |
 | `PATCH` | `/api/sessions/{id}` | Rename a session. Body: `{ "name": "string" }`. 422 if blank, 404 if missing. |
 | `POST` | `/api/sessions/{id}/end` | End a session. 404 if missing. |
+| `POST` | `/api/sessions/{id}/reopen` | Make the last closed session (inactive, latest `ended_at`, not archived) active again; `id`, name, `started_at` and request numbering are kept. An active session is ended first. Returns `{ session, warning }`. 404 if missing; 409 if it is active, archived, being archived or not the last closed session, in which case nothing changes. Broadcasts `session_ended` (if one was ended) and `session_reopened`. |
 | `POST` | `/api/sessions/{id}/archive` | Archive an ended session (one-way; repeatable): removes raw payloads and unreferenced block text, keeps all analysis data. Returns `{ session, freed: { requests, request_body_bytes, content_rows, content_bytes }, space: { auto_vacuum: "incremental"\|"none", reclaimed_bytes, free_bytes_remaining, note }, already_archived }`. 404 if missing, 409 if the session is active or an archive of it is already running. Broadcasts `session_archived` over the WebSocket. |
 | `DELETE` | `/api/sessions/{id}?delete_requests=bool` | Delete session, optionally cascading its request records. 404 if missing. |
 
@@ -935,7 +936,8 @@ button (always visible, highlighted while paused) above the theme toggle.
 - Session timing (opened/closed, first/last request, elapsed and active request duration), totals,
   token-composition donut/table, selectable minute/hour/day timeline, tool treemap/table, and up
   to 500 requests using the shared sortable request list.
-- Actions: **End session** (when active), **Export PDF**, **Rename**, and **Delete**. The PDF
+- Actions: **End session** (when active), **Reopen session** (on the last closed session only; also in the Sessions
+  list), **Export PDF**, **Rename**, and **Delete**. The PDF
   contains timing, totals, category and tool tables, and up to the same 500 request rows; it notes
   when the list is truncated relative to the full session summary.
 
@@ -1060,6 +1062,10 @@ contextspy session start <name>
 contextspy session end
     End the active session (calls POST /api/sessions/{active_id}/end).
 
+contextspy session reopen
+    Reopen the last closed session (calls POST /api/sessions/{id}/reopen).
+    Ends any currently active session first.
+
 contextspy session list
     Print a table of sessions.
 
@@ -1067,7 +1073,7 @@ contextspy --version
     Print the installed package version and exit.
 ```
 
-`pause`, `resume`, `session start`, `session end`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-upgrade`, `db-switch`, `db-stats`, `report`, and all `setup-*`/`inject-cert` commands work offline.
+`pause`, `resume`, `session start`, `session end`, `session reopen`, `session list`, and `status` require the web server to be running (they call the REST API on localhost). `reset-db`, `db-upgrade`, `db-switch`, `db-stats`, `report`, and all `setup-*`/`inject-cert` commands work offline.
 
 ---
 
@@ -1158,6 +1164,9 @@ ContextSpy session end   (or UI button)
 - Only one session is active at a time.
 - Starting a new session automatically ends the active one (with a warning message).
 - Requests captured while no session is active have `session_id = NULL`.
+- Only the last closed session can be reopened, and not once archived. Requests captured while it was closed are
+  not added to it. Its duration includes the closed time, so session time spans can overlap; the sessions
+  summary therefore bounds its "no session" rows by session start times only.
 - Sensitive payload removal (archive, and the opt-in purge) applies consistently to session and session-less requests.
 
 ---

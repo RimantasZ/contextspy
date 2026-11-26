@@ -25,6 +25,7 @@ import { OutputSplit } from '../components/OutputSplit';
 import { CacheSplit } from '../components/CacheSplit';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import { ArchiveSessionModal } from '../components/ArchiveSessionModal';
+import { ReopenSessionButton } from '../components/ReopenSessionButton';
 import { formatDateTime } from '../lib/format';
 import { SessionLineage } from '../components/SessionLineage';
 import { SessionConversationSequences } from '../components/SessionConversationSequences';
@@ -387,6 +388,7 @@ export default function SessionDetail() {
               End session
             </button>
           )}
+          {s.status === 'ended' && <ReopenSessionButton sessionId={s.id} className="app-button" />}
           <button
             onClick={exportPdf}
             className="app-button-primary"

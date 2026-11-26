@@ -649,8 +649,8 @@ export interface ProxyStatus {
 
 export const sessionsApi = {
   trend: (id: string) => apiFetch<SessionTrend>(`/sessions/${id}/trend`),
-  list: () => apiFetch<{ sessions: Session[] }>('/sessions'),
-  get: (id: string) => apiFetch<{ session: Session; stats: Stats }>(`/sessions/${id}`),
+  list: () => apiFetch<{ sessions: Session[]; reopenable_session_id: string | null }>('/sessions'),
+  get: (id: string) => apiFetch<{ session: Session; stats: Stats; reopenable_session_id: string | null }>(`/sessions/${id}`),
   create: (name: string) =>
     apiFetch<{ session: Session; warning: string | null }>('/sessions', {
       method: 'POST',
@@ -658,6 +658,8 @@ export const sessionsApi = {
     }),
   end: (id: string) =>
     apiFetch<{ session: Session }>(`/sessions/${id}/end`, { method: 'POST' }),
+  reopen: (id: string) =>
+    apiFetch<{ session: Session; warning: string | null }>(`/sessions/${id}/reopen`, { method: 'POST' }),
   archive: (id: string) =>
     apiFetch<ArchiveResult>(`/sessions/${id}/archive`, { method: 'POST' }),
   hotspots: (id: string, params: HotspotParams) => {

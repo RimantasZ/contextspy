@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Reopen the last closed session** ([#106](https://github.com/RimantasZ/contextspy/issues/106)) with **Reopen
+  session** or `contextspy session reopen`. An active session is ended first.
 - **Run `contextspy db-upgrade` once before starting** (schema v10 to v11; the server refuses to start until you do).
   It backs the database up first. On a 6 GB database with about 8,700 requests it took under 3 minutes.
 - **Images are counted** ([#104](https://github.com/RimantasZ/contextspy/issues/104)). A pasted image used to show as

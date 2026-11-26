@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from contextspy.api.websocket import ConnectionManager
-from contextspy.db import crud, hotspots_service
+from contextspy.db import crud, hotspots_service, session_archive
 from contextspy.db.database import get_db
 
 router = APIRouter(tags=["sessions"])
@@ -42,6 +42,7 @@ def _get_ws() -> ConnectionManager:
 def create_session(body: CreateSessionRequest):
     warning = None
     with get_db() as db:
+        crud.lock_sessions(db)
         active = crud.get_active_session(db)
         if active:
             crud.end_session(db, active.id)
@@ -62,7 +63,11 @@ def create_session(body: CreateSessionRequest):
 def list_sessions():
     with get_db() as db:
         sessions = crud.list_sessions(db)
-        return {"sessions": [s.to_dict() for s in sessions]}
+        reopenable = crud.get_reopenable_session(db)
+        return {
+            "sessions": [s.to_dict() for s in sessions],
+            "reopenable_session_id": reopenable.id if reopenable else None,
+        }
 
 
 @router.get("/sessions/{session_id}")
@@ -72,7 +77,12 @@ def get_session(session_id: str):
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         stats = crud.get_stats(db, session_id)
-        return {"session": session.to_dict(), "stats": stats}
+        reopenable = crud.get_reopenable_session(db)
+        return {
+            "session": session.to_dict(),
+            "stats": stats,
+            "reopenable_session_id": reopenable.id if reopenable else None,
+        }
 
 
 @router.get("/sessions/{session_id}/lineage")
@@ -219,10 +229,43 @@ def end_session(session_id: str):
     return {"session": result}
 
 
+@router.post("/sessions/{session_id}/reopen")
+def reopen_session(session_id: str):
+    """Make the last closed session active again, ending the active one first."""
+    warning = None
+    ended = None
+    try:
+        # The database commit must happen before archiving is allowed to start again.
+        with session_archive.excluding_archive(session_id):
+            with get_db() as db:
+                crud.lock_sessions(db)
+                outcome = crud.reopen_session(db, session_id)
+                if outcome is None:
+                    raise HTTPException(status_code=404, detail="Session not found")
+                session, previous = outcome
+                result = session.to_dict()
+                if previous:
+                    ended = previous.to_dict()
+                    warning = f"Previous session '{previous.name}' was automatically ended."
+    except session_archive.ArchiveInProgress:
+        raise HTTPException(status_code=409, detail="This session is being archived")
+    except crud.ReopenRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    ws = _get_ws()
+    if ws.loop:
+        events = [("session_ended", ended)] if ended else []
+        for event, data in [*events, ("session_reopened", result)]:
+            asyncio.run_coroutine_threadsafe(
+                ws.broadcast({"event": event, "data": data}),
+                ws.loop,
+            )
+    return {"session": result, "warning": warning}
+
+
 @router.post("/sessions/{session_id}/archive")
 def archive_session(session_id: str):
     """Remove the session's raw payloads and block text (one-way). Ended sessions only; repeatable."""
-    from contextspy.db import session_archive
     from contextspy.db.database import get_engine
 
     try:

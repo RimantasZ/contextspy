@@ -113,11 +113,17 @@ recording labels, not proof that requests form one conversation.
 ```
 contextspy session start <name>   Start a named session
 contextspy session end            End the currently active session
+contextspy session reopen         Reopen the last closed session
 contextspy session list           List session names, IDs, timestamps, and status (active / ended / archived)
 contextspy session archive <id>   Remove an ended session's raw payloads and block text (one-way)
 ```
 
 These commands require the dashboard/API to be running.
+
+**Reopening.** `contextspy session reopen` (or **Reopen session** in the dashboard) continues the session that was closed
+last, for example one ended by mistake. If another session is active it is ended first, and running the command again
+switches back to it. Requests captured while the session was closed are not added to it, and its duration includes the
+closed time. An archived session cannot be reopened.
 
 **Archiving.** `contextspy session archive <id-or-unique-prefix>` (add `--yes` to skip the prompt) works on an *ended*
 session; end it first (`contextspy session end`). It removes the raw request/response payloads and the stored text of the

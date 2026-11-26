@@ -7,6 +7,8 @@ import SessionDetail from './SessionDetail'
 const state = vi.hoisted(() => ({ session: {} as Record<string, unknown> }))
 
 vi.mock('../api/hooks', () => ({
+  useSessions: () => ({ data: undefined }),
+  useReopenSession: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
   useSession: () => ({ isLoading: false, data: { session: state.session } }),
   useSessionLineage: () => ({ isLoading: false, data: undefined }),
   useSessionConversations: () => ({ isLoading: false, data: undefined }),

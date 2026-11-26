@@ -1,6 +1,6 @@
 # Reopen the last closed session (issue #106)
 
-Status: **draft 2026-11-26, product questions decided, not reviewed, not implemented.**
+Status: **implemented 2026-11-27, uncommitted, not released**. See *Implementation status* at the end. No separate plan review was done.
 
 ## Problem
 
@@ -111,3 +111,19 @@ server process, as the existing guard does.
 | Q1 | Reopen ends the active session automatically. |
 | Q2 | Duration includes the closed time; no intervals table. |
 | Q3 | Requests captured while closed are not added to the reopened session. |
+
+## Implementation status (2026-11-27)
+
+Implemented as described under *Work items*. `pytest` (834) and `npm test` (234) pass; the UI builds.
+
+Differences from the plan:
+- The button is one component, `ui/src/components/ReopenSessionButton.tsx`, used by both pages. It reads
+  `reopenable_session_id` from the session list; the same field on the detail response is not used by the UI.
+- `session start` now also takes the write lock (`crud.lock_sessions`) before reading the active session.
+- `contextspy help` lists `session reopen`.
+
+Not verified: no run against a live server or a real database, and no browser check. No test runs a start and
+a reopen concurrently. The archive race is tested by injecting a reopen at the lock, not with threads.
+
+Noticed, not changed: `POST /api/sessions/{id}/end` on an already ended session overwrites its `ended_at`,
+which would make it the last closed one. The UI and CLI only end the active session.

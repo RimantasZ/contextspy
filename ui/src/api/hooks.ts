@@ -129,6 +129,19 @@ export function useEndSession() {
   })
 }
 
+/** Reopens the last closed session; the server ends the active one first. */
+export function useReopenSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => sessionsApi.reopen(id),
+    onSuccess: () => {
+      for (const key of ['sessions', 'session', 'stats', 'lineage', 'session-conversations']) {
+        qc.invalidateQueries({ queryKey: [key] })
+      }
+    },
+  })
+}
+
 /** One-way archive of an ended session; refreshes everything that shows its status or payloads. */
 export function useArchiveSession() {
   const qc = useQueryClient()

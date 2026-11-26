@@ -15,6 +15,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSessionsSummary, useRenameSession } from '../api/hooks';
 import { SessionControls } from '../components/SessionControls';
+import { ReopenSessionButton } from '../components/ReopenSessionButton';
 import { DeleteSessionModal } from '../components/DeleteSessionModal';
 import { ArchiveSessionModal } from '../components/ArchiveSessionModal';
 import { ContextBar } from '../components/ContextBar';
@@ -223,6 +224,9 @@ export default function Sessions() {
                       >
                         Rename
                       </button>
+                      {statusOf(s) === 'ended' && (
+                        <ReopenSessionButton sessionId={s.session_id} className="app-button-ghost min-h-8 px-2 py-1 text-xs" />
+                      )}
                       {statusOf(s) === 'ended' && (
                         <button
                           onClick={() => setArchivingSession({ id: s.session_id, name: s.name ?? '' })}

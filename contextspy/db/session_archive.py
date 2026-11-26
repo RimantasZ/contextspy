@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from threading import Lock
 
@@ -57,6 +58,18 @@ class ArchiveInProgress(RuntimeError):
     pass
 
 
+@contextmanager
+def excluding_archive(session_id: str):
+    """Keep an archive of this session from starting while the block runs.
+
+    Raises ``ArchiveInProgress`` if one is already running. Commit inside the block.
+    """
+    with _in_progress_lock:
+        if session_id in _in_progress:
+            raise ArchiveInProgress(session_id)
+        yield
+
+
 def _take_write_lock(db: OrmSession, session_id: str) -> None:
     """A harmless write that acquires SQLite's write lock before the transaction reads anything."""
     db.execute(text("UPDATE sessions SET name = name WHERE id = :sid"), {"sid": session_id})
@@ -89,6 +102,11 @@ def archive_session_data(db: OrmSession, session_id: str) -> dict:
             raise ArchiveInProgress(session_id)
         _in_progress.add(session_id)
     try:
+        # The session may have been reopened between the check above and the registration.
+        db.rollback()
+        db.refresh(session)
+        if session.is_active:
+            raise SessionStillActive(session_id)
         already_archived = session.archived_at is not None
         db.commit()  # end the read snapshot: nothing below may start from a stale one
 

@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest'
 import SessionDetail from './SessionDetail'
 
 vi.mock('../api/hooks', () => ({
+  useSessions: () => ({ data: undefined }),
+  useReopenSession: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
   useSession: () => ({ isLoading: false, data: { session: { id: 's1', name: 'Work', started_at: '2026-09-18T08:00:00Z', ended_at: '2026-09-18T09:00:00Z', is_active: false, status: 'ended', archived_at: null } } }),
   useSessionLineage: (_id: string, enabled: boolean) => ({ isLoading: false, data: enabled ? { conversation_count: 1 } : undefined }),
   useSessionConversations: (_id: string, enabled: boolean) => ({ isLoading: false, data: enabled ? { conversation_count: 1 } : undefined }),
